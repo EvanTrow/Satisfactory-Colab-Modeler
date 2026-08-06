@@ -1,0 +1,35 @@
+import Fastify, { type FastifyInstance } from "fastify";
+
+import { authRoutes, type AuthRoutesOptions } from "./auth/routes.js";
+import { sessionPlugin } from "./auth/session-plugin.js";
+
+export interface BuildAppOptions {
+  logger?: boolean;
+  /** Passed through to `authRoutes` — tests use this to inject a mocked `DiscordClient`. */
+  authRoutesOptions?: AuthRoutesOptions;
+}
+
+/**
+ * Builds (but does not start listening on) the Fastify app. Split out from
+ * `index.ts` so tests can build an app with a mocked `DiscordClient` and
+ * drive it with `app.inject()` instead of binding a real port and making
+ * live calls to Discord.
+ */
+export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInstance> {
+  const app = Fastify({
+    logger: opts.logger ?? true,
+  });
+
+  app.get("/health", async () => {
+    return { ok: true };
+  });
+
+  // Session-validation middleware must be registered before the routes
+  // that depend on `request.user`/`fastify.authenticate` (Job 006's
+  // project routes will need the same decorator — see
+  // auth/session-plugin.ts's doc comment).
+  await app.register(sessionPlugin);
+  await app.register(authRoutes, opts.authRoutesOptions ?? {});
+
+  return app;
+}

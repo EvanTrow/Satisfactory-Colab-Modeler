@@ -10,7 +10,7 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 | 002 | [`packages/rational`](002-rational-package.md) | 0 · Foundations | 001 | Done |
 | 003 | [`packages/gamedata`](003-gamedata-package.md) | 0 · Foundations | 001 | Done |
 | 004 | [Core DB migrations](004-db-migrations-core.md) | 1 · Auth & projects | 001 | Done |
-| 005 | [Discord OAuth2](005-discord-oauth.md) | 1 · Auth & projects | 004 | Not started |
+| 005 | [Discord OAuth2](005-discord-oauth.md) | 1 · Auth & projects | 004 | Done |
 | 006 | [Project list UI](006-project-list-ui.md) | 1 · Auth & projects | 005 | Not started |
 | 007 | [`packages/ydoc` schema](007-ydoc-schema.md) | 2 · Solo canvas editor | 001 | Not started |
 | 008 | [Canvas skeleton](008-canvas-skeleton.md) | 2 · Solo canvas editor | 007 | Not started |
