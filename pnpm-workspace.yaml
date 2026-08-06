@@ -1,6 +1,7 @@
 packages:
   - "apps/*"
   - "packages/*"
+  - "db"
 
 # Vite's dependency chain pulls in esbuild, which has a native postinstall
 # script. Allow-list it so `pnpm install` doesn't need an interactive prompt.

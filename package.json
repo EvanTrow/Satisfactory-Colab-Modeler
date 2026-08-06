@@ -14,7 +14,9 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "db:migrate": "pnpm --filter @scm/api db:migrate",
+    "db:reset": "pnpm --filter @scm/api db:reset"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
