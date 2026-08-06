@@ -54,20 +54,20 @@ export function DevNodeTools() {
   return (
     <Panel
       position="top-left"
-      className="max-w-[240px] rounded border border-neutral-700 bg-neutral-900/90 px-3 py-2 text-xs text-neutral-300 shadow-lg"
+      className="max-w-[240px] rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)]/95 px-3 py-2 text-xs text-[var(--text-secondary)] shadow-[var(--shadow-card)]"
     >
-      <p className="mb-2 text-neutral-400">
+      <p className="mb-2 text-[var(--text-muted)]">
         Dev-only test harness (Job 008) proving the canvas↔Yjs wiring. No Recipe Chooser yet — that's Job 009.
       </p>
       <button
         type="button"
         onClick={handleAddTestNode}
-        className="rounded bg-indigo-600 px-2 py-1 font-medium text-white hover:bg-indigo-500"
+        className="rounded-md bg-[var(--accent)] px-2 py-1 font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]"
       >
         Add test node (calls addNode)
       </button>
-      {lastAddedId && <p className="mt-2 truncate text-neutral-500">Last added: {lastAddedId}</p>}
-      <p className="mt-2 text-neutral-500">
+      {lastAddedId && <p className="mt-2 truncate text-[var(--text-muted)]">Last added: {lastAddedId}</p>}
+      <p className="mt-2 text-[var(--text-muted)]">
         Drag a node, then inspect <code>window.__sfmDoc</code> in the console to confirm its x/y wrote back to the
         doc.
       </p>

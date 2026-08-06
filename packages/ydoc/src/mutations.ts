@@ -10,9 +10,9 @@
 // what `createUndoManager` tracks by default.
 import * as Y from "yjs";
 import type { SfmDocument } from "./document";
-import { containerToPlain, edgeToPlain, nodeToPlain } from "./document";
+import { containerToPlain, edgeToPlain, getSettings, nodeToPlain } from "./document";
 import { computeEdgeId } from "./edgeId";
-import type { Container, EdgeRecord, NodeRecord, Waypoint } from "./schema";
+import type { Container, EdgeRecord, NodeRecord, Settings, Waypoint } from "./schema";
 
 function generateId(prefix: string): string {
   const globalCrypto = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -33,6 +33,36 @@ function pointToMap(point: Waypoint): Y.Map<unknown> {
   map.set("x", point.x);
   map.set("y", point.y);
   return map;
+}
+
+// ---------------------------------------------------------------------------
+// settings
+// ---------------------------------------------------------------------------
+
+export type SettingsPatch = Partial<Settings>;
+
+/**
+ * Field-level update of the document-wide `Settings` singleton (PLAN.md
+ * §4's `settings` map — one per document, not per-node/edge/container).
+ * Added for Job 014 (visual pass & snap-to-grid): `createDocument`'s
+ * `DEFAULT_SETTINGS` populated `snapMachines`/`gridMachine`/`snapWaypoints`/
+ * `gridWaypoint` since Job 007, but nothing before this job ever wrote back
+ * to them — this is that missing write path, used by the canvas's snap
+ * toggle UI. A nested field (`gridMachine`/`gridWaypoint`/`numberFormats`)
+ * must be patched as a whole object (`{ gridMachine: { x, y } }`), same
+ * "plain JS object as a Y.Map value" convention `createDocument`'s
+ * `setPlainFields` already established for these fields — there's no
+ * nested `Y.Map` to reach into.
+ */
+export function updateSettings(sfmDoc: SfmDocument, patch: SettingsPatch, origin?: unknown): Settings {
+  let result!: Settings;
+  sfmDoc.doc.transact(() => {
+    for (const [key, value] of Object.entries(patch)) {
+      sfmDoc.settings.set(key, value);
+    }
+    result = getSettings(sfmDoc);
+  }, origin);
+  return result;
 }
 
 // ---------------------------------------------------------------------------

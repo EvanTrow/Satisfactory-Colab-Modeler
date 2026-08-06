@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDocument, getNode, listEdges, listNodes, snapshotDocument } from "./document";
+import { createDocument, getNode, getSettings, listEdges, listNodes, snapshotDocument } from "./document";
 import { computeEdgeId } from "./edgeId";
 import {
   addContainer,
@@ -14,6 +14,7 @@ import {
   reparentEdge,
   setPriorityOrder,
   updateNode,
+  updateSettings,
 } from "./mutations";
 import type { NewNodeInput } from "./mutations";
 import type { SfmDocument } from "./document";
@@ -52,6 +53,25 @@ function setUp() {
   });
   return { sfmDoc, root };
 }
+
+describe("settings mutations", () => {
+  it("updateSettings patches top-level fields and leaves the rest untouched", () => {
+    const { sfmDoc } = setUp();
+    expect(getSettings(sfmDoc).snapMachines).toBe(true);
+
+    const updated = updateSettings(sfmDoc, { snapMachines: false });
+    expect(updated.snapMachines).toBe(false);
+    // Untouched fields survive the patch (Job 007's other defaults).
+    expect(updated.snapWaypoints).toBe(true);
+    expect(getSettings(sfmDoc).snapMachines).toBe(false);
+  });
+
+  it("updateSettings replaces a nested Point field as a whole object", () => {
+    const { sfmDoc } = setUp();
+    const updated = updateSettings(sfmDoc, { gridMachine: { x: 25, y: 25 } });
+    expect(updated.gridMachine).toEqual({ x: 25, y: 25 });
+  });
+});
 
 describe("container mutations", () => {
   it("addContainer/removeContainer round-trip", () => {

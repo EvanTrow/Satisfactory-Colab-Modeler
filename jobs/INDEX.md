@@ -19,7 +19,7 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 | 011 | [Connections & waypoints](011-connections-waypoints.md) | 2 · Solo canvas editor | 010 | Done |
 | 012 | [Selection & editing](012-selection-editing.md) | 2 · Solo canvas editor | 011 | Done |
 | 013 | [Outposts](013-outposts.md) | 2 · Solo canvas editor | 012 | Done |
-| 014 | [Visual pass & theming](014-visual-pass.md) | 2 · Solo canvas editor | 013 | Not started |
+| 014 | [Visual pass & theming](014-visual-pass.md) | 2 · Solo canvas editor | 013 | Done |
 | 015 | [Doc persistence](015-doc-persistence.md) | 3 · Persistence | 014, 006 | Not started |
 | 016 | [IndexedDB cache & versions](016-indexeddb-versions.md) | 3 · Persistence | 015 | Not started |
 | 017 | [Solver core](017-solver-core.md) | 4 · Calculators | 002 | Not started |
@@ -37,6 +37,8 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 | 029 | [Accessibility & deploy](029-a11y-deploy.md) | 7 · Polish & deploy | 028 | Not started |
 
 **Phase 1 (Auth & projects) is now fully complete** as of Job 006 — Discord OAuth2 login, sessions, and project CRUD (create/rename/duplicate/soft-delete) with role enforcement are all in place. Phase 2 (Solo canvas editor) starts next at Job 007, which builds `packages/ydoc`'s CRDT schema independently of any of Job 006's routes, but depends on `projects` existing (Job 004) to eventually attach documents to.
+
+**Phase 2 (Solo canvas editor) is now fully complete** as of Job 014 — a local-Yjs-doc React Flow canvas with the Recipe Chooser, real recipe node UI, drag-to-connect with waypoints, marquee select/cut/copy/paste/delete/undo/redo, outposts with drill-in and breadcrumbs, a Ferrumium-inspired visual pass with dark/light theming, and snap-to-grid for both machines and waypoints are all in place. Phase 3 (Persistence) starts next at Job 015, which needs `Settings` (and the rest of the document) to actually survive a reload.
 
 ## Conventions for every job file
 

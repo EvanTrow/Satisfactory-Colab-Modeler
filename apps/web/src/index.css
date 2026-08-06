@@ -1,1 +1,156 @@
 @import "tailwindcss";
+
+/*
+ * Job 014: dark/light theme wiring. Tailwind v4 has no `tailwind.config.js`
+ * in this project (confirmed — the default `@tailwindcss/vite` setup keys
+ * everything off this file), and its *default* `dark:` variant (with no
+ * `@custom-variant` declared) resolves to a `prefers-color-scheme: dark`
+ * media query with no way to force an explicit user choice — there is no
+ * v4 equivalent of v3's `darkMode: 'class'` config knob because v4 has no
+ * JS config file to put it in. This one line is v4's documented way to get
+ * class-based dark mode back: it redefines what `dark:` compiles to, keying
+ * it off a `.dark` ancestor (or self) instead of the media query.
+ * `theme/useTheme.ts` is what actually sets/removes `.dark`/`.light` on
+ * `<html>`; `index.html` carries a tiny inline script that applies the same
+ * class before first paint to avoid a flash of the wrong theme.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens — characterized from https://ferrumium.com (Job 014's own
+ * scope: "characterize its visual language... and apply that language").
+ * Ferrumium's own node cards/panels are themed the exact same way (its own
+ * `.react-flow` wrapper carries classes like `bg-[var(--theme-flow-bg)]`,
+ * confirmed via this job's manual inspection of its live computed styles),
+ * so this file follows the same mechanism, not just the same palette:
+ * components reference `var(--token-name)` via Tailwind's arbitrary-value
+ * utilities (`bg-[var(--surface-card)]`) so a component's classes never
+ * need a parallel `dark:` variant of every color utility — the token swaps
+ * under `.dark` once, here, and every consumer picks it up for free. A
+ * `dark:` variant is still used directly in a few places where a token
+ * alone isn't enough (e.g. `@xyflow/react`'s own built-in `Controls`
+ * chrome, or a prop-driven SVG fill that can't read a CSS var).
+ *
+ * Measured from Ferrumium's live light theme (via computed styles on its
+ * own canvas background / node card / node header / accent button):
+ * canvas #eae5db, card body #f0ebe0, header #2f4f4f (dark slate teal, kept
+ * fixed across both themes below — dark enough to read against either a
+ * cream or a near-black card body), border ~rgba(0,0,0,.25), text
+ * #2d2c2c/#615f5f. This app's own accent color is kept as the indigo
+ * already established across Jobs 008-013 (selection rings, primary
+ * buttons) rather than switched to Ferrumium's own orange/coral — the brief
+ * asks for its *visual language* (spacing/radii/shadows/typography/color
+ * restraint), not a literal brand-color swap, and introducing a second
+ * orange would collide with the outpost-amber semantic Job 013 already
+ * established.
+ */
+:root,
+.light {
+  --surface-app: #eae5db;
+  --surface-panel: #f5f1e8;
+  --surface-card: #f4efe4;
+  --surface-sunken: #e3ddd0;
+  --surface-overlay: #f8f4ea;
+  --surface-hover: rgba(45, 44, 44, 0.06);
+
+  --border-subtle: rgba(45, 44, 44, 0.1);
+  --border-default: rgba(45, 44, 44, 0.18);
+  --border-strong: rgba(45, 44, 44, 0.3);
+
+  --text-primary: #2d2c2c;
+  --text-secondary: #615f5f;
+  --text-muted: #8a8785;
+  --text-inverted: #f5f5f4;
+
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgba(79, 70, 229, 0.12);
+
+  --outpost: #b45309;
+  --outpost-soft: rgba(217, 119, 6, 0.14);
+  --outpost-border: rgba(180, 83, 9, 0.55);
+
+  --danger: #b91c1c;
+  --danger-soft: rgba(185, 28, 28, 0.12);
+  --success: #15803d;
+
+  --node-header: #2f4f4f;
+  --node-header-text: #f5f5f4;
+
+  --shadow-card: 0 1px 2px rgba(45, 44, 44, 0.1), 0 8px 20px -10px rgba(45, 44, 44, 0.35);
+  --shadow-modal: 0 8px 16px -4px rgba(45, 44, 44, 0.18), 0 24px 48px -12px rgba(45, 44, 44, 0.35);
+
+  --grid-dot: rgba(45, 44, 44, 0.22);
+  color-scheme: light;
+
+  /*
+   * `@xyflow/react`'s own built-in chrome (`<Controls>`, the pan/zoom
+   * buttons in `CanvasView.tsx`) reads these `--xy-*` custom properties
+   * from its shipped stylesheet (`@xyflow/react/dist/style.css`) rather
+   * than exposing themeable class names — overriding them here is the
+   * supported way to theme built-in pieces this app doesn't have its own
+   * component for, without fighting `!important`-laden library CSS.
+   */
+  --xy-background-color: var(--surface-app);
+  --xy-controls-button-background-color: var(--surface-panel);
+  --xy-controls-button-background-color-hover: var(--surface-hover);
+  --xy-controls-button-border-color: var(--border-default);
+  --xy-controls-button-color: var(--text-secondary);
+  --xy-controls-button-color-hover: var(--text-primary);
+  --xy-controls-box-shadow: var(--shadow-card);
+}
+
+.dark {
+  --surface-app: #0a0a0a;
+  --surface-panel: #141414;
+  --surface-card: #18181b;
+  --surface-sunken: #0a0a0a;
+  --surface-overlay: #1c1c1f;
+  --surface-hover: rgba(255, 255, 255, 0.06);
+
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-default: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.26);
+
+  --text-primary: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --text-inverted: #18181b;
+
+  --accent: #818cf8;
+  --accent-hover: #a5b4fc;
+  --accent-contrast: #1e1b4b;
+  --accent-soft: rgba(129, 140, 248, 0.18);
+
+  --outpost: #f59e0b;
+  --outpost-soft: rgba(245, 158, 11, 0.16);
+  --outpost-border: rgba(245, 158, 11, 0.55);
+
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.16);
+  --success: #4ade80;
+
+  --node-header: #24413f;
+  --node-header-text: #f4f4f5;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -10px rgba(0, 0, 0, 0.65);
+  --shadow-modal: 0 8px 16px -4px rgba(0, 0, 0, 0.5), 0 24px 48px -12px rgba(0, 0, 0, 0.75);
+
+  --grid-dot: rgba(255, 255, 255, 0.16);
+  color-scheme: dark;
+
+  --xy-background-color: var(--surface-app);
+  --xy-controls-button-background-color: var(--surface-panel);
+  --xy-controls-button-background-color-hover: var(--surface-hover);
+  --xy-controls-button-border-color: var(--border-default);
+  --xy-controls-button-color: var(--text-secondary);
+  --xy-controls-button-color-hover: var(--text-primary);
+  --xy-controls-box-shadow: var(--shadow-card);
+}
+
+html,
+body {
+  background-color: var(--surface-app);
+  color: var(--text-primary);
+}

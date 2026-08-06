@@ -35,9 +35,32 @@ import { type Point, type Rect, polylineIntersectsRect, rectFromPoints, rectsInt
 /** How far (in screen px) the pointer has to move past the right-button-down point before this counts as a drag (a marquee) rather than a quick right-click (which should fall through to `onPaneContextMenu`'s Recipe Chooser, per Job 009). Matches `doubleClick.ts`'s general click-vs-drag tolerance philosophy, kept smaller here since a marquee's own visual feedback (the overlay rect) makes an over-eager "is this a drag yet" call much less confusing than a mistimed double-click would be. */
 const MARQUEE_DRAG_THRESHOLD_PX = 4;
 
-/** Fallback node footprint for a node whose `measured` size isn't available yet (a node that hasn't completed its first paint) — matches `RecipeNode.tsx`'s fixed `w-64` (256px) card width; height is a rough average since `RecipeNode`'s height varies with part-row count. Only ever used for that brief unmeasured window, so exactness doesn't matter much. */
+/**
+ * Fallback node footprint for a node whose `measured` size isn't available
+ * yet (a node that hasn't completed its first paint) — only ever used for
+ * that brief pre-first-paint window, so exactness doesn't matter much
+ * beyond "roughly the right ballpark so a marquee drawn immediately after
+ * a node appears doesn't badly miss it."
+ *
+ * Job 013's own Handoff notes flagged that this fallback was never adjusted
+ * for `OutpostNode`'s different card size (`w-56`/224px vs `RecipeNode`'s
+ * `w-64`/256px) — fixed here (Job 014) by keying off `node.type` instead of
+ * a single constant. Both widths mirror each component's own fixed
+ * Tailwind width class exactly (`RecipeNode.tsx`, `outposts/OutpostNode.tsx`
+ * — grep for `w-64`/`w-56` there if either is ever resized, since nothing
+ * enforces these three numbers staying in sync automatically); heights are
+ * rough averages since both cards' real height varies with row count.
+ */
+const FALLBACK_SIZE_BY_TYPE: Record<string, { width: number; height: number }> = {
+  recipe: { width: 256, height: 160 },
+  outpost: { width: 224, height: 120 },
+};
 const FALLBACK_NODE_WIDTH = 256;
 const FALLBACK_NODE_HEIGHT = 160;
+
+function fallbackSize(node: CanvasNode): { width: number; height: number } {
+  return FALLBACK_SIZE_BY_TYPE[node.type ?? ""] ?? { width: FALLBACK_NODE_WIDTH, height: FALLBACK_NODE_HEIGHT };
+}
 
 export interface MarqueeOverlayRect {
   left: number;
@@ -85,15 +108,21 @@ interface DragState {
   dragging: boolean;
 }
 
+function measuredOrFallbackSize(node: CanvasNode): { width: number; height: number } {
+  const fallback = fallbackSize(node);
+  return {
+    width: node.measured?.width ?? fallback.width,
+    height: node.measured?.height ?? fallback.height,
+  };
+}
+
 function nodeCenter(node: CanvasNode): Point {
-  const width = node.measured?.width ?? FALLBACK_NODE_WIDTH;
-  const height = node.measured?.height ?? FALLBACK_NODE_HEIGHT;
+  const { width, height } = measuredOrFallbackSize(node);
   return { x: node.position.x + width / 2, y: node.position.y + height / 2 };
 }
 
 function nodeRect(node: CanvasNode): Rect {
-  const width = node.measured?.width ?? FALLBACK_NODE_WIDTH;
-  const height = node.measured?.height ?? FALLBACK_NODE_HEIGHT;
+  const { width, height } = measuredOrFallbackSize(node);
   return { x: node.position.x, y: node.position.y, width, height };
 }
 

@@ -23,11 +23,12 @@
 // own handler and never reaches the label's.
 import { memo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 
-import { addWaypoint, removeEdge, removeWaypoint, updateWaypoint } from "@scm/ydoc";
+import { addWaypoint, getSettings, removeEdge, removeWaypoint, updateWaypoint } from "@scm/ydoc";
 import { BaseEdge, EdgeLabelRenderer, useReactFlow, type EdgeProps } from "@xyflow/react";
 
 import { useCanvasDoc } from "../CanvasDocContext";
 import { isDoubleClick, type ClickPoint } from "../doubleClick";
+import { snapPointToGrid } from "../snapToGrid";
 import type { CanvasEdge } from "../useYjsSync";
 import { buildPolyline, nearestSegmentIndex, pointAtT, toPathD, type Point } from "./edgeGeometry";
 
@@ -37,10 +38,10 @@ import { buildPolyline, nearestSegmentIndex, pointAtT, toPathD, type Point } fro
 // `translate-*` utility here, since an inline `style.transform` would just
 // clobber it.
 const waypointMarkerClass =
-  "nodrag nopan absolute h-2.5 w-2.5 cursor-move rounded-full border border-neutral-300 bg-neutral-600 hover:bg-indigo-500";
+  "nodrag nopan absolute h-2.5 w-2.5 cursor-move rounded-full border-2 border-[var(--surface-app)] bg-[var(--text-secondary)] shadow-[var(--shadow-card)] hover:bg-[var(--accent)]";
 
 const labelClass =
-  "nodrag nopan absolute cursor-pointer select-none whitespace-nowrap rounded border border-neutral-600 bg-neutral-900/90 px-1 py-0.5 text-[10px] text-neutral-200 hover:border-indigo-500";
+  "nodrag nopan absolute cursor-pointer select-none whitespace-nowrap rounded-md border border-[var(--border-default)] bg-[var(--surface-overlay)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-secondary)] shadow-[var(--shadow-card)] hover:border-[var(--accent)] hover:text-[var(--text-primary)]";
 
 /** The default `labelPos` used until a waypoint-adding click establishes a real one — see Handoff notes. */
 const DEFAULT_LABEL_POS = 0.5;
@@ -107,7 +108,13 @@ export const ConnectionEdge = memo(function ConnectionEdge({
   function addWaypointAtClient(clientX: number, clientY: number) {
     const flowPos = screenToFlowPosition({ x: clientX, y: clientY });
     const index = nearestSegmentIndex(points, flowPos);
-    addWaypoint(sfmDoc, id, flowPos, index);
+    // Job 014: snap the *creation* point too, not just subsequent drags —
+    // otherwise a freshly-added waypoint would start off-grid and only snap
+    // the next time it's dragged, which reads as a bug ("why did it jump")
+    // rather than the intended behavior.
+    const settings = getSettings(sfmDoc);
+    const point = settings.snapWaypoints ? snapPointToGrid(flowPos, settings.gridWaypoint) : flowPos;
+    addWaypoint(sfmDoc, id, point, index);
   }
 
   function handleLabelClick(event: ReactMouseEvent) {
@@ -185,17 +192,35 @@ export const ConnectionEdge = memo(function ConnectionEdge({
   function handleWaypointPointerUp(event: ReactPointerEvent) {
     if (dragIndex === null) return;
     const flowPos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-    updateWaypoint(sfmDoc, id, dragIndex, flowPos);
+    // Job 014: snap-to-grid on commit, mirroring `useYjsSync.ts`'s
+    // `onNodeDragStop` — `Settings.snapWaypoints`/`gridWaypoint` (Job 007's
+    // schema) rather than `snapMachines`/`gridMachine`, since PLAN.md §3
+    // calls out "snap-to-grid for machines *and* waypoints" as two
+    // independently configurable things. Read fresh at the moment the drag
+    // ends, same reasoning as that hook's own comment.
+    const settings = getSettings(sfmDoc);
+    const point = settings.snapWaypoints ? snapPointToGrid(flowPos, settings.gridWaypoint) : flowPos;
+    updateWaypoint(sfmDoc, id, dragIndex, point);
     setDragIndex(null);
     setDragPoint(null);
   }
 
   return (
     <>
-      <BaseEdge id={id} path={pathD} markerEnd={markerEnd} style={style} interactionWidth={16} />
+      <BaseEdge
+        id={id}
+        path={pathD}
+        markerEnd={markerEnd}
+        style={{
+          stroke: selected ? "var(--accent)" : "var(--text-muted)",
+          strokeWidth: selected ? 2 : 1.5,
+          ...style,
+        }}
+        interactionWidth={16}
+      />
       <EdgeLabelRenderer>
         <div
-          className={`${labelClass} ${selected ? "border-indigo-500" : ""}`}
+          className={`${labelClass} ${selected ? "border-[var(--accent)] text-[var(--accent)]" : ""}`}
           style={{
             transform: `translate(-50%, -50%) translate(${labelPoint.x}px, ${labelPoint.y}px)`,
             pointerEvents: "all",

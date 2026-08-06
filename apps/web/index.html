@@ -5,6 +5,25 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Satisfactory Colab Modeler</title>
+    <!--
+      Job 014: applies the persisted/system theme class to <html> before
+      React ever mounts, so there's no flash-of-wrong-theme between first
+      paint and `theme/useTheme.ts`'s own (otherwise-idempotent) first
+      effect run. Mirrors that hook's `resolveInitialTheme` logic exactly —
+      keep the two in sync if the storage key or fallback ever changes.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("scm-theme");
+          var dark = stored ? stored === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.classList.toggle("dark", dark);
+          document.documentElement.classList.toggle("light", !dark);
+        } catch (e) {
+          document.documentElement.classList.add("light");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

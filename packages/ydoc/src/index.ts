@@ -77,6 +77,7 @@ export {
   updateContainer,
   updateEdge,
   updateNode,
+  updateSettings,
   updateWaypoint,
   type ContainerPatch,
   type EdgePatch,
@@ -84,6 +85,7 @@ export {
   type NewEdgeInput,
   type NewNodeInput,
   type NodePatch,
+  type SettingsPatch,
 } from "./mutations";
 
 export { computeEdgeId } from "./edgeId";

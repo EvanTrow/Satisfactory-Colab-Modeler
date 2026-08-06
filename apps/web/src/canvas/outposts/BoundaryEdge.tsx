@@ -17,7 +17,7 @@ import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps } from "
 import type { CanvasEdge } from "../useYjsSync";
 
 const labelClass =
-  "pointer-events-none absolute select-none whitespace-nowrap rounded border border-amber-700 bg-neutral-900/90 px-1 py-0.5 text-[10px] text-amber-200";
+  "pointer-events-none absolute select-none whitespace-nowrap rounded-md border border-[var(--outpost-border)] bg-[var(--surface-overlay)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--outpost)] shadow-[var(--shadow-card)]";
 
 export const BoundaryEdge = memo(function BoundaryEdge({
   data,
@@ -41,12 +41,12 @@ export const BoundaryEdge = memo(function BoundaryEdge({
       <BaseEdge
         path={path}
         markerEnd={markerEnd}
-        style={{ ...style, strokeDasharray: "4 3" }}
+        style={{ ...style, strokeDasharray: "5 4", stroke: "var(--outpost)", strokeWidth: 1.5, opacity: 0.85 }}
         interactionWidth={16}
       />
       <EdgeLabelRenderer>
         <div
-          className={`${labelClass} ${selected ? "border-indigo-500" : ""}`}
+          className={`${labelClass} ${selected ? "border-[var(--accent)] text-[var(--accent)]" : ""}`}
           style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
           title="Boundary connection — crosses an outpost's edge. Move the node in/out of the outpost to change this."
         >

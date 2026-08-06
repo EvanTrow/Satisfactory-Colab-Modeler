@@ -29,7 +29,7 @@ export interface NodeContextMenuProps {
   onClose: () => void;
 }
 
-const itemClass = "block w-full rounded px-2 py-1.5 text-left text-sm text-neutral-200 hover:bg-neutral-800";
+const itemClass = "block w-full rounded-md px-2 py-1.5 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--surface-hover)]";
 
 export function NodeContextMenu({
   state,
@@ -44,7 +44,7 @@ export function NodeContextMenu({
     // Backdrop: click anywhere else closes the menu without acting — same pattern `RecipeChooser.tsx` uses.
     <div className="fixed inset-0 z-50" onMouseDown={onClose} onContextMenu={(event) => event.preventDefault()}>
       <div
-        className="absolute min-w-[200px] rounded-lg border border-neutral-700 bg-neutral-900 p-1 text-neutral-100 shadow-2xl"
+        className="absolute min-w-[200px] rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)] p-1 text-[var(--text-primary)] shadow-[var(--shadow-modal)]"
         style={{ left: state.screenPosition.x, top: state.screenPosition.y }}
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -62,7 +62,7 @@ export function NodeContextMenu({
             </button>
             <button
               type="button"
-              className={`${itemClass} text-red-300 hover:bg-red-950`}
+              className={`${itemClass} text-[var(--danger)] hover:bg-[var(--danger-soft)]`}
               onClick={() => {
                 onDeleteOutpost(state.nodeId);
                 onClose();
@@ -87,7 +87,7 @@ export function NodeContextMenu({
               </button>
             )}
             {siblingOutposts.length === 0 && !parentContainer && (
-              <p className="px-2 py-1.5 text-xs text-neutral-500">No outposts here to move into.</p>
+              <p className="px-2 py-1.5 text-xs text-[var(--text-muted)]">No outposts here to move into.</p>
             )}
             {siblingOutposts.map((outpost) => (
               <button

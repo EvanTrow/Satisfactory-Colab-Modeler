@@ -141,14 +141,14 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
           type="button"
           onClick={handleCreate}
           disabled={creating}
-          className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+          className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
         >
           {creating ? "Creating…" : "New project"}
         </button>
       </div>
 
       {notice && (
-        <div className="mb-4 rounded border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
+        <div className="mb-4 rounded-md border border-[var(--outpost-border)] bg-[var(--outpost-soft)] px-3 py-2 text-sm text-[var(--outpost)]">
           {notice}
           <button type="button" onClick={() => setNotice(null)} className="ml-3 underline">
             Dismiss
@@ -156,22 +156,24 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
         </div>
       )}
       {actionError && (
-        <div className="mb-4 rounded border border-red-800 bg-red-950/40 px-3 py-2 text-sm text-red-300">
+        <div className="mb-4 rounded-md border border-[var(--danger)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">
           {actionError}
         </div>
       )}
 
-      {loadState.status === "loading" && <p className="text-neutral-500">Loading projects…</p>}
-      {loadState.status === "error" && <p className="text-red-400">Couldn't load projects: {loadState.message}</p>}
+      {loadState.status === "loading" && <p className="text-[var(--text-muted)]">Loading projects…</p>}
+      {loadState.status === "error" && (
+        <p className="text-[var(--danger)]">Couldn't load projects: {loadState.message}</p>
+      )}
 
       {loadState.status === "ready" && projects.length === 0 && (
-        <div className="rounded border border-dashed border-neutral-700 px-4 py-10 text-center text-neutral-400">
+        <div className="rounded-lg border border-dashed border-[var(--border-strong)] px-4 py-10 text-center text-[var(--text-muted)]">
           <p>No projects yet — create one to get started.</p>
         </div>
       )}
 
       {loadState.status === "ready" && projects.length > 0 && (
-        <ul className="divide-y divide-neutral-800 rounded border border-neutral-800">
+        <ul className="divide-y divide-[var(--border-subtle)] rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)]">
           {projects.map((project) => {
             const isRenaming = renamingId === project.id;
             const isBusy = busyId === project.id;
@@ -190,19 +192,19 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
                         if (e.key === "Enter") void submitRename(project);
                         if (e.key === "Escape") cancelRename();
                       }}
-                      className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
+                      className="w-full rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
                     />
                   ) : (
                     <button
                       type="button"
                       onClick={() => onOpenProject(project)}
-                      className="truncate text-left font-medium text-neutral-100 hover:underline"
+                      className="truncate text-left font-medium text-[var(--text-primary)] hover:underline"
                       title="Open project"
                     >
                       {project.title}
                     </button>
                   )}
-                  <p className="mt-0.5 text-xs text-neutral-500">
+                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">
                     {project.role} · updated {new Date(project.updatedAt).toLocaleString()}
                   </p>
                 </div>
@@ -214,11 +216,15 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
                         type="button"
                         onClick={() => void submitRename(project)}
                         disabled={isBusy}
-                        className="rounded bg-indigo-600 px-2 py-1 text-white hover:bg-indigo-500 disabled:opacity-50"
+                        className="rounded-md bg-[var(--accent)] px-2 py-1 text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
                       >
                         Save
                       </button>
-                      <button type="button" onClick={cancelRename} className="rounded px-2 py-1 text-neutral-400 hover:text-neutral-200">
+                      <button
+                        type="button"
+                        onClick={cancelRename}
+                        className="rounded-md px-2 py-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      >
                         Cancel
                       </button>
                     </>
@@ -229,7 +235,7 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
                           type="button"
                           onClick={() => startRename(project)}
                           disabled={isBusy}
-                          className="rounded px-2 py-1 text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+                          className="rounded-md px-2 py-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
                         >
                           Rename
                         </button>
@@ -238,7 +244,7 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
                         type="button"
                         onClick={() => void handleDuplicate(project)}
                         disabled={isBusy}
-                        className="rounded px-2 py-1 text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+                        className="rounded-md px-2 py-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
                       >
                         Duplicate
                       </button>
@@ -247,7 +253,7 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
                           type="button"
                           onClick={() => void handleDelete(project)}
                           disabled={isBusy}
-                          className="rounded px-2 py-1 text-red-400 hover:bg-red-950/40 disabled:opacity-50"
+                          className="rounded-md px-2 py-1 text-[var(--danger)] hover:bg-[var(--danger-soft)] disabled:opacity-50"
                         >
                           Delete
                         </button>

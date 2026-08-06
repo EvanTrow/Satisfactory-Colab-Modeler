@@ -22,15 +22,15 @@ export function Breadcrumbs({ containers, currentContainerId, onNavigate }: Brea
         const isCurrent = container.id === currentContainerId;
         return (
           <span key={container.id} className="flex shrink-0 items-center gap-1">
-            {index > 0 && <span className="text-neutral-600">/</span>}
+            {index > 0 && <span className="text-[var(--text-muted)]">/</span>}
             <button
               type="button"
               onClick={() => onNavigate(container.id)}
               disabled={isCurrent}
               className={
                 isCurrent
-                  ? "rounded px-1.5 py-0.5 font-medium text-neutral-100"
-                  : "rounded px-1.5 py-0.5 text-neutral-400 hover:text-neutral-200 hover:underline"
+                  ? "rounded-md px-1.5 py-0.5 font-medium text-[var(--text-primary)]"
+                  : "rounded-md px-1.5 py-0.5 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
               }
             >
               {container.title || (container.kind === "root" ? "Root" : "Outpost")}

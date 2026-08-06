@@ -53,3 +53,24 @@ const iconUrlByFileName = new Map<string, string>(
 export function getIconUrl(displayName: string): string | undefined {
   return iconUrlByFileName.get(iconFileName(displayName));
 }
+
+// Job 014: `resources/images/custom_icons/` — PLAN.md §1's "icons for the
+// three abstract node types" (`Outpost.png`/`Blueprint.png`/`anypart.png`),
+// separate from the 204 real part/machine icons above because they don't
+// correspond to a `game_data.json` name `iconFileName` can resolve — same
+// glob-at-build-time mechanism as `iconUrlsByPath`, just a different source
+// directory and a plain filename-keyed map instead of a display-name one.
+const customIconUrlsByPath = import.meta.glob("../../../../resources/images/custom_icons/*.png", {
+  eager: true,
+  query: "?url",
+  import: "default",
+}) as Record<string, string>;
+
+const customIconUrlByFileName = new Map<string, string>(
+  Object.entries(customIconUrlsByPath).map(([path, url]) => [path.split("/").pop()!, url]),
+);
+
+/** The outpost card icon (`OutpostNode.tsx`) — real game-art asset instead of an emoji/text placeholder. */
+export function getOutpostIconUrl(): string | undefined {
+  return customIconUrlByFileName.get("Outpost.png");
+}

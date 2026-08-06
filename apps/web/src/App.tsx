@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ProjectSummary } from "./api/projects";
 import { CanvasView } from "./canvas";
 import { ProjectsPage } from "./routes/ProjectsPage";
+import { ThemeToggle, useTheme } from "./theme";
 
 // Minimal shape of GET /auth/me's response body (apps/api/src/auth/routes.ts).
 interface CurrentUser {
@@ -40,6 +41,12 @@ type View = { name: "projects" } | { name: "canvas"; project: ProjectSummary };
 function App() {
   const [auth, setAuth] = useState<AuthState>({ status: "loading" });
   const [view, setView] = useState<View>({ name: "projects" });
+  // Job 014: mounted once here (not just inside `CanvasView.tsx`) precisely
+  // because "app-level, not canvas-only" is the whole point — see
+  // `theme/useTheme.ts`'s header comment. Both mounts share the same
+  // localStorage-backed state; only one of the two views is ever on screen
+  // at once, so there's no risk of them fighting each other.
+  const { theme, toggleTheme } = useTheme();
 
   const enterCanvas = useCallback((project: ProjectSummary) => {
     setView({ name: "canvas", project });
@@ -85,10 +92,12 @@ function App() {
   // because React Flow wants to own its full container's height for
   // pan/zoom to feel right, and partly because that's the more app-like
   // "editor takes over the screen" feel PLAN.md's Ferrumium-inspired visual
-  // direction is going for (full polish is Job 014's, not this job's).
+  // direction is going for. `CanvasView` mounts its own `<ThemeToggle>`
+  // (Job 014) rather than one being passed down from here, precisely
+  // because there's no shared chrome to put it in.
   if (auth.status === "authenticated" && view.name === "canvas") {
     return (
-      <main className="bg-neutral-950 text-neutral-100">
+      <main className="bg-[var(--surface-app)] text-[var(--text-primary)]">
         <CanvasView
           key={view.project.id}
           projectTitle={view.project.title}
@@ -100,16 +109,18 @@ function App() {
   }
 
   return (
-    <main className="min-h-svh bg-neutral-950 text-neutral-100">
-      <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
+    <main className="min-h-svh bg-[var(--surface-app)] text-[var(--text-primary)]">
+      <header className="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-3">
         <h1 className="text-lg font-semibold tracking-tight">Satisfactory Colab Modeler</h1>
 
-        <div>
-          {auth.status === "loading" && <span className="text-sm text-neutral-500">Checking login status…</span>}
+        <div className="flex items-center gap-3">
+          {auth.status === "loading" && (
+            <span className="text-sm text-[var(--text-muted)]">Checking login status…</span>
+          )}
           {auth.status === "anonymous" && (
             <a
               href="/auth/discord/login"
-              className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+              className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]"
             >
               Log in with Discord
             </a>
@@ -119,11 +130,12 @@ function App() {
               <span>
                 Logged in as <strong>{auth.user.globalName ?? auth.user.username}</strong>
               </span>
-              <a href="/auth/logout" className="text-neutral-400 underline hover:text-neutral-200">
+              <a href="/auth/logout" className="text-[var(--text-muted)] underline hover:text-[var(--text-primary)]">
                 Log out
               </a>
             </div>
           )}
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </div>
       </header>
 
@@ -133,7 +145,7 @@ function App() {
           closest thing to "redirect to the login flow" available without a
           real router (see the View comment above). */}
       {auth.status !== "authenticated" && (
-        <div className="mx-auto max-w-3xl px-4 py-16 text-center text-neutral-400">
+        <div className="mx-auto max-w-3xl px-4 py-16 text-center text-[var(--text-muted)]">
           {auth.status === "loading" ? "Loading…" : "Log in with Discord to see your projects."}
         </div>
       )}

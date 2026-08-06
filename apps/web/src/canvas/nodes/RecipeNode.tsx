@@ -38,11 +38,18 @@ import {
 
 const gameData = defaultGameData;
 
+// Job 014: visual pass — every color/spacing/radius value below reads from
+// `index.css`'s `@theme`-adjacent token block (`--surface-*`/`--border-*`/
+// `--text-*`/`--accent*`), characterized from Ferrumium's own light theme
+// (see that file's header comment) and mirrored for dark. No literal
+// `neutral-*`/`indigo-*` Tailwind color utility remains in this file —
+// every one of them only ever expressed *one* theme, which is exactly what
+// broke dark/light parity before this job.
 const stepperButtonClass =
-  "nodrag flex h-5 w-5 shrink-0 items-center justify-center rounded border border-neutral-700 bg-neutral-800 text-neutral-200 hover:enabled:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-40";
+  "nodrag flex h-5 w-5 shrink-0 items-center justify-center rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] text-[var(--text-secondary)] hover:enabled:border-[var(--border-strong)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40";
 
 const fieldInputClass =
-  "nodrag w-16 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-right text-neutral-100 focus:border-indigo-500 focus:outline-none";
+  "nodrag w-16 rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] px-1.5 py-0.5 text-right text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none";
 
 /**
  * Binds a text input to a "committed" `Rational`-bearing string (`node.limit`
@@ -113,7 +120,7 @@ function PartRow({ part, rate, onRemovePortEdges }: PartRowProps) {
 
   return (
     <div
-      className="relative flex items-center gap-1.5 px-2 py-1 text-[11px]"
+      className="group relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)]"
       onContextMenu={(event) => {
         event.preventDefault();
         // Stop this from bubbling up to `<ReactFlow onPaneContextMenu>`,
@@ -123,22 +130,23 @@ function PartRow({ part, rate, onRemovePortEdges }: PartRowProps) {
         event.stopPropagation();
         onRemovePortEdges(handleId);
       }}
+      title={`${input ? "Input" : "Output"}: right-click to disconnect`}
     >
       {input && (
         <Handle
           type="target"
           position={Position.Left}
           id={handleId}
-          className="!h-2.5 !w-2.5 !border-neutral-500 !bg-neutral-700"
+          className="!h-2.5 !w-2.5 !border-2 !border-[var(--surface-card)] !bg-[var(--text-secondary)]"
         />
       )}
       {iconUrl ? (
-        <img src={iconUrl} alt="" className="h-4 w-4 shrink-0" />
+        <img src={iconUrl} alt="" className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)] object-contain p-0.5" />
       ) : (
-        <span className="h-4 w-4 shrink-0 rounded-sm bg-neutral-700" aria-hidden />
+        <span className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)]" aria-hidden />
       )}
-      <span className="min-w-0 flex-1 truncate text-neutral-200">{part.part}</span>
-      <span className="shrink-0 tabular-nums text-neutral-400" title={toFractionString(rate)}>
+      <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]">{part.part}</span>
+      <span className="shrink-0 tabular-nums text-[var(--text-secondary)]" title={toFractionString(rate)}>
         {formatRate(rate)}/min
       </span>
       {!input && (
@@ -146,7 +154,7 @@ function PartRow({ part, rate, onRemovePortEdges }: PartRowProps) {
           type="source"
           position={Position.Right}
           id={handleId}
-          className="!h-2.5 !w-2.5 !border-neutral-500 !bg-neutral-700"
+          className="!h-2.5 !w-2.5 !border-2 !border-[var(--surface-card)] !bg-[var(--text-secondary)]"
         />
       )}
     </div>
@@ -250,7 +258,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
     // Render just enough to be legible instead of crashing the whole
     // canvas.
     return (
-      <div className="w-56 rounded-md border border-red-800 bg-neutral-900 px-2 py-1.5 text-xs text-red-300">
+      <div className="w-56 rounded-lg border border-[var(--danger)] bg-[var(--surface-card)] px-2 py-1.5 text-xs text-[var(--danger)] shadow-[var(--shadow-card)]">
         Unknown recipe: {node.recipe ?? "(none)"}
       </div>
     );
@@ -271,32 +279,42 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
       // stack at its own reported center). Job 010 never caught this
       // because it only asserted handle *presence*/attributes via
       // `querySelectorAll`, never actually dragged a connection — that's
-      // this job's own scope. The header's `rounded-t-md` below (new)
-      // replaces what `overflow-hidden` used to clip for visually, since
-      // it's the only child with its own background color that would
-      // otherwise poke square corners out past this card's `rounded-md`.
-      className={`w-64 rounded-md border bg-neutral-900 text-neutral-100 shadow-lg ${
-        selected ? "border-indigo-500" : "border-neutral-700"
+      // this job's own scope. The header's `rounded-t-lg` below replaces
+      // what `overflow-hidden` used to clip for visually, since it's the
+      // only child with its own background color that would otherwise poke
+      // square corners out past this card's `rounded-lg`.
+      //
+      // Job 014: `rounded-lg` (8px) + a 2px border matches Ferrumium's own
+      // measured card metrics exactly (see `index.css`'s token-block
+      // comment); `--node-header` is a fixed dark-slate-teal that doesn't
+      // vary between themes (same reasoning as that comment), so the header
+      // always reads clearly against either theme's card body.
+      className={`w-64 rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors ${
+        selected ? "border-[var(--accent)]" : "border-[var(--border-strong)]"
       }`}
     >
-      <div className="flex items-center gap-2 rounded-t-md border-b border-neutral-800 bg-neutral-950/60 px-2 py-1.5">
+      <div className="flex cursor-grab items-center gap-2 rounded-t-[7px] bg-[var(--node-header)] px-2 py-1.5 active:cursor-grabbing">
         {machineIconUrl ? (
-          <img src={machineIconUrl} alt="" className="h-6 w-6 shrink-0" />
+          <img
+            src={machineIconUrl}
+            alt=""
+            className="h-6 w-6 shrink-0 rounded-md bg-black/20 object-contain p-0.5 shadow-inner"
+          />
         ) : (
-          <span className="h-6 w-6 shrink-0 rounded bg-neutral-700" aria-hidden />
+          <span className="h-6 w-6 shrink-0 rounded-md bg-black/20" aria-hidden />
         )}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-neutral-100">{recipe.name}</p>
-          <p className="truncate text-[10px] text-neutral-500">
+          <p className="truncate text-sm font-medium text-[var(--node-header-text)]">{recipe.name}</p>
+          <p className="truncate text-[10px] text-[var(--node-header-text)]/70">
             {node.machine ?? "Unknown machine"}
             {recipe.isGenerator ? " · Generator" : ""}
           </p>
         </div>
       </div>
 
-      <div className="divide-y divide-neutral-800/60 py-0.5">
+      <div className="divide-y divide-[var(--border-subtle)] py-0.5">
         {recipe.parts.length === 0 ? (
-          <p className="px-2 py-1.5 text-[11px] text-neutral-500">This recipe has no parts (power-only).</p>
+          <p className="px-2 py-1.5 text-[11px] text-[var(--text-muted)]">This recipe has no parts (power-only).</p>
         ) : (
           [...recipe.parts]
             .sort((a, b) => Number(isNegative(b.amount)) - Number(isNegative(a.amount)))
@@ -311,14 +329,14 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
         )}
       </div>
 
-      <div className="space-y-1.5 border-t border-neutral-800 px-2 py-1.5 text-[11px]">
+      <div className="space-y-1.5 border-t border-[var(--border-subtle)] px-2 py-1.5 text-[11px]">
         <label className="flex items-center justify-between gap-2">
-          <span className="text-neutral-400">Limit ({node.limitMode === "ppm" ? "ppm" : "machines"})</span>
+          <span className="text-[var(--text-secondary)]">Limit ({node.limitMode === "ppm" ? "ppm" : "machines"})</span>
           <input type="text" inputMode="decimal" className={fieldInputClass} {...limitField} />
         </label>
 
         <div className="flex items-center justify-between gap-2">
-          <span className="text-neutral-400">Clock</span>
+          <span className="text-[var(--text-secondary)]">Clock</span>
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -330,7 +348,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               −
             </button>
             <input type="text" inputMode="decimal" className={fieldInputClass} {...clockField} />
-            <span className="text-neutral-500">%</span>
+            <span className="text-[var(--text-muted)]">%</span>
             <button
               type="button"
               className={stepperButtonClass}
@@ -344,7 +362,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
         </div>
 
         <div className="flex items-center justify-between gap-2">
-          <span className="text-neutral-400">Somersloops</span>
+          <span className="text-[var(--text-secondary)]">Somersloops</span>
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -354,7 +372,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
             >
               −
             </button>
-            <span className="w-8 text-center tabular-nums text-neutral-100">
+            <span className="w-8 text-center tabular-nums text-[var(--text-primary)]">
               {node.shards}/{maxShards}
             </span>
             <button
@@ -369,7 +387,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
         </div>
 
         {machineCount && (
-          <p className="text-right text-neutral-500" title={toFractionString(machineCount)}>
+          <p className="text-right text-[var(--text-muted)]" title={toFractionString(machineCount)}>
             ≈ {toDecimalString(machineCount, { digits: 3 })} machine{equals(machineCount, of(1)) ? "" : "s"}
           </p>
         )}

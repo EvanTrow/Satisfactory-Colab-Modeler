@@ -15,7 +15,7 @@ export interface MarqueeOverlayProps {
 export function MarqueeOverlay({ rect }: MarqueeOverlayProps) {
   return (
     <div
-      className="pointer-events-none fixed z-[10000] border border-indigo-400 bg-indigo-400/10"
+      className="pointer-events-none fixed z-[10000] rounded-sm border border-[var(--accent)] bg-[var(--accent-soft)]"
       style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}
     />
   );

@@ -138,20 +138,20 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
 
   return (
     // Backdrop: clicking outside the modal box closes without selecting.
-    <div className="fixed inset-0 z-50" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/20" onMouseDown={onClose}>
       <div
-        className="absolute flex flex-col overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 text-neutral-100 shadow-2xl"
+        className="absolute flex flex-col overflow-hidden rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-primary)] shadow-[var(--shadow-modal)]"
         style={{ left: modalPosition.left, top: modalPosition.top, width: MODAL_WIDTH, height: MODAL_HEIGHT }}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-2">
+        <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-4 py-2">
           <h3 className="text-sm font-semibold">{creatingOutpost ? "New outpost" : "Add a machine"}</h3>
           <div className="flex items-center gap-2">
             {!creatingOutpost && !pendingRecipe && (
               <button
                 type="button"
                 onClick={() => setCreatingOutpost(true)}
-                className="rounded border border-amber-700 bg-amber-900/40 px-2 py-1 text-xs font-medium text-amber-200 hover:bg-amber-900/70"
+                className="rounded-md border border-[var(--outpost-border)] bg-[var(--outpost-soft)] px-2 py-1 text-xs font-medium text-[var(--outpost)] hover:brightness-110"
                 title="Create a nested outpost container here — PLAN.md's 'like folders' framing"
               >
                 + New Outpost
@@ -161,7 +161,7 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="rounded px-1 text-neutral-400 hover:text-neutral-200"
+              className="rounded-md px-1.5 py-0.5 text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
             >
               ✕
             </button>
@@ -170,7 +170,7 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
 
         {creatingOutpost ? (
           <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-            <label className="flex flex-col gap-1 text-sm text-neutral-300">
+            <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
               Outpost name
               <input
                 type="text"
@@ -180,21 +180,21 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
                 onKeyDown={(event) => {
                   if (event.key === "Enter") handleCreateOutpost();
                 }}
-                className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100"
+                className="rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1 text-[var(--text-primary)] focus:border-[var(--outpost)] focus:outline-none"
               />
             </label>
             <div className="mt-auto flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setCreatingOutpost(false)}
-                className="rounded px-3 py-1.5 text-sm text-neutral-400 hover:text-neutral-200"
+                className="rounded-md px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               >
                 ← Back
               </button>
               <button
                 type="button"
                 onClick={handleCreateOutpost}
-                className="rounded bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-500"
+                className="rounded-md bg-[var(--outpost)] px-3 py-1.5 text-sm font-medium text-[var(--accent-contrast)] hover:brightness-110"
               >
                 Create outpost
               </button>
@@ -212,13 +212,15 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
         ) : (
           <div className="flex min-h-0 flex-1">
             {/* Left pane: the machines at least one recipe uses — clicking one sets/clears the "machine" filter on the right. */}
-            <div className="w-48 shrink-0 overflow-y-auto border-r border-neutral-800 p-2">
-              <p className="mb-1 px-1 text-[11px] uppercase tracking-wide text-neutral-500">Machines</p>
+            <div className="w-48 shrink-0 overflow-y-auto border-r border-[var(--border-subtle)] p-2">
+              <p className="mb-1 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Machines</p>
               <button
                 type="button"
                 onClick={() => setFilters((f) => ({ ...f, machine: null }))}
-                className={`block w-full rounded px-2 py-1 text-left text-sm ${
-                  filters.machine === null ? "bg-indigo-600 text-white" : "text-neutral-300 hover:bg-neutral-800"
+                className={`block w-full rounded-md px-2 py-1 text-left text-sm ${
+                  filters.machine === null
+                    ? "bg-[var(--accent)] text-[var(--accent-contrast)]"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
                 }`}
               >
                 All machines
@@ -228,10 +230,10 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
                   key={machine}
                   type="button"
                   onClick={() => setFilters((f) => ({ ...f, machine: f.machine === machine ? null : machine }))}
-                  className={`block w-full truncate rounded px-2 py-1 text-left text-sm ${
+                  className={`block w-full truncate rounded-md px-2 py-1 text-left text-sm ${
                     filters.machine === machine
-                      ? "bg-indigo-600 text-white"
-                      : "text-neutral-300 hover:bg-neutral-800"
+                      ? "bg-[var(--accent)] text-[var(--accent-contrast)]"
+                      : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
                   }`}
                 >
                   {machine}
@@ -241,19 +243,19 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
 
             {/* Right pane: filterable recipe list. */}
             <div className="flex min-h-0 flex-1 flex-col">
-              <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800 p-2">
+              <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] p-2">
                 <input
                   type="text"
                   autoFocus
                   placeholder="Search recipes…"
                   value={filters.search}
                   onChange={(event) => setFilters((f) => ({ ...f, search: event.target.value }))}
-                  className="min-w-[140px] flex-1 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100 placeholder:text-neutral-500"
+                  className="min-w-[140px] flex-1 rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none"
                 />
                 <select
                   value={filters.tier ?? ""}
                   onChange={(event) => setFilters((f) => ({ ...f, tier: event.target.value || null }))}
-                  className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100"
+                  className="rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
                 >
                   <option value="">All tiers</option>
                   {tiers.map((tier) => (
@@ -262,11 +264,12 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
                     </option>
                   ))}
                 </select>
-                <label className="flex items-center gap-1 text-sm text-neutral-300">
+                <label className="flex items-center gap-1 text-sm text-[var(--text-secondary)]">
                   <input
                     type="checkbox"
                     checked={filters.alternatesOnly}
                     onChange={(event) => setFilters((f) => ({ ...f, alternatesOnly: event.target.checked }))}
+                    className="accent-[var(--accent)]"
                   />
                   Alternates only
                 </label>
@@ -274,17 +277,17 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
 
               <div className="min-h-0 flex-1 overflow-y-auto p-1">
                 {recipes.length === 0 && (
-                  <p className="p-3 text-sm text-neutral-500">No recipes match these filters.</p>
+                  <p className="p-3 text-sm text-[var(--text-muted)]">No recipes match these filters.</p>
                 )}
                 {recipes.map((recipe) => (
                   <button
                     key={recipe.name}
                     type="button"
                     onClick={() => handlePickRecipe(recipe)}
-                    className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm text-neutral-200 hover:bg-neutral-800"
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"
                   >
                     <span className="truncate">{recipe.name}</span>
-                    <span className="shrink-0 text-xs text-neutral-500">
+                    <span className="shrink-0 text-xs text-[var(--text-muted)]">
                       {recipe.machine} · {recipe.tier.raw}
                       {recipe.alternate ? " · Alt" : ""}
                     </span>
@@ -321,19 +324,19 @@ function VariantPicker({ recipe, resolved, choice, onChange, onConfirm, onBack }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-      <p className="text-sm text-neutral-300">
-        <span className="font-medium text-neutral-100">{recipe.name}</span> runs on{" "}
-        <span className="font-medium text-neutral-100">{resolved.name}</span>, which needs a model/purity
+      <p className="text-sm text-[var(--text-secondary)]">
+        <span className="font-medium text-[var(--text-primary)]">{recipe.name}</span> runs on{" "}
+        <span className="font-medium text-[var(--text-primary)]">{resolved.name}</span>, which needs a model/purity
         combination before it can be placed.
       </p>
 
       {modelNames.length > 0 && (
-        <label className="flex flex-col gap-1 text-sm text-neutral-300">
+        <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
           Model
           <select
             value={choice.model ?? ""}
             onChange={(event) => onChange({ ...choice, model: event.target.value })}
-            className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100"
+            className="rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1 text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
           >
             {modelNames.map((name) => (
               <option key={name} value={name}>
@@ -345,12 +348,12 @@ function VariantPicker({ recipe, resolved, choice, onChange, onConfirm, onBack }
       )}
 
       {capacityNames.length > 0 && (
-        <label className="flex flex-col gap-1 text-sm text-neutral-300">
+        <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
           Purity / capacity
           <select
             value={choice.capacity ?? ""}
             onChange={(event) => onChange({ ...choice, capacity: event.target.value })}
-            className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100"
+            className="rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1 text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
           >
             {capacityNames.map((name) => (
               <option key={name} value={name}>
@@ -365,14 +368,14 @@ function VariantPicker({ recipe, resolved, choice, onChange, onConfirm, onBack }
         <button
           type="button"
           onClick={onBack}
-          className="rounded px-3 py-1.5 text-sm text-neutral-400 hover:text-neutral-200"
+          className="rounded-md px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
         >
           ← Back
         </button>
         <button
           type="button"
           onClick={onConfirm}
-          className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+          className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]"
         >
           Add to canvas
         </button>

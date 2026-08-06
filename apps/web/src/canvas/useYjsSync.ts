@@ -51,6 +51,7 @@ import {
   type EdgeRecord,
   type NodeRecord,
   type SfmDocument,
+  getSettings,
   listContainers,
   listEdges,
   listNodes,
@@ -72,6 +73,7 @@ import {
 import type { RecipeNodeValidityState } from "./nodes/validityState";
 import { type DerivedOutpostPort, buildContainerParentMap, computeOutpostPorts } from "./outposts/portMapping";
 import { type ProjectedEdge, computeVisibleEdges } from "./outposts/visibleGraph";
+import { snapPointToGrid } from "./snapToGrid";
 
 /**
  * The full `NodeRecord` rides along in `data` for whichever job needs it —
@@ -332,10 +334,26 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
     // outpost node, see `containerToOutpostFlowNode` above) is what
     // distinguishes the two cases; this file never touches `sfmDoc.nodes`/
     // `sfmDoc.containers`' `Y.Map` entries directly either way.
+    //
+    // Job 014: snap-to-grid, applied identically to both cases — an
+    // outpost's on-canvas position is just as much a plain x/y as a real
+    // node's, so `Settings.snapMachines`/`gridMachine` governs both (there's
+    // no separate "outpost grid" setting in Job 007's schema, and PLAN.md
+    // §2 only ever names "machines and waypoints", not "machines, outposts,
+    // and waypoints" — an outpost boundary node is being treated as "a
+    // machine, position-wise" here). Read fresh via `getSettings` at the
+    // moment of drag-stop rather than a subscribed value, since this
+    // callback only ever needs the *current* setting at the instant the
+    // drag ends, not a value that re-renders anything.
+    const settings = getSettings(sfmDoc);
+    const position = settings.snapMachines
+      ? snapPointToGrid(node.position, settings.gridMachine)
+      : node.position;
+
     if (node.data.container) {
-      updateContainer(sfmDoc, node.id, { x: node.position.x, y: node.position.y });
+      updateContainer(sfmDoc, node.id, { x: position.x, y: position.y });
     } else {
-      moveNode(sfmDoc, node.id, node.position.x, node.position.y);
+      moveNode(sfmDoc, node.id, position.x, position.y);
     }
   };
 

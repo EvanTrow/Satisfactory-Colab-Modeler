@@ -10,19 +10,22 @@
 // deleting one (reparenting its contents rather than destroying them).
 import { type MouseEvent as ReactMouseEvent, useCallback, useMemo, useRef, useState } from "react";
 
-import { type SfmDocument, addContainer, createDocument, createUndoManager } from "@scm/ydoc";
+import { type SfmDocument, type Settings, addContainer, createDocument, createUndoManager } from "@scm/ydoc";
 import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
 import { Breadcrumbs } from "./Breadcrumbs";
 import { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
 import { DevNodeTools } from "./DevNodeTools";
+import { SettingsMenu } from "./SettingsMenu";
 import { type ClickPoint, isDoubleClick } from "./doubleClick";
 import { ConnectionEdge, useConnectionHandlers } from "./edges";
 import { RecipeNode } from "./nodes";
 import { BoundaryEdge, NodeContextMenu, OutpostNode, deleteOutpost, moveNodeToContainer, type NodeContextMenuState } from "./outposts";
 import { RecipeChooser } from "../panels";
 import { MarqueeOverlay, useMarqueeSelection, useSelectionKeybinds, useUndoRedoState } from "./selection";
+import { ThemeToggle, useTheme, type ThemeMode } from "../theme";
+import { useSettings } from "./useSettings";
 import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
 
 // Module-level constants (not created inside the component) so React Flow
@@ -111,6 +114,14 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
   const staticDoc = useMemo(createLocalCanvasDocument, []);
   const { sfmDoc, undoManager } = staticDoc;
   const { canUndo, canRedo } = useUndoRedoState(undoManager);
+  // Job 014: theme toggle (app-level mechanism, see `theme/useTheme.ts`) and
+  // the live `Settings` read needed for the background grid's dot spacing
+  // (`useSettings.ts`) — everything else this job's snap-to-grid touches
+  // reads `getSettings` synchronously at drag-stop instead (see
+  // `useYjsSync.ts`/`edges/ConnectionEdge.tsx`), so this is the one place in
+  // the canvas that needs a *reactive* settings value.
+  const { theme, toggleTheme } = useTheme();
+  const settings = useSettings(sfmDoc);
 
   // Job 013: "which container is currently being viewed" — starts at root,
   // changes only via `navigateToContainer` (drill-in from an outpost node's
@@ -150,13 +161,17 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
 
   return (
     <CanvasDocContext.Provider value={docContext}>
-      <div className="flex h-svh w-full flex-col">
-        <div className="flex items-center justify-between gap-3 border-b border-neutral-800 px-4 py-2">
+      <div className="flex h-svh w-full flex-col bg-[var(--surface-app)] text-[var(--text-primary)]">
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-2">
           <div className="min-w-0">
-            <button type="button" onClick={onBack} className="text-xs text-neutral-400 underline hover:text-neutral-200">
+            <button
+              type="button"
+              onClick={onBack}
+              className="text-xs text-[var(--text-muted)] underline hover:text-[var(--text-primary)]"
+            >
               ← Back to projects
             </button>
-            <h2 className="truncate text-sm font-medium text-neutral-200">{projectTitle}</h2>
+            <h2 className="truncate text-sm font-medium text-[var(--text-primary)]">{projectTitle}</h2>
             {/*
               Job 013: the breadcrumb trail — "drill in to edit contents...
               a breadcrumb trail" (this job's own Scope wording). `sync
@@ -183,7 +198,7 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
                 onClick={() => undoManager.undo()}
                 disabled={!canUndo}
                 title="Undo (Ctrl/Cmd+Z)"
-                className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 ↶ Undo
               </button>
@@ -192,12 +207,15 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
                 onClick={() => undoManager.redo()}
                 disabled={!canRedo}
                 title="Redo (Ctrl/Cmd+Shift+Z)"
-                className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 ↷ Redo
               </button>
             </div>
-            <span className="text-xs text-neutral-500">
+            {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. */}
+            <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
+            <span className="text-xs text-[var(--text-muted)]">
               {projectShortId} · local in-memory document, not saved (Job 015)
             </span>
           </div>
@@ -213,7 +231,7 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
             child of the explicit provider below so it can call the hook.
           */}
           <ReactFlowProvider>
-            <CanvasFlow sync={sync} />
+            <CanvasFlow sync={sync} settings={settings} theme={theme} />
           </ReactFlowProvider>
         </div>
       </div>
@@ -223,6 +241,25 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
 
 interface CanvasFlowProps {
   sync: UseYjsSyncResult;
+  /** Job 014: only used to keep the background dot grid's spacing visually consistent with `Settings.gridMachine` (a separate mechanism from actual snap-to-grid, which reads settings fresh at drag-stop instead — see `useYjsSync.ts`). */
+  settings: Settings;
+  /**
+   * Job 014: `@xyflow/react`'s `<ReactFlow>` has its *own*, entirely
+   * separate light/dark mechanism — a `colorMode` prop (default `"light"`,
+   * always, regardless of anything on `<html>`) that stamps a `light`/`dark`
+   * class directly onto `.react-flow`'s own wrapper div and drives its
+   * built-in `--xy-*` variable defaults from *that* class, not ours. Found
+   * this the hard way in this job's own manual browser verification: with
+   * `colorMode` left unset, `.react-flow` always carried a hardcoded
+   * `"light"` class — even with `<html class="dark">` — and that class's
+   * higher selector specificity (`.react-flow.light`, two classes) silently
+   * beat this file's own `:root`/`.dark` global overrides of the same
+   * `--xy-*` names in `index.css` (single class/pseudo-class each), so the
+   * canvas background and `<Controls>` chrome stayed light-only no matter
+   * what this app's own theme was set to. Passing `theme` straight through
+   * closes that gap.
+   */
+  theme: ThemeMode;
 }
 
 /** Pending Recipe Chooser state: both coordinate systems captured at the moment of the triggering click. */
@@ -239,7 +276,7 @@ interface ChooserState {
  * Split out from `CanvasView` only so it can sit inside
  * `<ReactFlowProvider>` and call `useReactFlow()`.
  */
-function CanvasFlow({ sync }: CanvasFlowProps) {
+function CanvasFlow({ sync, settings, theme }: CanvasFlowProps) {
   const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = sync;
   const { sfmDoc, containerId, undoManager, navigateToContainer } = useCanvasDoc();
   const { screenToFlowPosition } = useReactFlow();
@@ -373,8 +410,28 @@ function CanvasFlow({ sync }: CanvasFlowProps) {
         zoomOnDoubleClick={false}
         fitView
         proOptions={{ hideAttribution: true }}
+        colorMode={theme}
       >
-        <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
+        {/*
+          Job 014: the dot grid's spacing now mirrors `Settings.gridMachine`
+          (the same field `useYjsSync.ts`'s `onNodeDragStop` snaps *to*) —
+          two independent mechanisms (rendering a grid vs. actually snapping
+          to it) kept visually consistent per this job's own scope note,
+          rather than one implying the other. `color` is a real CSS custom
+          property reference (`var(--grid-dot)`), not a literal — `Background`
+          forwards its `color` prop into the SVG's own `style` attribute as
+          `--xy-background-pattern-color-props` (confirmed against
+          `@xyflow/react`'s source), so this resolves through `index.css`'s
+          theme tokens exactly like any other themed value in this app,
+          swapping automatically between light/dark with no JS branching
+          needed here.
+        */}
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={[settings.gridMachine.x, settings.gridMachine.y]}
+          size={1.5}
+          color="var(--grid-dot)"
+        />
         <Controls />
         <DevNodeTools />
       </ReactFlow>
