@@ -22,7 +22,7 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 | 014 | [Visual pass & theming](014-visual-pass.md) | 2 · Solo canvas editor | 013 | Done |
 | 015 | [Doc persistence](015-doc-persistence.md) | 3 · Persistence | 014, 006 | Done |
 | 016 | [IndexedDB cache & versions](016-indexeddb-versions.md) | 3 · Persistence | 015 | Done |
-| 017 | [Solver core](017-solver-core.md) | 4 · Calculators | 002 | Not started |
+| 017 | [Solver core](017-solver-core.md) | 4 · Calculators | 002 | Done |
 | 018 | [Solver worker host](018-solver-worker.md) | 4 · Calculators | 017, 016 | Not started |
 | 019 | [Summary panel & formats](019-summary-panel.md) | 4 · Calculators | 018 | Not started |
 | 020 | [Hocuspocus server](020-hocuspocus-server.md) | 5 · Multiplayer | 019 | Not started |
@@ -41,6 +41,8 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 **Phase 2 (Solo canvas editor) is now fully complete** as of Job 014 — a local-Yjs-doc React Flow canvas with the Recipe Chooser, real recipe node UI, drag-to-connect with waypoints, marquee select/cut/copy/paste/delete/undo/redo, outposts with drill-in and breadcrumbs, a Ferrumium-inspired visual pass with dark/light theming, and snap-to-grid for both machines and waypoints are all in place. Phase 3 (Persistence) starts next at Job 015, which needs `Settings` (and the rest of the document) to actually survive a reload.
 
 **Phase 3 (Persistence) is now fully complete** as of Job 016 — Yjs↔Postgres snapshot+log persistence with compaction (Job 015), plus `y-indexeddb` local caching (instant render from cache on reload, reconciled against the server), a live autosave-status indicator with auto-retry, and `project_versions` auto/manual snapshots with a working restore flow (Job 016) are all in place. Phase 4 (Calculators) starts next at Job 017, which is pure solver logic with no dependency on the canvas/persistence track beyond `packages/rational`.
+
+**Job 017 (`packages/solver`) is done** — None/Manual/Basic calculators over exact `Rational` arithmetic, with a documented deterministic fixed-point propagation algorithm for Basic mode (PLAN.md §5 point 4's requirement), all four PLAN.md §9 golden-value tests passing exactly, and zero Yjs/React/DOM dependency. Phase 4 continues at Job 018, which wraps `solve()` in a cancellable/debounced Web Worker host.
 
 ## Conventions for every job file
 
