@@ -6,7 +6,7 @@
 // the empty canvas background (PLAN.md §2's "Add a machine" row).
 import { type MouseEvent as ReactMouseEvent, useMemo, useRef, useState } from "react";
 
-import { type SfmDocument, addContainer, createDocument } from "@scm/ydoc";
+import { type SfmDocument, addContainer, createDocument, createUndoManager } from "@scm/ydoc";
 import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -16,6 +16,7 @@ import { DevNodeTools } from "./DevNodeTools";
 import { type ClickPoint, isDoubleClick } from "./doubleClick";
 import { ConnectionEdge, useConnectionHandlers } from "./edges";
 import { RecipeNode } from "./nodes";
+import { MarqueeOverlay, useMarqueeSelection, useSelectionKeybinds, useUndoRedoState } from "./selection";
 import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
 
 // Module-level constants (not created inside the component) so React Flow
@@ -69,7 +70,15 @@ function createLocalCanvasDocument(): CanvasDocContextValue {
     y: 0,
     copiesLimit: null,
   });
-  return { sfmDoc, containerId: root.id };
+  // Job 012: one `Y.UndoManager` per open document (not per component —
+  // see `CanvasDocContext.ts`'s doc comment on `undoManager`). Created here,
+  // alongside `sfmDoc` itself, via `createDocument`'s companion
+  // `createUndoManager` (Job 007) with its defaults: tracks only local
+  // (`origin: null`) transactions, which is every mutation this app's UI
+  // makes — see this job's Handoff notes for why that alone satisfies
+  // PLAN.md's "per-user undo" for this single-local-user phase.
+  const undoManager = createUndoManager(sfmDoc);
+  return { sfmDoc, containerId: root.id, undoManager };
 }
 
 export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewProps) {
@@ -79,7 +88,8 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
   // switch unmounts this component and mounts a new one via `App.tsx`'s
   // `key`-ed view switch, which is what should create a fresh doc.)
   const docContext = useMemo(createLocalCanvasDocument, []);
-  const { sfmDoc } = docContext;
+  const { sfmDoc, undoManager } = docContext;
+  const { canUndo, canRedo } = useUndoRedoState(undoManager);
 
   // Dev-only escape hatch matching this job's acceptance criteria wording
   // ("verify by reading the doc state after a drag in a test or dev
@@ -104,9 +114,39 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
             </button>
             <h2 className="truncate text-sm font-medium text-neutral-200">{projectTitle}</h2>
           </div>
-          <span className="shrink-0 text-xs text-neutral-500">
-            {projectShortId} · local in-memory document, not saved (Job 015)
-          </span>
+          <div className="flex shrink-0 items-center gap-3">
+            {/*
+              Job 012: Undo/Redo toolbar buttons, wired straight to the
+              document's `Y.UndoManager` (see `createLocalCanvasDocument`
+              above). `useSelectionKeybinds.ts` wires the same two actions to
+              Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z / Ctrl+Y — these buttons are a
+              second, discoverable entry point to the identical operation,
+              not a separate code path.
+            */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => undoManager.undo()}
+                disabled={!canUndo}
+                title="Undo (Ctrl/Cmd+Z)"
+                className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                ↶ Undo
+              </button>
+              <button
+                type="button"
+                onClick={() => undoManager.redo()}
+                disabled={!canRedo}
+                title="Redo (Ctrl/Cmd+Shift+Z)"
+                className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                ↷ Redo
+              </button>
+            </div>
+            <span className="text-xs text-neutral-500">
+              {projectShortId} · local in-memory document, not saved (Job 015)
+            </span>
+          </div>
         </div>
 
         <div className="relative flex-1">
@@ -146,7 +186,7 @@ interface ChooserState {
  */
 function CanvasFlow({ sync }: CanvasFlowProps) {
   const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = sync;
-  const { sfmDoc, containerId } = useCanvasDoc();
+  const { sfmDoc, containerId, undoManager } = useCanvasDoc();
   const { screenToFlowPosition } = useReactFlow();
   const [chooser, setChooser] = useState<ChooserState | null>(null);
   // Not React state on purpose — a click-time bookkeeping ref, not something whose change should trigger a render.
@@ -159,6 +199,32 @@ function CanvasFlow({ sync }: CanvasFlowProps) {
     sfmDoc,
     containerId,
   );
+
+  // Job 012: right-click-drag marquee multi-select. `enabled: chooser ===
+  // null` keeps a marquee from starting underneath an already-open Recipe
+  // Chooser modal (mirrors `useSelectionKeybinds`'s own `enabled` gate
+  // below). See `useMarqueeSelection.ts`'s header comment for why this is
+  // hand-rolled instead of a React Flow prop.
+  const { overlayRect, pointerHandlers, consumeJustDragged } = useMarqueeSelection({
+    nodes,
+    edges,
+    onNodesChange,
+    onEdgesChange,
+    screenToFlowPosition,
+    enabled: chooser === null,
+  });
+
+  // Job 012: cut/copy/paste/delete/select-all/undo/redo keybinds.
+  useSelectionKeybinds({
+    sfmDoc,
+    containerId,
+    nodes,
+    edges,
+    onNodesChange,
+    onEdgesChange,
+    undoManager,
+    enabled: chooser === null,
+  });
 
   function openChooserAt(clientX: number, clientY: number) {
     setChooser({
@@ -186,11 +252,22 @@ function CanvasFlow({ sync }: CanvasFlowProps) {
   // `ReactMouseEvent` the way `onPaneClick`'s handler is above.
   const handlePaneContextMenu = (event: ReactMouseEvent | MouseEvent) => {
     event.preventDefault(); // suppress the native browser context menu
+    // Job 012: a right-click that just finished dragging a marquee is not
+    // "open the Recipe Chooser" (Job 009) — see `consumeJustDragged`'s doc
+    // comment in `useMarqueeSelection.ts` for why this check has to happen
+    // here rather than by suppressing the `contextmenu` event itself.
+    if (consumeJustDragged()) return;
     openChooserAt(event.clientX, event.clientY);
   };
 
   return (
-    <>
+    // Job 012: the marquee's own pointer handlers live on this wrapper
+    // (not passed as extra props into `<ReactFlow>`) so a right-click-drag
+    // starting anywhere over the canvas — including on top of a node, not
+    // just the empty pane — is caught, and so the overlay rect below can
+    // sit as a plain sibling of `<ReactFlow>` without reaching into its
+    // internals.
+    <div className="relative h-full w-full" {...pointerHandlers}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -221,6 +298,7 @@ function CanvasFlow({ sync }: CanvasFlowProps) {
           onClose={() => setChooser(null)}
         />
       )}
-    </>
+      {overlayRect && <MarqueeOverlay rect={overlayRect} />}
+    </div>
   );
 }

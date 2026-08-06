@@ -13,6 +13,7 @@
 import { createContext, useContext } from "react";
 
 import type { SfmDocument } from "@scm/ydoc";
+import type * as Y from "yjs";
 
 export interface CanvasDocContextValue {
   /** The single local, in-memory `SfmDocument` this canvas mount owns. */
@@ -24,6 +25,16 @@ export interface CanvasDocContextValue {
    * directly in root.
    */
   containerId: string;
+  /**
+   * Job 012: the single `Y.UndoManager` for this open document — see
+   * `@scm/ydoc`'s `createUndoManager` (Job 007). Created once per
+   * `CanvasView` mount (in `createLocalCanvasDocument`, alongside `sfmDoc`
+   * itself), not per component, so every descendant that wants to trigger
+   * or react to undo/redo (currently just `useSelectionKeybinds.ts`'s
+   * Ctrl/Cmd+Z/Y and `CanvasView.tsx`'s toolbar buttons) shares the exact
+   * same manager and stack.
+   */
+  undoManager: Y.UndoManager;
 }
 
 export const CanvasDocContext = createContext<CanvasDocContextValue | null>(null);

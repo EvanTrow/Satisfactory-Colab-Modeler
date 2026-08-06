@@ -90,7 +90,7 @@ export interface CanvasEdgeData extends Record<string, unknown> {
 
 export type CanvasEdge = RFEdge<CanvasEdgeData>;
 
-function nodeRecordToFlowNode(record: NodeRecord): CanvasNode {
+function nodeRecordToFlowNode(record: NodeRecord, selected = false): CanvasNode {
   return {
     // `kind: "recipe"` is the only kind with a real custom node type so far
     // (`RecipeNode`, registered under the `"recipe"` key in
@@ -101,11 +101,16 @@ function nodeRecordToFlowNode(record: NodeRecord): CanvasNode {
     id: record.id,
     type: record.kind === "recipe" ? "recipe" : "default",
     position: { x: record.x, y: record.y },
+    // Job 012: `selected` is carried over from whatever the store's
+    // previous copy of this node had (see `syncNodes` below) — this
+    // function itself has no notion of "current" selection, it just accepts
+    // whatever the caller already determined.
+    selected,
     data: { record, label: record.title || record.kind || record.id, validityState: null },
   };
 }
 
-function edgeRecordToFlowEdge(record: EdgeRecord): CanvasEdge {
+function edgeRecordToFlowEdge(record: EdgeRecord, selected = false): CanvasEdge {
   return {
     id: record.id,
     // `"part"` is Job 011's custom edge type (`ConnectionEdge`, registered
@@ -118,6 +123,8 @@ function edgeRecordToFlowEdge(record: EdgeRecord): CanvasEdge {
     sourceHandle: record.fromPort,
     target: record.toNode,
     targetHandle: record.toPort,
+    // Job 012: see `nodeRecordToFlowNode`'s note above — same deal for edges.
+    selected,
     data: { record },
   };
 }
@@ -173,8 +180,29 @@ export function useYjsSync(sfmDoc: SfmDocument): UseYjsSyncResult {
   useEffect(() => {
     const { setNodes, setEdges, setContainers } = useStore.getState();
 
-    const syncNodes = () => setNodes(listNodes(sfmDoc).map(nodeRecordToFlowNode));
-    const syncEdges = () => setEdges(listEdges(sfmDoc).map(edgeRecordToFlowEdge));
+    // Job 012: `.observeDeep` fires a *full* resync (see this effect's own
+    // header comment above) for *any* doc mutation, including ones with
+    // nothing to do with the current selection — e.g. editing a different
+    // node's clock field, or another node's drag committing via
+    // `onNodeDragStop`. Without carrying `selected` over from the store's
+    // previous snapshot by id, every one of those unrelated mutations would
+    // silently clear the whole canvas's marquee/click selection out from
+    // under the user. `useStore.getState()` (not the `nodes`/`edges` this
+    // hook returns) is read fresh each call so this stays correct across
+    // repeated resyncs without needing `nodes`/`edges` in this effect's own
+    // dependency array.
+    const syncNodes = () => {
+      const previouslySelected = new Set(
+        useStore.getState().nodes.filter((node) => node.selected).map((node) => node.id),
+      );
+      setNodes(listNodes(sfmDoc).map((record) => nodeRecordToFlowNode(record, previouslySelected.has(record.id))));
+    };
+    const syncEdges = () => {
+      const previouslySelected = new Set(
+        useStore.getState().edges.filter((edge) => edge.selected).map((edge) => edge.id),
+      );
+      setEdges(listEdges(sfmDoc).map((record) => edgeRecordToFlowEdge(record, previouslySelected.has(record.id))));
+    };
     const syncContainers = () => setContainers(listContainers(sfmDoc));
 
     // Initial paint — observers only fire on *future* changes, so the doc's

@@ -33,3 +33,27 @@ export {
   type ResolvedEndpoints,
 } from "./edges";
 export { isDoubleClick, DOUBLE_CLICK_MS, DOUBLE_CLICK_PX, type ClickPoint } from "./doubleClick";
+export {
+  buildClipboard,
+  deleteSelection,
+  pasteClipboard,
+  DEFAULT_PASTE_OFFSET,
+  nodeBoundsRect,
+  polylineIntersectsRect,
+  rectFromPoints,
+  rectsIntersect,
+  segmentIntersectsRect,
+  MarqueeOverlay,
+  useMarqueeSelection,
+  useSelectionKeybinds,
+  useUndoRedoState,
+  type ClipboardPayload,
+  type PasteOffset,
+  type PasteResult,
+  type MarqueeOverlayProps,
+  type MarqueeOverlayRect,
+  type UseMarqueeSelectionOptions,
+  type UseMarqueeSelectionResult,
+  type UseSelectionKeybindsOptions,
+  type UndoRedoState,
+} from "./selection";
