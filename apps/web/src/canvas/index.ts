@@ -12,3 +12,9 @@ export {
   type CanvasNodeData,
   type UseYjsSyncResult,
 } from "./useYjsSync";
+export {
+  RecipeNode,
+  defaultLimitMode,
+  type RecipeNodeValidity,
+  type RecipeNodeValidityState,
+} from "./nodes";

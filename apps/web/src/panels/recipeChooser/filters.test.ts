@@ -137,6 +137,8 @@ describe("buildNodeInputForRecipe", () => {
     expect(input.machine).toBe("Miner Mk.1");
     expect(input.purity).toBe("normal");
     expect(input.recipe).toBe("Iron Ore");
+    // Job 010: Miner recipes default to ppm (PLAN.md §2's "Set a limit" row).
+    expect(input.limitMode).toBe("ppm");
   });
 
   it("honors an explicit MultiMachine variant choice (Miner Mk.3 x Pure)", () => {

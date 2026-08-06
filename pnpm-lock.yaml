@@ -93,6 +93,9 @@ importers:
       '@scm/gamedata':
         specifier: workspace:*
         version: link:../../packages/gamedata
+      '@scm/rational':
+        specifier: workspace:*
+        version: link:../../packages/rational
       '@scm/ydoc':
         specifier: workspace:*
         version: link:../../packages/ydoc

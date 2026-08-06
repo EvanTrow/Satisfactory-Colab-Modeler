@@ -51,10 +51,27 @@ import {
   type OnNodesChange,
 } from "@xyflow/react";
 
-/** Node visuals are entirely out of scope for this job (Job 010 owns them) — the full `NodeRecord` just rides along in `data` for whichever job needs it next, plus a `label` so React Flow's built-in default node type has something to render. */
+import type { RecipeNodeValidityState } from "./nodes/validityState";
+
+/**
+ * The full `NodeRecord` rides along in `data` for whichever job needs it —
+ * `RecipeNode.tsx` (Job 010) is the first real consumer, reading
+ * `data.record` directly rather than re-fetching from the doc on every
+ * render. `label` remains for React Flow's built-in "default" node type,
+ * still used for any `kind` Job 010 doesn't own a custom renderer for (e.g.
+ * `kind: "debug"` from `DevNodeTools`, or the not-yet-built splurger/
+ * storage/outpost kinds).
+ */
 export interface CanvasNodeData extends Record<string, unknown> {
   record: NodeRecord;
   label: string;
+  /**
+   * Job 019's red/orange validity-highlighting slot — see
+   * `./nodes/validityState.ts`'s header comment for the full contract.
+   * Always `null` as of this job; `RecipeNode.tsx` accepts it but doesn't
+   * yet render anything different for a non-null value.
+   */
+  validityState?: RecipeNodeValidityState | null;
 }
 
 export type CanvasNode = RFNode<CanvasNodeData>;
@@ -62,10 +79,16 @@ export type CanvasEdge = RFEdge;
 
 function nodeRecordToFlowNode(record: NodeRecord): CanvasNode {
   return {
+    // `kind: "recipe"` is the only kind with a real custom node type so far
+    // (`RecipeNode`, registered under the `"recipe"` key in
+    // `CanvasView.tsx`'s `nodeTypes`) — every other kind (splurger/storage/
+    // outpost, none built yet, plus the `"debug"` kind `DevNodeTools` uses)
+    // falls back to React Flow's built-in "default" box, same as every kind
+    // did before this job.
     id: record.id,
-    type: "default",
+    type: record.kind === "recipe" ? "recipe" : "default",
     position: { x: record.x, y: record.y },
-    data: { record, label: record.title || record.kind || record.id },
+    data: { record, label: record.title || record.kind || record.id, validityState: null },
   };
 }
 

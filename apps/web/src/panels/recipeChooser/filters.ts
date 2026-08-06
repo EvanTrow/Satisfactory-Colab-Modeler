@@ -13,6 +13,8 @@ import {
 } from "@scm/gamedata";
 import type { NewNodeInput, Purity } from "@scm/ydoc";
 
+import { defaultLimitMode } from "../../canvas/nodes/recipeNodeMath";
+
 /** PLAN.md §3's four composable Recipe Chooser filters. */
 export interface RecipeChooserFilters {
   /** Case-insensitive substring match against the recipe's name. Empty string = no text filter. */
@@ -140,6 +142,12 @@ export interface BuildNodeInputParams {
  *   no separate "model" field, so Job 010 (and anything else reading these
  *   nodes back) must recover the model choice from `machine` itself rather
  *   than expecting a dedicated field.
+ *
+ * `limitMode` is set via Job 010's `defaultLimitMode` (ppm for Miner/AWESOME
+ * Sink, machine count otherwise, per PLAN.md §2's "Set a limit" row) —
+ * Job 009 originally hardcoded `"machines"` here for every node; that
+ * defaulting rule was explicitly deferred to Job 010, the first job that
+ * actually needed it.
  */
 export function buildNodeInputForRecipe(params: BuildNodeInputParams): NewNodeInput {
   const { gameData, recipe, containerId, position, variantChoice } = params;
@@ -170,7 +178,7 @@ export function buildNodeInputForRecipe(params: BuildNodeInputParams): NewNodeIn
     title: recipe.name,
     color: "#4b5563",
     limit: null,
-    limitMode: "machines",
+    limitMode: defaultLimitMode(recipe.machine),
     clock: null,
     autoRound: false,
     shards: 0,

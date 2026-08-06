@@ -13,7 +13,16 @@ import "@xyflow/react/dist/style.css";
 import { RecipeChooser } from "../panels";
 import { CanvasDocContext, type CanvasDocContextValue } from "./CanvasDocContext";
 import { DevNodeTools } from "./DevNodeTools";
+import { RecipeNode } from "./nodes";
 import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
+
+// Module-level constant (not created inside the component) so React Flow
+// never sees a new `nodeTypes` object identity on every render — passing a
+// fresh object each render is a documented React Flow footgun that triggers
+// a console warning and forces an internal remount of every custom node.
+// `"recipe"` matches the `type` string `useYjsSync.ts`'s
+// `nodeRecordToFlowNode` assigns to every `kind: "recipe"` node.
+const nodeTypes = { recipe: RecipeNode };
 
 /**
  * How close together (in ms) and how close together (in screen px) two
@@ -173,6 +182,7 @@ function CanvasFlow({ sync }: CanvasFlowProps) {
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeDragStop={onNodeDragStop}
