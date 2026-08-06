@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import { authRoutes, type AuthRoutesOptions } from "./auth/routes.js";
 import { sessionPlugin } from "./auth/session-plugin.js";
+import { projectRoutes } from "./projects/routes.js";
 
 export interface BuildAppOptions {
   logger?: boolean;
@@ -30,6 +31,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // auth/session-plugin.ts's doc comment).
   await app.register(sessionPlugin);
   await app.register(authRoutes, opts.authRoutesOptions ?? {});
+  // Registered as a sibling plugin to authRoutes, both attaching to the
+  // same root app — sessionPlugin's decorators (`fastify.authenticate`,
+  // `request.user`) are globally visible via fastify-plugin, not scoped to
+  // authRoutes's own encapsulation context.
+  await app.register(projectRoutes);
 
   return app;
 }

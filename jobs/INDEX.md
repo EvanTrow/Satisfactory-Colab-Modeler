@@ -11,7 +11,7 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 | 003 | [`packages/gamedata`](003-gamedata-package.md) | 0 · Foundations | 001 | Done |
 | 004 | [Core DB migrations](004-db-migrations-core.md) | 1 · Auth & projects | 001 | Done |
 | 005 | [Discord OAuth2](005-discord-oauth.md) | 1 · Auth & projects | 004 | Done |
-| 006 | [Project list UI](006-project-list-ui.md) | 1 · Auth & projects | 005 | Not started |
+| 006 | [Project list UI](006-project-list-ui.md) | 1 · Auth & projects | 005 | Done |
 | 007 | [`packages/ydoc` schema](007-ydoc-schema.md) | 2 · Solo canvas editor | 001 | Not started |
 | 008 | [Canvas skeleton](008-canvas-skeleton.md) | 2 · Solo canvas editor | 007 | Not started |
 | 009 | [Recipe Chooser](009-recipe-chooser.md) | 2 · Solo canvas editor | 008, 003 | Not started |
@@ -35,6 +35,8 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 | 027 | [Auto-round, styles, minimap](027-polish-misc.md) | 7 · Polish & deploy | 026 | Not started |
 | 028 | [i18n wiring](028-i18n.md) | 7 · Polish & deploy | 027 | Not started |
 | 029 | [Accessibility & deploy](029-a11y-deploy.md) | 7 · Polish & deploy | 028 | Not started |
+
+**Phase 1 (Auth & projects) is now fully complete** as of Job 006 — Discord OAuth2 login, sessions, and project CRUD (create/rename/duplicate/soft-delete) with role enforcement are all in place. Phase 2 (Solo canvas editor) starts next at Job 007, which builds `packages/ydoc`'s CRDT schema independently of any of Job 006's routes, but depends on `projects` existing (Job 004) to eventually attach documents to.
 
 ## Conventions for every job file
 

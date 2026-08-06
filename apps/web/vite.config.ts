@@ -14,6 +14,9 @@ export default defineConfig({
       // bullet, which registers the Discord callback at
       // http://localhost:5173/auth/discord/callback.
       "/auth": "http://localhost:3001",
+      // Job 006's project CRUD routes (apps/api/src/projects/routes.ts),
+      // same same-origin-cookie reasoning as /auth above.
+      "/api": "http://localhost:3001",
     },
   },
 });

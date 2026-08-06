@@ -47,9 +47,25 @@ export const db = new Kysely<Database>({
  * Closes the underlying `postgres.js` connection pool. Call this when a
  * short-lived process using `db` (a script, a test suite) is done —
  * omitting it leaves the process hanging on open sockets.
+ *
+ * Calls `postgresClient.end({ timeout: 5 })` directly rather than
+ * `db.destroy()` (which is otherwise equivalent — `kysely-postgres-js`'s
+ * `destroy()` just delegates to `postgres.end()` with no arguments).
+ * `{ timeout: 5 }` forcibly terminates any still-open sockets after 5
+ * seconds instead of waiting on a graceful drain indefinitely. Job 006
+ * discovered that a test file (`projects/routes.test.ts`) making enough
+ * authenticated requests to accumulate several pooled connections hangs
+ * this graceful drain forever *specifically under Vitest* — the identical
+ * code (same queries, same `buildApp`/`app.inject` calls) closes in
+ * single-digit milliseconds when run directly via `tsx` outside Vitest, so
+ * this isn't a real connection/transaction leak in application code, and
+ * reproduces the same way regardless of Vitest's `pool: 'threads'` vs
+ * `'forks'` setting. Root cause not fully isolated; the timeout is a
+ * pragmatic, safe fix either way, since a forced-close after all queries
+ * have long finished has no behavioral downside.
  */
 export async function closeDb(): Promise<void> {
-  await db.destroy();
+  await postgresClient.end({ timeout: 5 });
 }
 
 export type { Database } from "@scm/db";
