@@ -8,7 +8,7 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 |---|---|---|---|---|
 | 001 | [Monorepo scaffold](001-monorepo-scaffold.md) | 0 · Foundations | — | Done |
 | 002 | [`packages/rational`](002-rational-package.md) | 0 · Foundations | 001 | Done |
-| 003 | [`packages/gamedata`](003-gamedata-package.md) | 0 · Foundations | 001 | Not started |
+| 003 | [`packages/gamedata`](003-gamedata-package.md) | 0 · Foundations | 001 | Done |
 | 004 | [Core DB migrations](004-db-migrations-core.md) | 1 · Auth & projects | 001 | Not started |
 | 005 | [Discord OAuth2](005-discord-oauth.md) | 1 · Auth & projects | 004 | Not started |
 | 006 | [Project list UI](006-project-list-ui.md) | 1 · Auth & projects | 005 | Not started |
