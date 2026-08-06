@@ -72,6 +72,7 @@ export {
   removeEdge,
   removeNode,
   removeWaypoint,
+  reparentEdge,
   setPriorityOrder,
   updateContainer,
   updateEdge,

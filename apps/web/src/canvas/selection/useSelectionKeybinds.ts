@@ -11,6 +11,7 @@ import type { SfmDocument } from "@scm/ydoc";
 import type { EdgeChange, NodeChange } from "@xyflow/react";
 import type * as Y from "yjs";
 
+import { deleteOutpost } from "../outposts";
 import type { CanvasEdge, CanvasNode, UseYjsSyncResult } from "../useYjsSync";
 import { type ClipboardPayload, buildClipboard, deleteSelection, pasteClipboard } from "./clipboard";
 
@@ -55,6 +56,20 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
     function selectedEdgeIds(): string[] {
       return edges.filter((edge) => edge.selected).map((edge) => edge.id);
     }
+    /**
+     * Job 013: a selected node in the current view is either a real
+     * `@scm/ydoc` node (`data.record` set) or a synthetic outpost boundary
+     * node (`data.container` set — see `useYjsSync.ts`'s
+     * `containerToOutpostFlowNode`). They need different delete handling
+     * below (`deleteSelection` vs `deleteOutpost`), so split once here
+     * rather than at each call site.
+     */
+    function selectedOutpostIds(): string[] {
+      return nodes.filter((node) => node.selected && node.data.container).map((node) => node.id);
+    }
+    function selectedRealNodeIds(): string[] {
+      return nodes.filter((node) => node.selected && !node.data.container).map((node) => node.id);
+    }
 
     function handleSelectAll() {
       onNodesChange(nodes.map((node) => ({ id: node.id, type: "select", selected: true }) as NodeChange<CanvasNode>));
@@ -62,14 +77,29 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
     }
 
     function handleCopy() {
+      // Job 013: `buildClipboard` only ever matches ids present in
+      // `listNodes` (real ydoc nodes) — an outpost boundary node's id
+      // simply won't match anything there, so a selection that includes an
+      // outpost silently copies only the real nodes in it. Copying/pasting
+      // an outpost itself (with its contents) isn't built here — see
+      // jobs/013-outposts.md's Handoff notes for why that's left to
+      // Blueprints (Job 026) rather than this job's own clipboard.
       const payload = buildClipboard(sfmDoc, selectedNodeIds());
       if (payload) clipboardRef.current = payload;
     }
 
     function handleDelete() {
-      const nodeIds = selectedNodeIds();
       const edgeIds = selectedEdgeIds();
-      deleteSelection(sfmDoc, nodeIds, edgeIds);
+      deleteSelection(sfmDoc, selectedRealNodeIds(), edgeIds);
+      // Job 013: Delete on a selected outpost reparents its contents to
+      // this outpost's own parent (never destroys them) — same "delete key
+      // acts on whatever's selected" expectation as real nodes/edges above,
+      // just routed through `deleteOutpost` instead of `deleteSelection`
+      // (see `outposts/reparent.ts`). Each call is its own transaction/undo
+      // step, same as `NodeContextMenu`'s "Delete outpost" menu item uses.
+      for (const outpostId of selectedOutpostIds()) {
+        deleteOutpost(sfmDoc, outpostId);
+      }
     }
 
     function handleCut() {

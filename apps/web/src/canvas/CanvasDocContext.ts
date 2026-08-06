@@ -19,12 +19,38 @@ export interface CanvasDocContextValue {
   /** The single local, in-memory `SfmDocument` this canvas mount owns. */
   sfmDoc: SfmDocument;
   /**
-   * The container new nodes should be added to. Always the root
-   * container's id for now — there's no outpost drill-in yet (Job 013), so
-   * every node this job's UI (and Job 009's Recipe Chooser) creates lives
-   * directly in root.
+   * Job 013: the container currently being *viewed* — i.e. what's rendered
+   * on `<ReactFlow>` right now and what new nodes/edges/outposts get
+   * created into (the Recipe Chooser, paste, "New Outpost", drag-to-connect
+   * all read this, not `rootContainerId`). This used to be a fixed value
+   * (always the root container) before drill-in navigation existed —
+   * it's now stateful, lifted into `CanvasView`'s own `useState` and
+   * threaded through here so it updates (and every descendant re-renders
+   * against the new value) whenever `navigateToContainer` is called.
    */
   containerId: string;
+  /**
+   * The fixed id of the document's one root container (`kind: "root"`),
+   * created once in `createLocalCanvasDocument` and never re-created or
+   * removed. Exposed separately from `containerId` for the rare cases that
+   * specifically need "the top of the tree" regardless of what's currently
+   * being viewed — e.g. the breadcrumb trail's leftmost crumb, or deciding
+   * whether "move to parent container" should be offered at all.
+   */
+  rootContainerId: string;
+  /**
+   * Switches the current view to a different container — the whole
+   * mechanism behind "drill in" (pass an outpost's id) and "drill out via
+   * breadcrumbs" (pass an ancestor's id, possibly several levels up in one
+   * call). Does nothing but flip `containerId`; it's `useYjsSync.ts`'s job
+   * to notice the change and re-derive what's visible (see its own header
+   * comment), and `selection`'s id-based "carry selection over by id"
+   * mechanism (Job 012) naturally drops any selection that doesn't exist
+   * in the new view, since node/container ids are never reused across
+   * containers — no separate "clear selection on navigate" step was needed
+   * (confirmed in this job's manual verification; see Handoff notes).
+   */
+  navigateToContainer: (containerId: string) => void;
   /**
    * Job 012: the single `Y.UndoManager` for this open document — see
    * `@scm/ydoc`'s `createUndoManager` (Job 007). Created once per

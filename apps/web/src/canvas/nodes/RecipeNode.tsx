@@ -18,7 +18,7 @@ import {
   toFractionString,
   type Rational,
 } from "@scm/rational";
-import { listEdges, removeEdge, updateNode } from "@scm/ydoc";
+import { listEdges, removeEdge, updateNode, type NodeRecord } from "@scm/ydoc";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 
 import { getIconUrl } from "../../assets/icons";
@@ -155,7 +155,22 @@ function PartRow({ part, rate, onRemovePortEdges }: PartRowProps) {
 
 export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeProps<CanvasNode>) {
   const { sfmDoc } = useCanvasDoc();
-  const node = data.record;
+  // Job 013: `CanvasNodeData.record` became optional (Job 013's outpost
+  // boundary nodes don't have one) so this component — only ever mounted
+  // for `type: "recipe"` nodes, which always do — needs a defensive guard
+  // to satisfy the type checker. Not expected to actually trigger in
+  // practice; mirrors the "!recipe" defensive fallback already below.
+  // Re-bound to an explicitly-typed `const` (rather than relying on
+  // flow-narrowing of `data.record` itself) specifically so the narrowing
+  // survives into the `function`-declared event handlers below — plain
+  // control-flow narrowing of an optional property doesn't propagate into
+  // a nested function declaration that TypeScript can't prove is only
+  // ever invoked synchronously (confirmed by this job's own typecheck run:
+  // without this, `handleClockStep`/`handleShardStep` still saw `node` as
+  // possibly `undefined`).
+  const maybeNode = data.record;
+  if (!maybeNode) return null;
+  const node: NodeRecord = maybeNode;
 
   const recipe: Recipe | undefined = node.recipe ? gameData.recipesByName.get(node.recipe) : undefined;
   const machine = node.machine ? gameData.machinesByName.get(node.machine) : undefined;

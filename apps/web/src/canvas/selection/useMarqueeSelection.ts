@@ -129,7 +129,13 @@ export function useMarqueeSelection(options: UseMarqueeSelectionOptions): UseMar
         hitEdgeIds.add(edge.id);
         continue;
       }
-      const waypoints = edge.data?.record.waypoints ?? [];
+      // Job 013: a boundary-projected edge's `data.record.waypoints` belong
+      // to a *different* container's coordinate space (see
+      // `useYjsSync.ts`'s `CanvasEdgeData.projected` doc comment) — skip
+      // them for marquee hit-testing too, same reasoning `BoundaryEdge.tsx`
+      // uses for rendering, so a stale/foreign waypoint coordinate can't
+      // produce a spurious hit against this view's own marquee rect.
+      const waypoints = edge.data?.projected ? [] : (edge.data?.record?.waypoints ?? []);
       const polyline: Point[] = [sourceCenter, ...waypoints, targetCenter];
       if (polylineIntersectsRect(polyline, flowRect)) hitEdgeIds.add(edge.id);
     }

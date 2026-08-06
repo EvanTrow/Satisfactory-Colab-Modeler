@@ -280,6 +280,37 @@ export function removeEdge(sfmDoc: SfmDocument, edgeId: string, origin?: unknown
   }, origin);
 }
 
+/**
+ * Reparents an edge to a different `containerId`. Deliberately **not** part
+ * of `updateEdge`'s `EdgePatch` (which excludes `containerId` alongside the
+ * endpoint fields) — `containerId` isn't part of an edge's identity the way
+ * `fromNode`/`fromPort`/`toNode`/`toPort` are (it doesn't participate in
+ * `computeEdgeId`), so moving an edge to a different container doesn't need
+ * the remove-then-add dance `updateEdge`'s own doc comment describes for
+ * endpoint changes. Added for Job 013 (outposts): deleting an outpost
+ * container reparents its former children to the parent container rather
+ * than destroying them (PLAN.md §5's "reparent orphaned nodes to root"
+ * principle, applied locally) — nodes already had a way to do this via
+ * `updateNode`'s patch, edges didn't.
+ */
+export function reparentEdge(
+  sfmDoc: SfmDocument,
+  edgeId: string,
+  containerId: string,
+  origin?: unknown,
+): EdgeRecord {
+  let result!: EdgeRecord;
+  sfmDoc.doc.transact(() => {
+    const map = sfmDoc.edges.get(edgeId);
+    if (!map) {
+      throw new Error(`reparentEdge: no edge with id "${edgeId}"`);
+    }
+    map.set("containerId", containerId);
+    result = edgeToPlain(map);
+  }, origin);
+  return result;
+}
+
 function getWaypointsArray(sfmDoc: SfmDocument, edgeId: string): Y.Array<Y.Map<unknown>> {
   const map = sfmDoc.edges.get(edgeId);
   if (!map) {

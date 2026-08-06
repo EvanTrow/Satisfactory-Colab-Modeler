@@ -11,6 +11,7 @@ import {
   removeEdge,
   removeNode,
   removeWaypoint,
+  reparentEdge,
   setPriorityOrder,
   updateNode,
 } from "./mutations";
@@ -179,6 +180,32 @@ describe("edge mutations", () => {
     });
     removeEdge(sfmDoc, edge.id);
     expect(sfmDoc.edges.size).toBe(0);
+  });
+
+  it("reparentEdge updates containerId without touching endpoints/id", () => {
+    const { sfmDoc, root } = setUp();
+    const { a, b } = twoNodes(sfmDoc, root.id);
+    const edge = addEdge(sfmDoc, {
+      containerId: root.id,
+      part: "Desc_IronPlate_C",
+      fromNode: a.id,
+      fromPort: "out-0",
+      toNode: b.id,
+      toPort: "in-0",
+      style: null,
+      labelPos: null,
+    });
+
+    const reparented = reparentEdge(sfmDoc, edge.id, "c_other");
+    expect(reparented.containerId).toBe("c_other");
+    expect(reparented.id).toBe(edge.id);
+    expect(reparented.fromNode).toBe(a.id);
+    expect(reparented.toNode).toBe(b.id);
+  });
+
+  it("reparentEdge throws for an unknown edge id", () => {
+    const { sfmDoc } = setUp();
+    expect(() => reparentEdge(sfmDoc, "e_missing", "c_other")).toThrow();
   });
 
   it("addWaypoint/removeWaypoint manage the edge's waypoint list", () => {

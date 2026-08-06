@@ -3,16 +3,38 @@
 // notes for how this fits together.
 export { CanvasView } from "./CanvasView";
 export { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
+export { Breadcrumbs, type BreadcrumbsProps } from "./Breadcrumbs";
 export {
   useYjsSync,
   nodeRecordToFlowNode,
-  edgeRecordToFlowEdge,
+  containerToOutpostFlowNode,
   type CanvasNode,
   type CanvasEdge,
   type CanvasNodeData,
   type CanvasEdgeData,
   type UseYjsSyncResult,
 } from "./useYjsSync";
+export {
+  boundaryPortId,
+  buildContainerParentMap,
+  computeOutpostPorts,
+  isContainerWithinSubtree,
+  resolveNodeLocation,
+  computeVisibleEdges,
+  computeBreadcrumbPath,
+  deleteOutpost,
+  moveNodeToContainer,
+  OutpostNode,
+  BoundaryEdge,
+  NodeContextMenu,
+  type ContainerParentMap,
+  type DerivedOutpostPort,
+  type NodeLocation,
+  type ProjectedEdge,
+  type DeleteOutpostResult,
+  type NodeContextMenuProps,
+  type NodeContextMenuState,
+} from "./outposts";
 export {
   RecipeNode,
   defaultLimitMode,

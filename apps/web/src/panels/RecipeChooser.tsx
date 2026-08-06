@@ -21,7 +21,7 @@ import {
   type Recipe,
   type ResolvedMultiMachine,
 } from "@scm/gamedata";
-import { addNode } from "@scm/ydoc";
+import { addContainer, addNode } from "@scm/ydoc";
 
 import { useCanvasDoc } from "../canvas";
 import {
@@ -68,6 +68,14 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
   // Set only for a MultiMachine-backed recipe, while its variant picker is showing.
   const [pendingRecipe, setPendingRecipe] = useState<Recipe | null>(null);
   const [variantChoice, setVariantChoice] = useState<RecipeVariantChoice>({});
+  // Job 013: "New Outpost" is the second thing this same double/right-click
+  // gesture can create, alongside a recipe node — see PLAN.md §2's Outposts
+  // row ("like folders") and this job's Scope wording ("e.g. via the Recipe
+  // Chooser's canvas context menu... use judgement on exact entry point").
+  // A third mutually-exclusive step, same shape as `pendingRecipe`'s
+  // variant-picker step below.
+  const [creatingOutpost, setCreatingOutpost] = useState(false);
+  const [outpostTitle, setOutpostTitle] = useState("New Outpost");
 
   const machines = useMemo(() => listChooserMachines(gameData), [gameData]);
   const tiers = useMemo(() => listChooserTiers(gameData), [gameData]);
@@ -100,6 +108,19 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
     onClose();
   }
 
+  function handleCreateOutpost() {
+    addContainer(sfmDoc, {
+      kind: "outpost",
+      parentId: containerId,
+      title: outpostTitle.trim() || "New Outpost",
+      color: "#d97706",
+      x: flowPosition.x,
+      y: flowPosition.y,
+      copiesLimit: null,
+    });
+    onClose();
+  }
+
   function handlePickRecipe(recipe: Recipe) {
     const resolved = resolveMachine(recipe.machine, gameData);
     if (resolved.kind === "machine") {
@@ -124,18 +145,62 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-2">
-          <h3 className="text-sm font-semibold">Add a machine</h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded px-1 text-neutral-400 hover:text-neutral-200"
-          >
-            ✕
-          </button>
+          <h3 className="text-sm font-semibold">{creatingOutpost ? "New outpost" : "Add a machine"}</h3>
+          <div className="flex items-center gap-2">
+            {!creatingOutpost && !pendingRecipe && (
+              <button
+                type="button"
+                onClick={() => setCreatingOutpost(true)}
+                className="rounded border border-amber-700 bg-amber-900/40 px-2 py-1 text-xs font-medium text-amber-200 hover:bg-amber-900/70"
+                title="Create a nested outpost container here — PLAN.md's 'like folders' framing"
+              >
+                + New Outpost
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="rounded px-1 text-neutral-400 hover:text-neutral-200"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
-        {pendingRecipe && pendingResolved ? (
+        {creatingOutpost ? (
+          <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+            <label className="flex flex-col gap-1 text-sm text-neutral-300">
+              Outpost name
+              <input
+                type="text"
+                autoFocus
+                value={outpostTitle}
+                onChange={(event) => setOutpostTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") handleCreateOutpost();
+                }}
+                className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100"
+              />
+            </label>
+            <div className="mt-auto flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCreatingOutpost(false)}
+                className="rounded px-3 py-1.5 text-sm text-neutral-400 hover:text-neutral-200"
+              >
+                ← Back
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateOutpost}
+                className="rounded bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-500"
+              >
+                Create outpost
+              </button>
+            </div>
+          </div>
+        ) : pendingRecipe && pendingResolved ? (
           <VariantPicker
             recipe={pendingRecipe}
             resolved={pendingResolved}

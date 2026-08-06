@@ -1,21 +1,27 @@
 // Job 008: the React Flow canvas mounted for a single project, backed by a
 // fresh, local, in-memory `@scm/ydoc` document. No fetch, no persistence —
 // every reload starts a brand-new empty document (Job 015 adds loading a
-// real one from the server). No real node visuals yet (Job 010) — but Job
-// 009 adds the Recipe Chooser, opened by double-clicking or right-clicking
-// the empty canvas background (PLAN.md §2's "Add a machine" row).
-import { type MouseEvent as ReactMouseEvent, useMemo, useRef, useState } from "react";
+// real one from the server). Job 009 adds the Recipe Chooser, opened by
+// double-clicking or right-clicking the empty canvas background (PLAN.md
+// §2's "Add a machine" row). Job 013 adds outposts: drill-in navigation
+// (the current container is now stateful, not fixed to root — see
+// `createLocalCanvasDocument`/`docContext` below), a breadcrumb trail, and
+// a node-level context menu for moving nodes into/out of an outpost and
+// deleting one (reparenting its contents rather than destroying them).
+import { type MouseEvent as ReactMouseEvent, useCallback, useMemo, useRef, useState } from "react";
 
 import { type SfmDocument, addContainer, createDocument, createUndoManager } from "@scm/ydoc";
 import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { RecipeChooser } from "../panels";
+import { Breadcrumbs } from "./Breadcrumbs";
 import { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
 import { DevNodeTools } from "./DevNodeTools";
 import { type ClickPoint, isDoubleClick } from "./doubleClick";
 import { ConnectionEdge, useConnectionHandlers } from "./edges";
 import { RecipeNode } from "./nodes";
+import { BoundaryEdge, NodeContextMenu, OutpostNode, deleteOutpost, moveNodeToContainer, type NodeContextMenuState } from "./outposts";
+import { RecipeChooser } from "../panels";
 import { MarqueeOverlay, useMarqueeSelection, useSelectionKeybinds, useUndoRedoState } from "./selection";
 import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
 
@@ -25,10 +31,13 @@ import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
 // that triggers a console warning and forces an internal remount of every
 // custom node/edge. `"recipe"` matches the `type` string
 // `useYjsSync.ts`'s `nodeRecordToFlowNode` assigns to every `kind:
-// "recipe"` node; `"part"` matches what `edgeRecordToFlowEdge` assigns to
-// every edge (Job 011).
-const nodeTypes = { recipe: RecipeNode };
-const edgeTypes = { part: ConnectionEdge };
+// "recipe"` node; `"outpost"` (Job 013) matches
+// `containerToOutpostFlowNode`'s synthetic boundary nodes. `"part"` matches
+// what `useYjsSync.ts` assigns to a normal direct edge (Job 011's
+// `ConnectionEdge`); `"boundary"` (Job 013) matches a boundary-crossing
+// projected edge (`outposts/BoundaryEdge.tsx`).
+const nodeTypes = { recipe: RecipeNode, outpost: OutpostNode };
+const edgeTypes = { part: ConnectionEdge, boundary: BoundaryEdge };
 
 /**
  * How close together (in ms) and how close together (in screen px) two
@@ -53,13 +62,20 @@ interface CanvasViewProps {
   onBack: () => void;
 }
 
+/** The parts of `CanvasDocContextValue` that are created once and never replaced for the lifetime of a `CanvasView` mount — everything else (`containerId`/`navigateToContainer`) is live React state layered on top in `CanvasView` itself (see `docContext` below), since Job 013 made "which container is being viewed" a mutable, navigable thing instead of a fixed value. */
+interface StaticCanvasDoc {
+  sfmDoc: SfmDocument;
+  rootContainerId: string;
+  undoManager: ReturnType<typeof createUndoManager>;
+}
+
 /**
- * Builds a brand-new local document plus its root container. Every node
- * created in this job's scope (there's no outpost UI yet — Job 013) lives
- * directly in this root container, so its id is threaded through
- * `CanvasDocContext` as `containerId` for `addNode` calls to use.
+ * Builds a brand-new local document plus its root container. Every other
+ * container (outposts, Job 013) is created later, by the user, nested under
+ * this one or under each other — this function only ever runs once, at
+ * mount, and only ever creates the root.
  */
-function createLocalCanvasDocument(): CanvasDocContextValue {
+function createLocalCanvasDocument(): StaticCanvasDoc {
   const sfmDoc = createDocument();
   const root = addContainer(sfmDoc, {
     kind: "root",
@@ -75,23 +91,51 @@ function createLocalCanvasDocument(): CanvasDocContextValue {
   // alongside `sfmDoc` itself, via `createDocument`'s companion
   // `createUndoManager` (Job 007) with its defaults: tracks only local
   // (`origin: null`) transactions, which is every mutation this app's UI
-  // makes — see this job's Handoff notes for why that alone satisfies
-  // PLAN.md's "per-user undo" for this single-local-user phase.
+  // makes — see Job 012's Handoff notes for why that alone satisfies
+  // PLAN.md's "per-user undo" for this single-local-user phase. Its scope
+  // (`[settings, containers, nodes, edges]`, set in `@scm/ydoc`'s own
+  // `createUndoManager`) is document-wide, not container-scoped, so
+  // drilling into an outpost and undoing/redoing there already works with
+  // zero changes needed for Job 013.
   const undoManager = createUndoManager(sfmDoc);
-  return { sfmDoc, containerId: root.id, undoManager };
+  return { sfmDoc, rootContainerId: root.id, undoManager };
 }
 
 export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewProps) {
-  // `useMemo` with no deps: exactly one document is created for the
-  // lifetime of this component instance. (Not `useState(() => ...)` only
-  // because nothing here ever needs to *replace* the document — a project
-  // switch unmounts this component and mounts a new one via `App.tsx`'s
-  // `key`-ed view switch, which is what should create a fresh doc.)
-  const docContext = useMemo(createLocalCanvasDocument, []);
-  const { sfmDoc, undoManager } = docContext;
+  // `useMemo` with no deps: exactly one document (and its one root
+  // container / one undo manager) is created for the lifetime of this
+  // component instance. (Not `useState(() => ...)` only because nothing
+  // here ever needs to *replace* the document — a project switch unmounts
+  // this component and mounts a new one via `App.tsx`'s `key`-ed view
+  // switch, which is what should create a fresh doc.)
+  const staticDoc = useMemo(createLocalCanvasDocument, []);
+  const { sfmDoc, undoManager } = staticDoc;
   const { canUndo, canRedo } = useUndoRedoState(undoManager);
 
-  // Dev-only escape hatch matching this job's acceptance criteria wording
+  // Job 013: "which container is currently being viewed" — starts at root,
+  // changes only via `navigateToContainer` (drill-in from an outpost node's
+  // double-click/"Open" affordance, or a breadcrumb click to jump back up
+  // any number of levels at once). This is genuine React state (not a
+  // fixed value threaded straight into the context, the way it was before
+  // this job) specifically so switching it re-renders every descendant
+  // that reads `containerId` off the context — most importantly
+  // `useYjsSync`, which re-derives "what's visible" for the new container
+  // (see that hook's own header comment).
+  const [containerId, setContainerId] = useState(staticDoc.rootContainerId);
+  const navigateToContainer = useCallback((id: string) => setContainerId(id), []);
+
+  const docContext: CanvasDocContextValue = useMemo(
+    () => ({
+      sfmDoc,
+      containerId,
+      rootContainerId: staticDoc.rootContainerId,
+      navigateToContainer,
+      undoManager,
+    }),
+    [sfmDoc, containerId, staticDoc.rootContainerId, navigateToContainer, undoManager],
+  );
+
+  // Dev-only escape hatch matching Job 008's acceptance criteria wording
   // ("verify by reading the doc state after a drag in a test or dev
   // console"): exposes the live document on `window` so `listNodes(window
   // .__sfmDoc)` (import `listNodes` from `@scm/ydoc` in the console, or just
@@ -102,17 +146,27 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
     (window as unknown as { __sfmDoc?: SfmDocument }).__sfmDoc = sfmDoc;
   }
 
-  const sync = useYjsSync(sfmDoc);
+  const sync = useYjsSync(sfmDoc, containerId);
 
   return (
     <CanvasDocContext.Provider value={docContext}>
       <div className="flex h-svh w-full flex-col">
-        <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-2">
+        <div className="flex items-center justify-between gap-3 border-b border-neutral-800 px-4 py-2">
           <div className="min-w-0">
             <button type="button" onClick={onBack} className="text-xs text-neutral-400 underline hover:text-neutral-200">
               ← Back to projects
             </button>
             <h2 className="truncate text-sm font-medium text-neutral-200">{projectTitle}</h2>
+            {/*
+              Job 013: the breadcrumb trail — "drill in to edit contents...
+              a breadcrumb trail" (this job's own Scope wording). `sync
+              .containers` is the *whole document's* containers (not just
+              the current view's children — see `useYjsSync.ts`'s
+              `CanvasStoreState.containers` doc comment), which is what lets
+              `computeBreadcrumbPath` walk the full ancestor chain
+              regardless of how deep `containerId` currently is.
+            */}
+            <Breadcrumbs containers={sync.containers} currentContainerId={containerId} onNavigate={navigateToContainer} />
           </div>
           <div className="flex shrink-0 items-center gap-3">
             {/*
@@ -181,14 +235,19 @@ interface ChooserState {
 
 /**
  * The `<ReactFlow>` instance itself, plus the double/right-click-to-open
- * wiring for Job 009's Recipe Chooser. Split out from `CanvasView` only so
- * it can sit inside `<ReactFlowProvider>` and call `useReactFlow()`.
+ * wiring for Job 009's Recipe Chooser and Job 013's node context menu.
+ * Split out from `CanvasView` only so it can sit inside
+ * `<ReactFlowProvider>` and call `useReactFlow()`.
  */
 function CanvasFlow({ sync }: CanvasFlowProps) {
   const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = sync;
-  const { sfmDoc, containerId, undoManager } = useCanvasDoc();
+  const { sfmDoc, containerId, undoManager, navigateToContainer } = useCanvasDoc();
   const { screenToFlowPosition } = useReactFlow();
   const [chooser, setChooser] = useState<ChooserState | null>(null);
+  // Job 013: right-click-on-a-node menu state — "move to container" for a
+  // real node, "open"/"delete (reparent, don't destroy)" for an outpost
+  // boundary node. See `outposts/NodeContextMenu.tsx`.
+  const [nodeMenu, setNodeMenu] = useState<NodeContextMenuState | null>(null);
   // Not React state on purpose — a click-time bookkeeping ref, not something whose change should trigger a render.
   const lastPaneClickRef = useRef<ClickPoint | null>(null);
 
@@ -200,21 +259,22 @@ function CanvasFlow({ sync }: CanvasFlowProps) {
     containerId,
   );
 
-  // Job 012: right-click-drag marquee multi-select. `enabled: chooser ===
-  // null` keeps a marquee from starting underneath an already-open Recipe
-  // Chooser modal (mirrors `useSelectionKeybinds`'s own `enabled` gate
-  // below). See `useMarqueeSelection.ts`'s header comment for why this is
-  // hand-rolled instead of a React Flow prop.
+  // Job 012: right-click-drag marquee multi-select. `enabled` also gates
+  // off the Job 013 node context menu, mirroring the existing Recipe
+  // Chooser gate, so a marquee can't start underneath either overlay.
   const { overlayRect, pointerHandlers, consumeJustDragged } = useMarqueeSelection({
     nodes,
     edges,
     onNodesChange,
     onEdgesChange,
     screenToFlowPosition,
-    enabled: chooser === null,
+    enabled: chooser === null && nodeMenu === null,
   });
 
-  // Job 012: cut/copy/paste/delete/select-all/undo/redo keybinds.
+  // Job 012: cut/copy/paste/delete/select-all/undo/redo keybinds. Job 013:
+  // `handleDelete` (inside this hook) now also reparents-and-removes any
+  // selected outpost boundary nodes, not just real recipe nodes/edges — see
+  // that hook's own comment.
   useSelectionKeybinds({
     sfmDoc,
     containerId,
@@ -223,7 +283,7 @@ function CanvasFlow({ sync }: CanvasFlowProps) {
     onNodesChange,
     onEdgesChange,
     undoManager,
-    enabled: chooser === null,
+    enabled: chooser === null && nodeMenu === null,
   });
 
   function openChooserAt(clientX: number, clientY: number) {
@@ -260,6 +320,32 @@ function CanvasFlow({ sync }: CanvasFlowProps) {
     openChooserAt(event.clientX, event.clientY);
   };
 
+  // Job 013: right-click on a node (real or outpost boundary) opens the
+  // "move to container" / "open outpost" / "delete outpost" menu instead of
+  // the Recipe Chooser — React Flow only calls `onNodeContextMenu` for
+  // clicks that land on a node, never the empty pane, so there's no
+  // ambiguity with `handlePaneContextMenu` above (no `consumeJustDragged`
+  // check needed here — a node-targeted right-click was never a marquee
+  // candidate in the first place, since the marquee's own pointer handlers
+  // apply uniformly across the whole canvas wrapper and don't care what
+  // DOM element started the drag).
+  const handleNodeContextMenu = (event: ReactMouseEvent, node: (typeof nodes)[number]) => {
+    event.preventDefault();
+    setNodeMenu({
+      nodeId: node.id,
+      isOutpost: Boolean(node.data.container),
+      screenPosition: { x: event.clientX, y: event.clientY },
+    });
+  };
+
+  const currentContainer = sync.containers.find((container) => container.id === containerId);
+  const parentContainer = currentContainer?.parentId
+    ? (sync.containers.find((container) => container.id === currentContainer.parentId) ?? null)
+    : null;
+  const siblingOutposts = sync.containers.filter(
+    (container) => container.parentId === containerId && container.id !== nodeMenu?.nodeId,
+  );
+
   return (
     // Job 012: the marquee's own pointer handlers live on this wrapper
     // (not passed as extra props into `<ReactFlow>`) so a right-click-drag
@@ -283,6 +369,7 @@ function CanvasFlow({ sync }: CanvasFlowProps) {
         onReconnectEnd={onReconnectEnd}
         onPaneClick={handlePaneClick}
         onPaneContextMenu={handlePaneContextMenu}
+        onNodeContextMenu={handleNodeContextMenu}
         zoomOnDoubleClick={false}
         fitView
         proOptions={{ hideAttribution: true }}
@@ -299,6 +386,17 @@ function CanvasFlow({ sync }: CanvasFlowProps) {
         />
       )}
       {overlayRect && <MarqueeOverlay rect={overlayRect} />}
+      {nodeMenu && (
+        <NodeContextMenu
+          state={nodeMenu}
+          siblingOutposts={siblingOutposts}
+          parentContainer={parentContainer}
+          onMoveToContainer={(nodeId, targetContainerId) => moveNodeToContainer(sfmDoc, nodeId, targetContainerId)}
+          onOpenOutpost={(id) => navigateToContainer(id)}
+          onDeleteOutpost={(id) => deleteOutpost(sfmDoc, id)}
+          onClose={() => setNodeMenu(null)}
+        />
+      )}
     </div>
   );
 }
