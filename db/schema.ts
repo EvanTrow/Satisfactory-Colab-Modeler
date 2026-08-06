@@ -3,13 +3,13 @@
 // `apps/api`) so the migration files and the types that describe their
 // result live next to each other and can't drift apart.
 //
-// This mirrors PLAN.md section 4 "Identity, projects, sharing" exactly.
-// Scope note: only the five relational tables from that subsection
-// (`users`, `sessions`, `projects`, `project_members`, `project_invites`)
-// are defined here. The CRDT persistence tables (`project_doc_state`,
-// `project_doc_updates`, `project_versions` — Job 015) and the read-only
-// relational projection (`proj_nodes`, `proj_edges` — Job 025) are out of
-// scope for this job and deliberately not declared yet.
+// This mirrors PLAN.md section 4 in full: "Identity, projects, sharing"
+// (`users`, `sessions`, `projects`, `project_members`, `project_invites` —
+// Job 004) plus "Canvas state: snapshot + incremental log" and the
+// version-history table (`project_doc_state`, `project_doc_updates`,
+// `project_versions` — Job 015). The read-only relational projection
+// (`proj_nodes`, `proj_edges` — Job 025) is still out of scope and
+// deliberately not declared yet.
 import type { ColumnType, Generated, Insertable, Selectable, Updateable } from "kysely";
 
 /** Postgres `inet` values round-trip through `postgres.js`/Kysely as plain strings. */
@@ -99,10 +99,68 @@ export type ProjectInvite = Selectable<ProjectInvitesTable>;
 export type NewProjectInvite = Insertable<ProjectInvitesTable>;
 export type ProjectInviteUpdate = Updateable<ProjectInvitesTable>;
 
+// ---------------------------------------------------------------------------
+// Canvas state: snapshot + incremental log (PLAN.md §4, Job 015)
+// ---------------------------------------------------------------------------
+
+export interface ProjectDocStateTable {
+  /** One row per project — this *is* the primary key, not a separate `id`. */
+  project_id: string;
+  /** `Y.encodeStateAsUpdate(doc)` — the compacted snapshot. */
+  ydoc: Buffer;
+  /** `Y.encodeStateVector(doc)` — lets a future client sync a delta instead of the whole doc. */
+  state_vector: Buffer;
+  /**
+   * Highest `project_doc_updates.id` folded into this snapshot. `bigint` in
+   * Postgres; `postgres.js` returns `int8`/`bigserial` values as `string`
+   * by default (a JS `number` can't losslessly represent the full 64-bit
+   * range), so this is typed `string` end to end rather than `number` —
+   * matches `ProjectDocUpdatesTable.id` below for the same reason.
+   */
+  seq: string;
+  compacted_at: Generated<ColumnType<Date, string | Date | undefined, never>>;
+}
+
+export type ProjectDocState = Selectable<ProjectDocStateTable>;
+export type NewProjectDocState = Insertable<ProjectDocStateTable>;
+export type ProjectDocStateUpdate = Updateable<ProjectDocStateTable>;
+
+export interface ProjectDocUpdatesTable {
+  /** `bigserial` — see `ProjectDocStateTable.seq`'s doc comment on why this is `string`, not `number`. */
+  id: Generated<string>;
+  project_id: string;
+  /** A single Yjs update blob (or several merged via `Y.mergeUpdates`, still one row). */
+  update: Buffer;
+  actor_user_id: string | null;
+  created_at: Generated<ColumnType<Date, string | Date | undefined, never>>;
+}
+
+export type ProjectDocUpdateRow = Selectable<ProjectDocUpdatesTable>;
+export type NewProjectDocUpdateRow = Insertable<ProjectDocUpdatesTable>;
+
+export type ProjectVersionKind = "auto" | "manual" | "import" | "pre_restore";
+
+export interface ProjectVersionsTable {
+  id: Generated<string>;
+  project_id: string;
+  ydoc: Buffer;
+  label: string | null;
+  kind: ProjectVersionKind;
+  created_by: string | null;
+  created_at: Generated<ColumnType<Date, string | Date | undefined, never>>;
+}
+
+export type ProjectVersion = Selectable<ProjectVersionsTable>;
+export type NewProjectVersion = Insertable<ProjectVersionsTable>;
+export type ProjectVersionUpdate = Updateable<ProjectVersionsTable>;
+
 export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
   projects: ProjectsTable;
   project_members: ProjectMembersTable;
   project_invites: ProjectInvitesTable;
+  project_doc_state: ProjectDocStateTable;
+  project_doc_updates: ProjectDocUpdatesTable;
+  project_versions: ProjectVersionsTable;
 }

@@ -55,6 +55,14 @@ export {
   type ResolvedEndpoints,
 } from "./edges";
 export { isDoubleClick, DOUBLE_CLICK_MS, DOUBLE_CLICK_PX, type ClickPoint } from "./doubleClick";
+// Job 015: doc load/save. Exported from the barrel (not just used
+// internally by CanvasView.tsx) since Job 016 (IndexedDB cache +
+// project_versions restore) builds directly on top of this — see
+// jobs/015-doc-persistence.md's Handoff notes for the exact contract.
+export { fetchProjectDoc, pushProjectDocUpdate } from "./persistence/docApi";
+export { bytesToBase64, base64ToBytes } from "./persistence/base64";
+export { createUpdateQueue, type CreateUpdateQueueOptions, type UpdateQueue } from "./persistence/updateQueue";
+export { useProjectDocument, type ProjectDocumentState, type StaticCanvasDoc } from "./persistence/useProjectDocument";
 export {
   buildClipboard,
   deleteSelection,

@@ -105,11 +105,11 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
     try {
       const copy = await duplicateProject(project.id);
       setProjects((prev) => [copy, ...prev]);
-      // Job 006's explicit limitation (apps/api/src/projects/store.ts's
-      // duplicateProject doc comment): there's no CRDT document to
-      // duplicate yet (Job 015), so only the project's title/settings were
-      // cloned. Surfaced here rather than silently implying a full copy.
-      setNotice(`"${copy.title}" was created. Note: only the project's settings were copied — canvas content duplication isn't available yet.`);
+      // Job 015: duplication now copies the source project's current canvas
+      // content too (apps/api/src/projects/store.ts's duplicateProject),
+      // not just its title/settings — the "settings only" caveat this
+      // notice used to carry (Job 006-014) no longer applies.
+      setNotice(`"${copy.title}" was created, including a copy of its current canvas content.`);
     } catch (err) {
       setActionError(describeError(err));
     } finally {

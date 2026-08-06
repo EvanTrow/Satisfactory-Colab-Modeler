@@ -100,8 +100,10 @@ function App() {
       <main className="bg-[var(--surface-app)] text-[var(--text-primary)]">
         <CanvasView
           key={view.project.id}
+          projectId={view.project.id}
           projectTitle={view.project.title}
           projectShortId={view.project.shortId}
+          role={view.project.role}
           onBack={leaveCanvas}
         />
       </main>

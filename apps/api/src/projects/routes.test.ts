@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import { afterAll, describe, expect, it } from "vitest";
+import * as Y from "yjs";
 
 import { createSession, SESSION_COOKIE_NAME } from "../auth/session.js";
 import { buildApp } from "../app.js";
@@ -383,7 +384,7 @@ describe("DELETE /api/projects/:id — owner-only soft delete", () => {
   });
 });
 
-describe("POST /api/projects/:id/duplicate — metadata-only clone", () => {
+describe("POST /api/projects/:id/duplicate — full clone (Job 015: metadata + doc content)", () => {
   it("clones the project row with a new id/short_id, '(copy)' title suffix, and owner_id set to the duplicator", async () => {
     const app = await buildApp({ logger: false });
     await app.ready();
@@ -407,12 +408,54 @@ describe("POST /api/projects/:id/duplicate — metadata-only clone", () => {
     expect(copy.title).toBe("Original (copy)");
     expect(copy.ownerId).toBe(owner.id);
     expect(copy.role).toBe("owner");
-    // The metadata-only limitation (Job 015 note) must be surfaced, not silently implied away.
-    expect(copy.metadataOnly).toBe(true);
+    // Job 006's `metadataOnly: true` flag is gone (Job 015 made duplication
+    // a real, full clone) — assert it's simply absent from the response.
+    expect(copy.metadataOnly).toBeUndefined();
 
     // The original project is untouched.
     const originalRow = await db.selectFrom("projects").selectAll().where("id", "=", original.id).executeTakeFirst();
     expect(originalRow?.title).toBe("Original");
+
+    await app.close();
+  });
+
+  it("duplicates the source project's current canvas document content, not just its metadata row", async () => {
+    const app = await buildApp({ logger: false });
+    await app.ready();
+    const owner = await createTestUser("dup-doc-owner");
+    const cookie = await cookieFor(owner.id);
+
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie },
+      payload: { title: "Has Doc Content" },
+    });
+    const original = createRes.json();
+
+    // Push a doc update carrying a distinctive marker into the source
+    // project's document, exactly the way `apps/web`'s debounced push does.
+    const sourceDoc = new Y.Doc();
+    sourceDoc.transact(() => {
+      sourceDoc.getMap("meta").set("distinctiveMarker", "job-015-dup-test");
+    });
+    const pushRes = await app.inject({
+      method: "POST",
+      url: `/api/projects/${original.id}/doc/updates`,
+      headers: { cookie },
+      payload: { update: Buffer.from(Y.encodeStateAsUpdate(sourceDoc)).toString("base64") },
+    });
+    expect(pushRes.statusCode).toBe(204);
+
+    const dupRes = await app.inject({ method: "POST", url: `/api/projects/${original.id}/duplicate`, headers: { cookie } });
+    expect(dupRes.statusCode).toBe(201);
+    const copy = dupRes.json();
+
+    const docRes = await app.inject({ method: "GET", url: `/api/projects/${copy.id}/doc`, headers: { cookie } });
+    expect(docRes.statusCode).toBe(200);
+    const copiedDoc = new Y.Doc();
+    Y.applyUpdate(copiedDoc, Buffer.from(docRes.json().update, "base64"));
+    expect(copiedDoc.getMap("meta").get("distinctiveMarker")).toBe("job-015-dup-test");
 
     await app.close();
   });

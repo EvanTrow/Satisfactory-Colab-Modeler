@@ -2,6 +2,7 @@ import type { Project, ProjectMemberRole } from "@scm/db";
 import { sql } from "kysely";
 
 import { db } from "../db.js";
+import { duplicateDocState } from "./docStorage.js";
 import { generateShortId } from "./short-id.js";
 
 /**
@@ -163,19 +164,26 @@ export async function softDeleteProject(projectId: string): Promise<Project> {
 }
 
 /**
- * Duplicates a project's *metadata row only* — new `id`/`short_id`, title
- * suffixed "(copy)", `owner_id` set to the duplicator (not necessarily the
- * source project's owner, since an editor/viewer is also allowed to
- * duplicate — see `roles.ts`'s `canDuplicate`).
+ * Duplicates a project — its metadata row *and* its current canvas
+ * document (`project_doc_state`/`project_doc_updates`, merged as of the
+ * moment of duplication). New `id`/`short_id`, title suffixed "(copy)",
+ * `owner_id` set to the duplicator (not necessarily the source project's
+ * owner, since an editor/viewer is also allowed to duplicate — see
+ * `roles.ts`'s `canDuplicate`).
  *
- * IMPORTANT / TODO(job-015): this does NOT duplicate the project's canvas
- * content. `project_doc_state` (the table that will hold the CRDT
- * document) doesn't exist yet — it's Job 015's deliverable. Until that
- * lands, every project (duplicated or not) has no document content, so
- * "duplicate" only clones the relational row: title, visibility,
- * game_data_version, doc_settings. Once Job 015 adds `project_doc_state`,
- * this function must be extended to also copy (or seed) the source
- * project's document — do not remove this comment until that's done.
+ * Was metadata-row-only through Job 006/014 (`project_doc_state` didn't
+ * exist yet) — fixed by Job 015, which added that table and
+ * `docStorage.ts`'s `duplicateDocState`. The doc copy runs *after* the
+ * transaction that creates the new project row/membership commits, as a
+ * separate step: `duplicateDocState` reads from `project_doc_state`/
+ * `project_doc_updates` (outside this transaction) and writes a single new
+ * `project_doc_state` row for the target project, so there's nothing to
+ * gain by holding the projects-table transaction open across it, and doing
+ * so would mean holding a row lock across a (comparatively) slow
+ * Yjs-merge operation for no reason. If `duplicateDocState` throws, the new
+ * project row still exists (with no doc content, same as the pre-Job-015
+ * behavior for every project) — the caller (`routes.ts`) lets that surface
+ * as a 500 rather than silently swallowing a failed doc copy.
  */
 export async function duplicateProject(source: Project, duplicatorId: string): Promise<ProjectWithRole> {
   const copyTitle = `${source.title} (copy)`;
@@ -204,6 +212,8 @@ export async function duplicateProject(source: Project, duplicatorId: string): P
 
         return inserted;
       });
+
+      await duplicateDocState(source.id, project.id);
 
       return { project, role: "owner" };
     } catch (err) {

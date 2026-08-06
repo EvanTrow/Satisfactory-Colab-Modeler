@@ -1,19 +1,23 @@
-// Job 008: the React Flow canvas mounted for a single project, backed by a
-// fresh, local, in-memory `@scm/ydoc` document. No fetch, no persistence —
-// every reload starts a brand-new empty document (Job 015 adds loading a
-// real one from the server). Job 009 adds the Recipe Chooser, opened by
-// double-clicking or right-clicking the empty canvas background (PLAN.md
-// §2's "Add a machine" row). Job 013 adds outposts: drill-in navigation
-// (the current container is now stateful, not fixed to root — see
-// `createLocalCanvasDocument`/`docContext` below), a breadcrumb trail, and
-// a node-level context menu for moving nodes into/out of an outpost and
-// deleting one (reparenting its contents rather than destroying them).
-import { type MouseEvent as ReactMouseEvent, useCallback, useMemo, useRef, useState } from "react";
+// Job 008: the React Flow canvas mounted for a single project. Job 015
+// replaced the original "fresh, local, in-memory document every mount, no
+// fetch, no persistence" behavior with the real thing — see
+// `persistence/useProjectDocument.ts`: on mount, the project's persisted
+// doc bytes are fetched and `Y.applyUpdate`-d in *before* `useYjsSync`'s
+// observers ever attach, and local edits are debounced and pushed back.
+// Job 009 adds the Recipe Chooser, opened by double-clicking or
+// right-clicking the empty canvas background (PLAN.md §2's "Add a machine"
+// row). Job 013 adds outposts: drill-in navigation (the current container
+// is now stateful, not fixed to root — see `docContext` below), a
+// breadcrumb trail, and a node-level context menu for moving nodes
+// into/out of an outpost and deleting one (reparenting its contents rather
+// than destroying them).
+import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 
-import { type SfmDocument, type Settings, addContainer, createDocument, createUndoManager } from "@scm/ydoc";
+import type { SfmDocument, Settings } from "@scm/ydoc";
 import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+import type { ProjectRole } from "../api/projects";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
 import { DevNodeTools } from "./DevNodeTools";
@@ -22,6 +26,7 @@ import { type ClickPoint, isDoubleClick } from "./doubleClick";
 import { ConnectionEdge, useConnectionHandlers } from "./edges";
 import { RecipeNode } from "./nodes";
 import { BoundaryEdge, NodeContextMenu, OutpostNode, deleteOutpost, moveNodeToContainer, type NodeContextMenuState } from "./outposts";
+import { useProjectDocument, type StaticCanvasDoc } from "./persistence/useProjectDocument";
 import { RecipeChooser } from "../panels";
 import { MarqueeOverlay, useMarqueeSelection, useSelectionKeybinds, useUndoRedoState } from "./selection";
 import { ThemeToggle, useTheme, type ThemeMode } from "../theme";
@@ -59,60 +64,99 @@ const edgeTypes = { part: ConnectionEdge, boundary: BoundaryEdge };
  */
 
 interface CanvasViewProps {
-  /** Route param identifying the project — display-only in this job; nothing is fetched from it yet (no backend involvement, per Job 008's scope). */
+  /** The project's real database id (UUID) — what `persistence/useProjectDocument.ts` fetches/pushes doc bytes against. Not the same as `projectShortId` below. */
+  projectId: string;
+  projectTitle: string;
+  projectShortId: string;
+  /** The caller's role on this project — gates whether local edits get pushed to the server at all (see `useProjectDocument`'s header comment). */
+  role: ProjectRole;
+  onBack: () => void;
+}
+
+/**
+ * `CanvasView` itself only resolves "do we have a hydrated document yet" —
+ * loading/error states render their own minimal chrome (with the same back
+ * button, since `onBack` should work even if the load never finishes) and
+ * defer everything else (the toolbar, `<ReactFlow>`, all of Jobs 009-014's
+ * hooks) to `CanvasViewReady`, which only ever mounts once `sfmDoc`/
+ * `rootContainerId`/`undoManager` exist — those hooks assume a live
+ * `SfmDocument` unconditionally, so they can't run before that.
+ */
+export function CanvasView({ projectId, projectTitle, projectShortId, role, onBack }: CanvasViewProps) {
+  const docState = useProjectDocument(projectId, role);
+
+  if (docState.status === "loading") {
+    return (
+      <CanvasStatusScreen projectTitle={projectTitle} onBack={onBack}>
+        Loading project…
+      </CanvasStatusScreen>
+    );
+  }
+
+  if (docState.status === "error") {
+    return (
+      <CanvasStatusScreen projectTitle={projectTitle} onBack={onBack}>
+        <p className="mb-3 text-[var(--danger)]">Couldn't load this project: {docState.message}</p>
+        <button
+          type="button"
+          onClick={docState.retry}
+          className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]"
+        >
+          Retry
+        </button>
+      </CanvasStatusScreen>
+    );
+  }
+
+  return (
+    <CanvasViewReady
+      sfmDoc={docState.sfmDoc}
+      rootContainerId={docState.rootContainerId}
+      undoManager={docState.undoManager}
+      projectTitle={projectTitle}
+      projectShortId={projectShortId}
+      onBack={onBack}
+    />
+  );
+}
+
+interface CanvasStatusScreenProps {
+  projectTitle: string;
+  onBack: () => void;
+  children: ReactNode;
+}
+
+/** The loading/error shell — same back-button affordance as the real canvas header, so a stuck load never traps the user. */
+function CanvasStatusScreen({ projectTitle, onBack, children }: CanvasStatusScreenProps) {
+  return (
+    <div className="flex h-svh w-full flex-col bg-[var(--surface-app)] text-[var(--text-primary)]">
+      <div className="flex items-center gap-3 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-2">
+        <div className="min-w-0">
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-xs text-[var(--text-muted)] underline hover:text-[var(--text-primary)]"
+          >
+            ← Back to projects
+          </button>
+          <h2 className="truncate text-sm font-medium text-[var(--text-primary)]">{projectTitle}</h2>
+        </div>
+      </div>
+      <div className="flex flex-1 items-center justify-center text-sm text-[var(--text-muted)]">
+        <div className="text-center">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+interface CanvasViewReadyProps extends StaticCanvasDoc {
   projectTitle: string;
   projectShortId: string;
   onBack: () => void;
 }
 
-/** The parts of `CanvasDocContextValue` that are created once and never replaced for the lifetime of a `CanvasView` mount — everything else (`containerId`/`navigateToContainer`) is live React state layered on top in `CanvasView` itself (see `docContext` below), since Job 013 made "which container is being viewed" a mutable, navigable thing instead of a fixed value. */
-interface StaticCanvasDoc {
-  sfmDoc: SfmDocument;
-  rootContainerId: string;
-  undoManager: ReturnType<typeof createUndoManager>;
-}
-
-/**
- * Builds a brand-new local document plus its root container. Every other
- * container (outposts, Job 013) is created later, by the user, nested under
- * this one or under each other — this function only ever runs once, at
- * mount, and only ever creates the root.
- */
-function createLocalCanvasDocument(): StaticCanvasDoc {
-  const sfmDoc = createDocument();
-  const root = addContainer(sfmDoc, {
-    kind: "root",
-    parentId: null,
-    title: "Root",
-    color: "#4b5563",
-    x: 0,
-    y: 0,
-    copiesLimit: null,
-  });
-  // Job 012: one `Y.UndoManager` per open document (not per component —
-  // see `CanvasDocContext.ts`'s doc comment on `undoManager`). Created here,
-  // alongside `sfmDoc` itself, via `createDocument`'s companion
-  // `createUndoManager` (Job 007) with its defaults: tracks only local
-  // (`origin: null`) transactions, which is every mutation this app's UI
-  // makes — see Job 012's Handoff notes for why that alone satisfies
-  // PLAN.md's "per-user undo" for this single-local-user phase. Its scope
-  // (`[settings, containers, nodes, edges]`, set in `@scm/ydoc`'s own
-  // `createUndoManager`) is document-wide, not container-scoped, so
-  // drilling into an outpost and undoing/redoing there already works with
-  // zero changes needed for Job 013.
-  const undoManager = createUndoManager(sfmDoc);
-  return { sfmDoc, rootContainerId: root.id, undoManager };
-}
-
-export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewProps) {
-  // `useMemo` with no deps: exactly one document (and its one root
-  // container / one undo manager) is created for the lifetime of this
-  // component instance. (Not `useState(() => ...)` only because nothing
-  // here ever needs to *replace* the document — a project switch unmounts
-  // this component and mounts a new one via `App.tsx`'s `key`-ed view
-  // switch, which is what should create a fresh doc.)
-  const staticDoc = useMemo(createLocalCanvasDocument, []);
-  const { sfmDoc, undoManager } = staticDoc;
+/** Everything Jobs 008-014 built, unchanged in substance — now fed a hydrated `sfmDoc`/`rootContainerId`/`undoManager` from `useProjectDocument` instead of creating a fresh empty one itself. */
+function CanvasViewReady({ sfmDoc, rootContainerId, undoManager, projectTitle, projectShortId, onBack }: CanvasViewReadyProps) {
   const { canUndo, canRedo } = useUndoRedoState(undoManager);
   // Job 014: theme toggle (app-level mechanism, see `theme/useTheme.ts`) and
   // the live `Settings` read needed for the background grid's dot spacing
@@ -132,18 +176,18 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
   // that reads `containerId` off the context — most importantly
   // `useYjsSync`, which re-derives "what's visible" for the new container
   // (see that hook's own header comment).
-  const [containerId, setContainerId] = useState(staticDoc.rootContainerId);
+  const [containerId, setContainerId] = useState(rootContainerId);
   const navigateToContainer = useCallback((id: string) => setContainerId(id), []);
 
   const docContext: CanvasDocContextValue = useMemo(
     () => ({
       sfmDoc,
       containerId,
-      rootContainerId: staticDoc.rootContainerId,
+      rootContainerId,
       navigateToContainer,
       undoManager,
     }),
-    [sfmDoc, containerId, staticDoc.rootContainerId, navigateToContainer, undoManager],
+    [sfmDoc, containerId, rootContainerId, navigateToContainer, undoManager],
   );
 
   // Dev-only escape hatch matching Job 008's acceptance criteria wording
@@ -186,8 +230,9 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
           <div className="flex shrink-0 items-center gap-3">
             {/*
               Job 012: Undo/Redo toolbar buttons, wired straight to the
-              document's `Y.UndoManager` (see `createLocalCanvasDocument`
-              above). `useSelectionKeybinds.ts` wires the same two actions to
+              document's `Y.UndoManager` (created in
+              `persistence/useProjectDocument.ts`, once the doc has
+              finished loading). `useSelectionKeybinds.ts` wires the same two actions to
               Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z / Ctrl+Y — these buttons are a
               second, discoverable entry point to the identical operation,
               not a separate code path.
@@ -216,7 +261,8 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
             <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
             <span className="text-xs text-[var(--text-muted)]">
-              {projectShortId} · local in-memory document, not saved (Job 015)
+              {/* Matches persistence/useProjectDocument.ts's DEBOUNCE_MS — kept as a literal here rather than importing an internal constant just for display text. */}
+              {projectShortId} · autosaves ~1.5s after your last edit (Job 016 adds a live indicator)
             </span>
           </div>
         </div>

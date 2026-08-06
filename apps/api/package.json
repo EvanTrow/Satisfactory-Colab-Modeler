@@ -20,7 +20,8 @@
     "fastify-plugin": "^6.0.0",
     "kysely": "^0.29.4",
     "kysely-postgres-js": "^3.0.0",
-    "postgres": "^3.4.9"
+    "postgres": "^3.4.9",
+    "yjs": "13.6.32"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

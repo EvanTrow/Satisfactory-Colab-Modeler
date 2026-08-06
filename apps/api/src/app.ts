@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import { authRoutes, type AuthRoutesOptions } from "./auth/routes.js";
 import { sessionPlugin } from "./auth/session-plugin.js";
+import { projectDocRoutes } from "./projects/docRoutes.js";
 import { projectRoutes } from "./projects/routes.js";
 
 export interface BuildAppOptions {
@@ -36,6 +37,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // `request.user`) are globally visible via fastify-plugin, not scoped to
   // authRoutes's own encapsulation context.
   await app.register(projectRoutes);
+  // Job 015: doc load/push routes, kept in their own plugin/file
+  // (docRoutes.ts) rather than folded into routes.ts, since they're a
+  // meaningfully different concern (bytes, not JSON metadata) built on top
+  // of the same auth/role-resolution primitives.
+  await app.register(projectDocRoutes);
 
   return app;
 }

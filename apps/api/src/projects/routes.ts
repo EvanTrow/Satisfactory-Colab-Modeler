@@ -103,15 +103,18 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const result = await duplicateProject(project, user.id);
-      return reply.code(201).send({
-        ...serializeProject(result),
-        // Flagged explicitly in the response (not just in code comments —
-        // see store.ts's duplicateProject TODO) so `apps/web` can surface
-        // this to the user rather than silently implying a full copy:
-        // there is no CRDT document to duplicate yet (Job 015), so only
-        // the project's metadata row was cloned.
-        metadataOnly: true,
-      });
+      // Job 006 shipped this response with `metadataOnly: true` (the
+      // canvas document wasn't duplicable yet — `project_doc_state` didn't
+      // exist). Job 015 added it and `duplicateProject` now really does
+      // copy the source project's current doc snapshot, so that flag is
+      // gone rather than kept around always-`false`: `apps/web`'s
+      // `DuplicatedProject` type dropped it too (see `api/projects.ts`),
+      // and the "only settings were copied" notice in `ProjectsPage.tsx`
+      // was removed rather than updated to lie less specifically. If a
+      // *future* job reintroduces a real metadata-only duplication mode
+      // (e.g. "duplicate without history"), it should mint a new,
+      // differently-named field rather than resurrecting this one.
+      return reply.code(201).send(serializeProject(result));
     },
   );
 

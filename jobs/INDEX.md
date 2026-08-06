@@ -20,7 +20,7 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 | 012 | [Selection & editing](012-selection-editing.md) | 2 · Solo canvas editor | 011 | Done |
 | 013 | [Outposts](013-outposts.md) | 2 · Solo canvas editor | 012 | Done |
 | 014 | [Visual pass & theming](014-visual-pass.md) | 2 · Solo canvas editor | 013 | Done |
-| 015 | [Doc persistence](015-doc-persistence.md) | 3 · Persistence | 014, 006 | Not started |
+| 015 | [Doc persistence](015-doc-persistence.md) | 3 · Persistence | 014, 006 | Done |
 | 016 | [IndexedDB cache & versions](016-indexeddb-versions.md) | 3 · Persistence | 015 | Not started |
 | 017 | [Solver core](017-solver-core.md) | 4 · Calculators | 002 | Not started |
 | 018 | [Solver worker host](018-solver-worker.md) | 4 · Calculators | 017, 016 | Not started |

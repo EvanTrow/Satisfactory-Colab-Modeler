@@ -19,16 +19,16 @@ export interface ProjectSummary {
 }
 
 /**
- * `POST /api/projects/:id/duplicate`'s response also carries this flag —
- * duplication is project-metadata-only until Job 015 adds the CRDT
- * document tables (`project_doc_state`); see
- * `apps/api/src/projects/store.ts`'s `duplicateProject` doc comment for the
- * full explanation. `apps/web` surfaces this to the user (see
- * `ProjectsPage.tsx`) rather than silently implying a full copy happened.
+ * `POST /api/projects/:id/duplicate`'s response shape. Through Job 006-014
+ * this carried a `metadataOnly: true` flag (there was no CRDT document to
+ * duplicate yet — `project_doc_state` didn't exist), which `ProjectsPage.tsx`
+ * surfaced as a dismissible notice. Job 015 added `project_doc_state` and
+ * wired real doc duplication (`apps/api/src/projects/store.ts`'s
+ * `duplicateProject` now also calls `docStorage.ts`'s `duplicateDocState`),
+ * so the flag and the notice were both removed rather than kept around
+ * always-`false` — a duplicate is a real, full duplicate now.
  */
-export interface DuplicatedProject extends ProjectSummary {
-  metadataOnly: true;
-}
+export type DuplicatedProject = ProjectSummary;
 
 export class ApiError extends Error {
   status: number;

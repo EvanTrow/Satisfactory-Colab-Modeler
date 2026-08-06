@@ -65,6 +65,9 @@ importers:
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
+      yjs:
+        specifier: 13.6.32
+        version: 13.6.32
     devDependencies:
       '@types/node':
         specifier: ^24.13.3
