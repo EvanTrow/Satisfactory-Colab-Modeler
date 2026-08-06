@@ -1,17 +1,33 @@
 // Job 008: the React Flow canvas mounted for a single project, backed by a
 // fresh, local, in-memory `@scm/ydoc` document. No fetch, no persistence —
 // every reload starts a brand-new empty document (Job 015 adds loading a
-// real one from the server). No game data, no Recipe Chooser, no real node
-// visuals — see jobs/008-canvas-skeleton.md's Scope section.
-import { useMemo } from "react";
+// real one from the server). No real node visuals yet (Job 010) — but Job
+// 009 adds the Recipe Chooser, opened by double-clicking or right-clicking
+// the empty canvas background (PLAN.md §2's "Add a machine" row).
+import { type MouseEvent as ReactMouseEvent, useMemo, useRef, useState } from "react";
 
 import { type SfmDocument, addContainer, createDocument } from "@scm/ydoc";
-import { Background, BackgroundVariant, Controls, ReactFlow } from "@xyflow/react";
+import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+import { RecipeChooser } from "../panels";
 import { CanvasDocContext, type CanvasDocContextValue } from "./CanvasDocContext";
 import { DevNodeTools } from "./DevNodeTools";
-import { useYjsSync } from "./useYjsSync";
+import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
+
+/**
+ * How close together (in ms) and how close together (in screen px) two
+ * `onPaneClick` calls need to be to count as a double-click. There's no
+ * `onPaneDoubleClick` prop in `@xyflow/react` v12 (confirmed against its
+ * types), so this is the manual detection Job 008's handoff notes flagged
+ * as the way to get it — the alternative (a native `onDoubleClick` on the
+ * wrapping `<div>`) would need its own logic to tell a background
+ * double-click apart from one that landed on a node. `zoomOnDoubleClick`
+ * is set to `false` below so a background double-click doesn't *also* zoom
+ * the canvas while this opens the chooser.
+ */
+const DOUBLE_CLICK_MS = 400;
+const DOUBLE_CLICK_PX = 12;
 
 interface CanvasViewProps {
   /** Route param identifying the project — display-only in this job; nothing is fetched from it yet (no backend involvement, per Job 008's scope). */
@@ -60,7 +76,7 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
     (window as unknown as { __sfmDoc?: SfmDocument }).__sfmDoc = sfmDoc;
   }
 
-  const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = useYjsSync(sfmDoc);
+  const sync = useYjsSync(sfmDoc);
 
   return (
     <CanvasDocContext.Provider value={docContext}>
@@ -78,21 +94,105 @@ export function CanvasView({ projectTitle, projectShortId, onBack }: CanvasViewP
         </div>
 
         <div className="relative flex-1">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onNodeDragStop={onNodeDragStop}
-            fitView
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
-            <Controls />
-            <DevNodeTools />
-          </ReactFlow>
+          {/*
+            `useReactFlow()` (needed below to convert a click's screen
+            coordinates into document/flow coordinates for the Recipe
+            Chooser) only works inside a `<ReactFlowProvider>` — the
+            provider `<ReactFlow>` sets up internally only covers its own
+            subtree, not this component's own scope. `CanvasFlow` is a
+            child of the explicit provider below so it can call the hook.
+          */}
+          <ReactFlowProvider>
+            <CanvasFlow sync={sync} />
+          </ReactFlowProvider>
         </div>
       </div>
     </CanvasDocContext.Provider>
+  );
+}
+
+interface CanvasFlowProps {
+  sync: UseYjsSyncResult;
+}
+
+/** Pending Recipe Chooser state: both coordinate systems captured at the moment of the triggering click. */
+interface ChooserState {
+  /** Document/flow coordinates — where the created node will be placed. */
+  flowPosition: { x: number; y: number };
+  /** Viewport/screen coordinates — where the modal opens, per PLAN.md §2 ("Recipe Chooser opens" at the click point). */
+  screenPosition: { x: number; y: number };
+}
+
+/**
+ * The `<ReactFlow>` instance itself, plus the double/right-click-to-open
+ * wiring for Job 009's Recipe Chooser. Split out from `CanvasView` only so
+ * it can sit inside `<ReactFlowProvider>` and call `useReactFlow()`.
+ */
+function CanvasFlow({ sync }: CanvasFlowProps) {
+  const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = sync;
+  const { screenToFlowPosition } = useReactFlow();
+  const [chooser, setChooser] = useState<ChooserState | null>(null);
+  // Not React state on purpose — a click-time bookkeeping ref, not something whose change should trigger a render.
+  const lastPaneClickRef = useRef<{ time: number; x: number; y: number } | null>(null);
+
+  function openChooserAt(clientX: number, clientY: number) {
+    setChooser({
+      flowPosition: screenToFlowPosition({ x: clientX, y: clientY }),
+      screenPosition: { x: clientX, y: clientY },
+    });
+  }
+
+  // `onPaneClick` only fires for clicks that land on the empty background
+  // (React Flow doesn't call it for clicks on a node), so this already
+  // satisfies "double-click the *empty* canvas" without extra checks.
+  const handlePaneClick = (event: ReactMouseEvent) => {
+    const now = Date.now();
+    const last = lastPaneClickRef.current;
+    lastPaneClickRef.current = { time: now, x: event.clientX, y: event.clientY };
+    if (
+      last &&
+      now - last.time <= DOUBLE_CLICK_MS &&
+      Math.hypot(event.clientX - last.x, event.clientY - last.y) <= DOUBLE_CLICK_PX
+    ) {
+      lastPaneClickRef.current = null; // consume the pair so a third click starts a fresh count, not an immediate re-open
+      openChooserAt(event.clientX, event.clientY);
+    }
+  };
+
+  // Typed to match `onPaneContextMenu`'s own prop type exactly
+  // (`ReactMouseEvent | MouseEvent` — React Flow calls it with a plain
+  // native `MouseEvent` in some internal paths), not narrowed to just
+  // `ReactMouseEvent` the way `onPaneClick`'s handler is above.
+  const handlePaneContextMenu = (event: ReactMouseEvent | MouseEvent) => {
+    event.preventDefault(); // suppress the native browser context menu
+    openChooserAt(event.clientX, event.clientY);
+  };
+
+  return (
+    <>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onNodeDragStop={onNodeDragStop}
+        onPaneClick={handlePaneClick}
+        onPaneContextMenu={handlePaneContextMenu}
+        zoomOnDoubleClick={false}
+        fitView
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
+        <Controls />
+        <DevNodeTools />
+      </ReactFlow>
+      {chooser && (
+        <RecipeChooser
+          flowPosition={chooser.flowPosition}
+          screenPosition={chooser.screenPosition}
+          onClose={() => setChooser(null)}
+        />
+      )}
+    </>
   );
 }

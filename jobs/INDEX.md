@@ -14,7 +14,7 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 | 006 | [Project list UI](006-project-list-ui.md) | 1 · Auth & projects | 005 | Done |
 | 007 | [`packages/ydoc` schema](007-ydoc-schema.md) | 2 · Solo canvas editor | 001 | Done |
 | 008 | [Canvas skeleton](008-canvas-skeleton.md) | 2 · Solo canvas editor | 007 | Done |
-| 009 | [Recipe Chooser](009-recipe-chooser.md) | 2 · Solo canvas editor | 008, 003 | Not started |
+| 009 | [Recipe Chooser](009-recipe-chooser.md) | 2 · Solo canvas editor | 008, 003 | Done |
 | 010 | [Recipe node UI](010-recipe-node-ui.md) | 2 · Solo canvas editor | 009 | Not started |
 | 011 | [Connections & waypoints](011-connections-waypoints.md) | 2 · Solo canvas editor | 010 | Not started |
 | 012 | [Selection & editing](012-selection-editing.md) | 2 · Solo canvas editor | 011 | Not started |
