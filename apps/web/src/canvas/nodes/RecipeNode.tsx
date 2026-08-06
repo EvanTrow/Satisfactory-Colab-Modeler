@@ -18,7 +18,7 @@ import {
   toFractionString,
   type Rational,
 } from "@scm/rational";
-import { updateNode } from "@scm/ydoc";
+import { listEdges, removeEdge, updateNode } from "@scm/ydoc";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 
 import { getIconUrl } from "../../assets/icons";
@@ -90,9 +90,19 @@ function formatRate(value: Rational): string {
 interface PartRowProps {
   part: RecipePart;
   rate: Rational;
+  /**
+   * Job 011: right-clicking this row removes every edge connected to this
+   * port (PLAN.md §2's Connect row — "remove by re-dragging or
+   * right-clicking the part label"; see `RecipeNode`'s
+   * `removeEdgesForPort` for the lookup/removal and this job's Handoff
+   * notes for why "the part label" is read as this row rather than the
+   * edge's own on-canvas label, which has its own distinct
+   * double-right-click-to-delete gesture on `ConnectionEdge.tsx`).
+   */
+  onRemovePortEdges: (handleId: string) => void;
 }
 
-function PartRow({ part, rate }: PartRowProps) {
+function PartRow({ part, rate, onRemovePortEdges }: PartRowProps) {
   const input = isNegative(part.amount);
   // Port handle id contract for Job 011 (connections & waypoints) — see
   // this job's Handoff notes for the full writeup. Format:
@@ -102,7 +112,18 @@ function PartRow({ part, rate }: PartRowProps) {
   const iconUrl = getIconUrl(part.part);
 
   return (
-    <div className="relative flex items-center gap-1.5 px-2 py-1 text-[11px]">
+    <div
+      className="relative flex items-center gap-1.5 px-2 py-1 text-[11px]"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        // Stop this from bubbling up to `<ReactFlow onPaneContextMenu>`,
+        // which would otherwise *also* open the Recipe Chooser (Job 009) —
+        // right-clicking a node is a distinct gesture from right-clicking
+        // the empty canvas background.
+        event.stopPropagation();
+        onRemovePortEdges(handleId);
+      }}
+    >
       {input && (
         <Handle
           type="target"
@@ -186,6 +207,26 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
     if (next !== node.shards) updateNode(sfmDoc, id, { shards: next });
   }
 
+  /**
+   * Job 011: right-click-on-part-label edge removal. Looks up every edge
+   * touching this node at this specific port (either side — a port can be
+   * both a `fromPort` and a `toPort` across different edges, though not
+   * simultaneously on the same edge) and removes them all via `@scm/ydoc`'s
+   * `removeEdge`. There's no index of "edges by node+port" maintained
+   * anywhere (PLAN.md §4's schema doesn't have one, and this node count
+   * scale doesn't need one — see PLAN.md §2: "tens to low hundreds per
+   * outpost"), so this is a plain linear scan of `listEdges`, same
+   * complexity class `useYjsSync.ts`'s own full-resync-on-every-change
+   * already accepts.
+   */
+  function removeEdgesForPort(handleId: string) {
+    for (const edge of listEdges(sfmDoc)) {
+      if ((edge.fromNode === id && edge.fromPort === handleId) || (edge.toNode === id && edge.toPort === handleId)) {
+        removeEdge(sfmDoc, edge.id);
+      }
+    }
+  }
+
   const machineIconUrl = node.machine ? getIconUrl(node.machine) : undefined;
 
   if (!recipe) {
@@ -202,11 +243,28 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
 
   return (
     <div
-      className={`w-64 overflow-hidden rounded-md border bg-neutral-900 text-neutral-100 shadow-lg ${
+      // Job 011: deliberately *not* `overflow-hidden` (Job 010 originally
+      // had it here). React Flow's `<Handle>` elements (one per part row,
+      // see `PartRow` above) are positioned protruding slightly past this
+      // card's own edge, which is the standard React Flow visual — a
+      // connection line should visually terminate right at the node's
+      // border. `overflow-hidden` on this outer box clipped that
+      // protruding sliver both visually AND for hit-testing, silently
+      // making every handle undraggable (confirmed via
+      // `document.elementsFromPoint` during this job's manual browser
+      // verification: the handle was completely absent from the hit-test
+      // stack at its own reported center). Job 010 never caught this
+      // because it only asserted handle *presence*/attributes via
+      // `querySelectorAll`, never actually dragged a connection — that's
+      // this job's own scope. The header's `rounded-t-md` below (new)
+      // replaces what `overflow-hidden` used to clip for visually, since
+      // it's the only child with its own background color that would
+      // otherwise poke square corners out past this card's `rounded-md`.
+      className={`w-64 rounded-md border bg-neutral-900 text-neutral-100 shadow-lg ${
         selected ? "border-indigo-500" : "border-neutral-700"
       }`}
     >
-      <div className="flex items-center gap-2 border-b border-neutral-800 bg-neutral-950/60 px-2 py-1.5">
+      <div className="flex items-center gap-2 rounded-t-md border-b border-neutral-800 bg-neutral-950/60 px-2 py-1.5">
         {machineIconUrl ? (
           <img src={machineIconUrl} alt="" className="h-6 w-6 shrink-0" />
         ) : (
@@ -232,6 +290,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
                 key={part.part}
                 part={part}
                 rate={stopgapPartRate(gameData, recipe, node, part, machineCount)}
+                onRemovePortEdges={removeEdgesForPort}
               />
             ))
         )}

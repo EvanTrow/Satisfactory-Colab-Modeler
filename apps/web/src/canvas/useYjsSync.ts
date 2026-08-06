@@ -75,7 +75,20 @@ export interface CanvasNodeData extends Record<string, unknown> {
 }
 
 export type CanvasNode = RFNode<CanvasNodeData>;
-export type CanvasEdge = RFEdge;
+
+/**
+ * The full `EdgeRecord` rides along in `data`, same reasoning as
+ * `CanvasNodeData.record` — `ConnectionEdge.tsx` (Job 011) reads
+ * `data.record` directly (waypoints, `part`, `labelPos`) rather than
+ * re-fetching from the doc on every render, and `useConnectionHandlers.ts`
+ * reads `oldEdge.data.record.waypoints` in its `onReconnect` handler to
+ * carry waypoints over onto the reconnected edge.
+ */
+export interface CanvasEdgeData extends Record<string, unknown> {
+  record: EdgeRecord;
+}
+
+export type CanvasEdge = RFEdge<CanvasEdgeData>;
 
 function nodeRecordToFlowNode(record: NodeRecord): CanvasNode {
   return {
@@ -95,10 +108,17 @@ function nodeRecordToFlowNode(record: NodeRecord): CanvasNode {
 function edgeRecordToFlowEdge(record: EdgeRecord): CanvasEdge {
   return {
     id: record.id,
+    // `"part"` is Job 011's custom edge type (`ConnectionEdge`, registered
+    // under that key in `CanvasView.tsx`'s `edgeTypes`) — every edge in
+    // this app carries a `part`, so unlike nodes (which fall back to
+    // React Flow's built-in "default" for non-`"recipe"` kinds) there's no
+    // untyped fallback case here.
+    type: "part",
     source: record.fromNode,
     sourceHandle: record.fromPort,
     target: record.toNode,
     targetHandle: record.toPort,
+    data: { record },
   };
 }
 

@@ -16,7 +16,7 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 | 008 | [Canvas skeleton](008-canvas-skeleton.md) | 2 · Solo canvas editor | 007 | Done |
 | 009 | [Recipe Chooser](009-recipe-chooser.md) | 2 · Solo canvas editor | 008, 003 | Done |
 | 010 | [Recipe node UI](010-recipe-node-ui.md) | 2 · Solo canvas editor | 009 | Done |
-| 011 | [Connections & waypoints](011-connections-waypoints.md) | 2 · Solo canvas editor | 010 | Not started |
+| 011 | [Connections & waypoints](011-connections-waypoints.md) | 2 · Solo canvas editor | 010 | Done |
 | 012 | [Selection & editing](012-selection-editing.md) | 2 · Solo canvas editor | 011 | Not started |
 | 013 | [Outposts](013-outposts.md) | 2 · Solo canvas editor | 012 | Not started |
 | 014 | [Visual pass & theming](014-visual-pass.md) | 2 · Solo canvas editor | 013 | Not started |

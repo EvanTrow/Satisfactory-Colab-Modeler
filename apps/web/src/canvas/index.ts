@@ -10,6 +10,7 @@ export {
   type CanvasNode,
   type CanvasEdge,
   type CanvasNodeData,
+  type CanvasEdgeData,
   type UseYjsSyncResult,
 } from "./useYjsSync";
 export {
@@ -18,3 +19,17 @@ export {
   type RecipeNodeValidity,
   type RecipeNodeValidityState,
 } from "./nodes";
+export {
+  ConnectionEdge,
+  connectPorts,
+  isValidPortConnection,
+  parsePortHandleId,
+  reconnectEdge,
+  resolveEdgeEndpoints,
+  useConnectionHandlers,
+  type ConnectionHandlers,
+  type ConnectionLike,
+  type PortInfo,
+  type ResolvedEndpoints,
+} from "./edges";
+export { isDoubleClick, DOUBLE_CLICK_MS, DOUBLE_CLICK_PX, type ClickPoint } from "./doubleClick";

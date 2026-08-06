@@ -11,18 +11,23 @@ import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, 
 import "@xyflow/react/dist/style.css";
 
 import { RecipeChooser } from "../panels";
-import { CanvasDocContext, type CanvasDocContextValue } from "./CanvasDocContext";
+import { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
 import { DevNodeTools } from "./DevNodeTools";
+import { type ClickPoint, isDoubleClick } from "./doubleClick";
+import { ConnectionEdge, useConnectionHandlers } from "./edges";
 import { RecipeNode } from "./nodes";
 import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
 
-// Module-level constant (not created inside the component) so React Flow
-// never sees a new `nodeTypes` object identity on every render — passing a
-// fresh object each render is a documented React Flow footgun that triggers
-// a console warning and forces an internal remount of every custom node.
-// `"recipe"` matches the `type` string `useYjsSync.ts`'s
-// `nodeRecordToFlowNode` assigns to every `kind: "recipe"` node.
+// Module-level constants (not created inside the component) so React Flow
+// never sees a new `nodeTypes`/`edgeTypes` object identity on every render
+// — passing a fresh object each render is a documented React Flow footgun
+// that triggers a console warning and forces an internal remount of every
+// custom node/edge. `"recipe"` matches the `type` string
+// `useYjsSync.ts`'s `nodeRecordToFlowNode` assigns to every `kind:
+// "recipe"` node; `"part"` matches what `edgeRecordToFlowEdge` assigns to
+// every edge (Job 011).
 const nodeTypes = { recipe: RecipeNode };
+const edgeTypes = { part: ConnectionEdge };
 
 /**
  * How close together (in ms) and how close together (in screen px) two
@@ -33,10 +38,12 @@ const nodeTypes = { recipe: RecipeNode };
  * wrapping `<div>`) would need its own logic to tell a background
  * double-click apart from one that landed on a node. `zoomOnDoubleClick`
  * is set to `false` below so a background double-click doesn't *also* zoom
- * the canvas while this opens the chooser.
+ * the canvas while this opens the chooser. `isDoubleClick` (Job 011,
+ * extracted out of this file's own former inline version so
+ * `ConnectionEdge.tsx`'s label/waypoint gestures can share the exact same
+ * rule) uses its own `DOUBLE_CLICK_MS`/`DOUBLE_CLICK_PX` defaults, which
+ * match what this file used before extraction.
  */
-const DOUBLE_CLICK_MS = 400;
-const DOUBLE_CLICK_PX = 12;
 
 interface CanvasViewProps {
   /** Route param identifying the project — display-only in this job; nothing is fetched from it yet (no backend involvement, per Job 008's scope). */
@@ -139,10 +146,19 @@ interface ChooserState {
  */
 function CanvasFlow({ sync }: CanvasFlowProps) {
   const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = sync;
+  const { sfmDoc, containerId } = useCanvasDoc();
   const { screenToFlowPosition } = useReactFlow();
   const [chooser, setChooser] = useState<ChooserState | null>(null);
   // Not React state on purpose — a click-time bookkeeping ref, not something whose change should trigger a render.
-  const lastPaneClickRef = useRef<{ time: number; x: number; y: number } | null>(null);
+  const lastPaneClickRef = useRef<ClickPoint | null>(null);
+
+  // Job 011: drag-to-connect, edge removal via re-drag, and mismatched-part
+  // rejection. See `useConnectionHandlers.ts`'s header comment for exactly
+  // how the reconnect-vs-remove-by-drag split works.
+  const { isValidConnection, onConnect, onReconnectStart, onReconnect, onReconnectEnd } = useConnectionHandlers(
+    sfmDoc,
+    containerId,
+  );
 
   function openChooserAt(clientX: number, clientY: number) {
     setChooser({
@@ -155,14 +171,10 @@ function CanvasFlow({ sync }: CanvasFlowProps) {
   // (React Flow doesn't call it for clicks on a node), so this already
   // satisfies "double-click the *empty* canvas" without extra checks.
   const handlePaneClick = (event: ReactMouseEvent) => {
-    const now = Date.now();
+    const now: ClickPoint = { time: Date.now(), x: event.clientX, y: event.clientY };
     const last = lastPaneClickRef.current;
-    lastPaneClickRef.current = { time: now, x: event.clientX, y: event.clientY };
-    if (
-      last &&
-      now - last.time <= DOUBLE_CLICK_MS &&
-      Math.hypot(event.clientX - last.x, event.clientY - last.y) <= DOUBLE_CLICK_PX
-    ) {
+    lastPaneClickRef.current = now;
+    if (isDoubleClick(last, now)) {
       lastPaneClickRef.current = null; // consume the pair so a third click starts a fresh count, not an immediate re-open
       openChooserAt(event.clientX, event.clientY);
     }
@@ -183,9 +195,15 @@ function CanvasFlow({ sync }: CanvasFlowProps) {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeDragStop={onNodeDragStop}
+        onConnect={onConnect}
+        isValidConnection={isValidConnection}
+        onReconnectStart={onReconnectStart}
+        onReconnect={onReconnect}
+        onReconnectEnd={onReconnectEnd}
         onPaneClick={handlePaneClick}
         onPaneContextMenu={handlePaneContextMenu}
         zoomOnDoubleClick={false}
