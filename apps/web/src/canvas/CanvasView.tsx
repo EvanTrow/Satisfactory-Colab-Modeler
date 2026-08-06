@@ -26,7 +26,10 @@ import { type ClickPoint, isDoubleClick } from "./doubleClick";
 import { ConnectionEdge, useConnectionHandlers } from "./edges";
 import { RecipeNode } from "./nodes";
 import { BoundaryEdge, NodeContextMenu, OutpostNode, deleteOutpost, moveNodeToContainer, type NodeContextMenuState } from "./outposts";
+import { SaveStatusIndicator } from "./persistence/SaveStatusIndicator";
+import { type SaveStatus } from "./persistence/updateQueue";
 import { useProjectDocument, type StaticCanvasDoc } from "./persistence/useProjectDocument";
+import { VersionPanel } from "./persistence/VersionPanel";
 import { RecipeChooser } from "../panels";
 import { MarqueeOverlay, useMarqueeSelection, useSelectionKeybinds, useUndoRedoState } from "./selection";
 import { ThemeToggle, useTheme, type ThemeMode } from "../theme";
@@ -113,8 +116,12 @@ export function CanvasView({ projectId, projectTitle, projectShortId, role, onBa
       sfmDoc={docState.sfmDoc}
       rootContainerId={docState.rootContainerId}
       undoManager={docState.undoManager}
+      projectId={projectId}
       projectTitle={projectTitle}
       projectShortId={projectShortId}
+      role={role}
+      saveStatus={docState.saveStatus}
+      onRestored={docState.reloadAfterRestore}
       onBack={onBack}
     />
   );
@@ -150,13 +157,31 @@ function CanvasStatusScreen({ projectTitle, onBack, children }: CanvasStatusScre
 }
 
 interface CanvasViewReadyProps extends StaticCanvasDoc {
+  /** The project's real database id — `VersionPanel` talks to `/api/projects/:id/versions*` directly with this, same id `useProjectDocument` fetches/pushes doc bytes against. */
+  projectId: string;
   projectTitle: string;
   projectShortId: string;
+  role: ProjectRole;
+  /** Live autosave state from `useProjectDocument`'s push queue — see `SaveStatusIndicator.tsx`. */
+  saveStatus: SaveStatus;
+  /** Called once a `VersionPanel` restore has succeeded server-side — forces `useProjectDocument` to fully re-hydrate from the (now-restored) server state. See that function's own doc comment for why a restore can't just be merged into the live doc. */
+  onRestored: () => void;
   onBack: () => void;
 }
 
 /** Everything Jobs 008-014 built, unchanged in substance — now fed a hydrated `sfmDoc`/`rootContainerId`/`undoManager` from `useProjectDocument` instead of creating a fresh empty one itself. */
-function CanvasViewReady({ sfmDoc, rootContainerId, undoManager, projectTitle, projectShortId, onBack }: CanvasViewReadyProps) {
+function CanvasViewReady({
+  sfmDoc,
+  rootContainerId,
+  undoManager,
+  projectId,
+  projectTitle,
+  projectShortId,
+  role,
+  saveStatus,
+  onRestored,
+  onBack,
+}: CanvasViewReadyProps) {
   const { canUndo, canRedo } = useUndoRedoState(undoManager);
   // Job 014: theme toggle (app-level mechanism, see `theme/useTheme.ts`) and
   // the live `Settings` read needed for the background grid's dot spacing
@@ -260,10 +285,10 @@ function CanvasViewReady({ sfmDoc, rootContainerId, undoManager, projectTitle, p
             {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. */}
             <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
-            <span className="text-xs text-[var(--text-muted)]">
-              {/* Matches persistence/useProjectDocument.ts's DEBOUNCE_MS — kept as a literal here rather than importing an internal constant just for display text. */}
-              {projectShortId} · autosaves ~1.5s after your last edit (Job 016 adds a live indicator)
-            </span>
+            {/* Job 016: version history + restore, and the live autosave-status indicator (replaces Job 015's static "autosaves ~1.5s..." placeholder text). */}
+            <VersionPanel projectId={projectId} role={role} onRestored={onRestored} />
+            <span className="text-xs text-[var(--text-muted)]">{projectShortId}</span>
+            <SaveStatusIndicator status={saveStatus} role={role} />
           </div>
         </div>
 

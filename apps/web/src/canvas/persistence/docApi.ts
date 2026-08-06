@@ -48,3 +48,60 @@ export async function pushProjectDocUpdate(projectId: string, update: Uint8Array
     throw new ApiError(res.status, await parseErrorBody(res));
   }
 }
+
+/** Wire shape of `apps/api`'s `docRoutes.ts` `SerializedVersion` — a `project_versions` row without its `ydoc` bytes. */
+export interface ProjectVersionInfo {
+  id: string;
+  label: string | null;
+  kind: "auto" | "manual" | "import" | "pre_restore";
+  createdBy: string | null;
+  createdAt: string;
+}
+
+/** Lists a project's versions, newest first (Job 016's version-history list). */
+export async function listProjectVersions(projectId: string): Promise<ProjectVersionInfo[]> {
+  const res = await fetch(`/api/projects/${projectId}/versions`, { credentials: "include" });
+  if (!res.ok) {
+    throw new ApiError(res.status, await parseErrorBody(res));
+  }
+  return (await res.json()) as ProjectVersionInfo[];
+}
+
+/** Creates a `kind: 'manual'` snapshot of the project's current state — Job 016's "Save version" button. `label` is trimmed/optional server-side. */
+export async function saveProjectVersion(projectId: string, label?: string): Promise<ProjectVersionInfo> {
+  const res = await fetch(`/api/projects/${projectId}/versions`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(label ? { label } : {}),
+  });
+  if (!res.ok) {
+    throw new ApiError(res.status, await parseErrorBody(res));
+  }
+  return (await res.json()) as ProjectVersionInfo;
+}
+
+/** Result of a successful restore — see `apps/api`'s `docRoutes.ts` restore route. */
+export interface RestoreVersionResult {
+  restoredVersionId: string;
+  preRestoreVersion: ProjectVersionInfo;
+}
+
+/**
+ * Restores `versionId` as the project's new current document state. Only
+ * changes server-side state — the caller is responsible for making the live
+ * local doc reflect it afterward (`useProjectDocument.ts`'s
+ * `reloadAfterRestore`), since a restore is a wholesale replace, not
+ * something a `Y.applyUpdate` merge into the existing local doc can express
+ * correctly (see that function's own doc comment).
+ */
+export async function restoreProjectVersion(projectId: string, versionId: string): Promise<RestoreVersionResult> {
+  const res = await fetch(`/api/projects/${projectId}/versions/${versionId}/restore`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new ApiError(res.status, await parseErrorBody(res));
+  }
+  return (await res.json()) as RestoreVersionResult;
+}

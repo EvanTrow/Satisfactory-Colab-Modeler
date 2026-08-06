@@ -59,10 +59,27 @@ export { isDoubleClick, DOUBLE_CLICK_MS, DOUBLE_CLICK_PX, type ClickPoint } from
 // internally by CanvasView.tsx) since Job 016 (IndexedDB cache +
 // project_versions restore) builds directly on top of this — see
 // jobs/015-doc-persistence.md's Handoff notes for the exact contract.
-export { fetchProjectDoc, pushProjectDocUpdate } from "./persistence/docApi";
+export {
+  fetchProjectDoc,
+  pushProjectDocUpdate,
+  listProjectVersions,
+  saveProjectVersion,
+  restoreProjectVersion,
+  type ProjectVersionInfo,
+  type RestoreVersionResult,
+} from "./persistence/docApi";
 export { bytesToBase64, base64ToBytes } from "./persistence/base64";
-export { createUpdateQueue, type CreateUpdateQueueOptions, type UpdateQueue } from "./persistence/updateQueue";
+export {
+  createUpdateQueue,
+  type CreateUpdateQueueOptions,
+  type UpdateQueue,
+  type SaveStatus,
+} from "./persistence/updateQueue";
 export { useProjectDocument, type ProjectDocumentState, type StaticCanvasDoc } from "./persistence/useProjectDocument";
+// Job 016: the autosave indicator + version-history/restore UI, both built
+// directly on top of the exports above.
+export { SaveStatusIndicator, type SaveStatusIndicatorProps } from "./persistence/SaveStatusIndicator";
+export { VersionPanel, type VersionPanelProps } from "./persistence/VersionPanel";
 export {
   buildClipboard,
   deleteSelection,

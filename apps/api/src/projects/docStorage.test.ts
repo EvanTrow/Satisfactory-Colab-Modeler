@@ -9,8 +9,11 @@ import {
   compactProject,
   createProjectVersion,
   duplicateDocState,
+  getProjectVersionBytes,
+  listProjectVersions,
   loadProjectDoc,
   loadProjectDocUpdate,
+  restoreProjectVersion,
 } from "./docStorage.js";
 import { generateShortId } from "./short-id.js";
 
@@ -367,18 +370,23 @@ describe("duplicateDocState", () => {
 });
 
 describe("createProjectVersion", () => {
-  it("inserts a project_versions row snapshotting the current merged doc state", async () => {
+  it("inserts a project_versions row snapshotting the current merged doc state, and returns its metadata", async () => {
     const owner = await createTestUser("docstorage-version-owner");
     const project = await createTestProject(owner.id);
     await appendUpdate(project.id, singleMarkerUpdate("v1-content"), owner.id);
 
-    await createProjectVersion(project.id, { kind: "manual", label: "My Save", createdBy: owner.id });
+    const returned = await createProjectVersion(project.id, { kind: "manual", label: "My Save", createdBy: owner.id });
+    expect(returned.kind).toBe("manual");
+    expect(returned.label).toBe("My Save");
+    expect(returned.createdBy).toBe(owner.id);
+    expect(typeof returned.id).toBe("string");
 
     const version = await db
       .selectFrom("project_versions")
       .selectAll()
-      .where("project_id", "=", project.id)
+      .where("id", "=", returned.id)
       .executeTakeFirstOrThrow();
+    expect(version.project_id).toBe(project.id);
     expect(version.kind).toBe("manual");
     expect(version.label).toBe("My Save");
     expect(version.created_by).toBe(owner.id);
@@ -386,5 +394,209 @@ describe("createProjectVersion", () => {
     const versionDoc = new Y.Doc();
     Y.applyUpdate(versionDoc, version.ydoc);
     expect(versionDoc.getMap("meta").get("marker")).toBe("v1-content");
+  });
+});
+
+describe("listProjectVersions", () => {
+  it("lists a project's versions newest first, without the ydoc bytes", async () => {
+    const owner = await createTestUser("docstorage-listversions-owner");
+    const project = await createTestProject(owner.id);
+    await appendUpdate(project.id, singleMarkerUpdate("v1"), owner.id);
+
+    const v1 = await createProjectVersion(project.id, { kind: "manual", label: "First", createdBy: owner.id });
+    const v2 = await createProjectVersion(project.id, { kind: "auto", createdBy: null });
+
+    const versions = await listProjectVersions(project.id);
+    expect(versions).toHaveLength(2);
+    // Newest first — v2 was created after v1.
+    expect(versions[0]!.id).toBe(v2.id);
+    expect(versions[1]!.id).toBe(v1.id);
+    expect(versions[1]!.label).toBe("First");
+    expect(versions[0]!.kind).toBe("auto");
+    // No `ydoc` field leaks into the list shape.
+    expect(versions[0]).not.toHaveProperty("ydoc");
+  });
+
+  it("returns an empty list for a project with no versions", async () => {
+    const owner = await createTestUser("docstorage-listversions-empty-owner");
+    const project = await createTestProject(owner.id);
+
+    const versions = await listProjectVersions(project.id);
+    expect(versions).toEqual([]);
+  });
+});
+
+describe("getProjectVersionBytes", () => {
+  it("returns the version's ydoc bytes, applyable to a fresh doc", async () => {
+    const owner = await createTestUser("docstorage-versionbytes-owner");
+    const project = await createTestProject(owner.id);
+    await appendUpdate(project.id, singleMarkerUpdate("bytes-content"), owner.id);
+    const version = await createProjectVersion(project.id, { kind: "manual", createdBy: owner.id });
+
+    const bytes = await getProjectVersionBytes(project.id, version.id);
+    expect(bytes).not.toBeNull();
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, bytes!);
+    expect(doc.getMap("meta").get("marker")).toBe("bytes-content");
+  });
+
+  it("returns null for a nonexistent version id", async () => {
+    const owner = await createTestUser("docstorage-versionbytes-missing-owner");
+    const project = await createTestProject(owner.id);
+
+    const bytes = await getProjectVersionBytes(project.id, crypto.randomUUID());
+    expect(bytes).toBeNull();
+  });
+
+  it("returns null when the version belongs to a different project (scoped lookup)", async () => {
+    const owner = await createTestUser("docstorage-versionbytes-crossproject-owner");
+    const projectA = await createTestProject(owner.id);
+    const projectB = await createTestProject(owner.id);
+    await appendUpdate(projectA.id, singleMarkerUpdate("a-content"), owner.id);
+    const version = await createProjectVersion(projectA.id, { kind: "manual", createdBy: owner.id });
+
+    const bytes = await getProjectVersionBytes(projectB.id, version.id);
+    expect(bytes).toBeNull();
+  });
+});
+
+describe("restoreProjectVersion", () => {
+  it("returns null for a nonexistent version id, without creating a pre_restore snapshot", async () => {
+    const owner = await createTestUser("docstorage-restore-missing-owner");
+    const project = await createTestProject(owner.id);
+
+    const result = await restoreProjectVersion(project.id, crypto.randomUUID(), owner.id);
+    expect(result).toBeNull();
+
+    const versions = await listProjectVersions(project.id);
+    expect(versions).toHaveLength(0);
+  });
+
+  it("creates a pre_restore snapshot of current state first, then makes the restored version's content current — end-to-end 'state A, save, state B, restore -> A again' flow (PLAN.md §8's Phase 3 exit criterion)", async () => {
+    const owner = await createTestUser("docstorage-restore-owner");
+    const project = await createTestProject(owner.id);
+
+    // State A, saved as a manual version.
+    const editor = createMarkerEditor();
+    await appendUpdate(project.id, editor.setMarker("state-A"), owner.id);
+    const versionA = await createProjectVersion(project.id, { kind: "manual", label: "State A", createdBy: owner.id });
+
+    // Change to state B (a later edit, not saved as a version).
+    await appendUpdate(project.id, editor.setMarker("state-B"), owner.id);
+    const { doc: beforeRestore } = await loadProjectDoc(project.id);
+    expect(beforeRestore.getMap("meta").get("marker")).toBe("state-B");
+
+    // Restore to state A.
+    const result = await restoreProjectVersion(project.id, versionA.id, owner.id);
+    expect(result).not.toBeNull();
+    expect(result!.restoredVersionId).toBe(versionA.id);
+    expect(result!.preRestoreVersion.kind).toBe("pre_restore");
+
+    // The canvas (a fresh load) shows state A again.
+    const { doc: afterRestore, appliedLogRows } = await loadProjectDoc(project.id);
+    expect(afterRestore.getMap("meta").get("marker")).toBe("state-A");
+    // The pre-restore log (state B's un-folded update) was discarded, not
+    // left to re-merge on top of the restored snapshot.
+    expect(appliedLogRows).toHaveLength(0);
+
+    // A pre_restore snapshot of state B now exists in the version list.
+    const versions = await listProjectVersions(project.id);
+    expect(versions).toHaveLength(2);
+    const preRestore = versions.find((v) => v.kind === "pre_restore");
+    expect(preRestore).toBeDefined();
+    expect(preRestore!.id).toBe(result!.preRestoreVersion.id);
+
+    const preRestoreBytes = await getProjectVersionBytes(project.id, preRestore!.id);
+    const preRestoreDoc = new Y.Doc();
+    Y.applyUpdate(preRestoreDoc, preRestoreBytes!);
+    expect(preRestoreDoc.getMap("meta").get("marker")).toBe("state-B");
+  });
+
+  it("is a wholesale replace, not a merge — content present only in the post-version state does not survive the restore", async () => {
+    const owner = await createTestUser("docstorage-restore-wholesale-owner");
+    const project = await createTestProject(owner.id);
+
+    // Version snapshot with one node.
+    const nodesDoc1 = new Y.Doc();
+    nodesDoc1.transact(() => {
+      const node = new Y.Map<unknown>();
+      node.set("id", "n_1");
+      nodesDoc1.getMap("nodes").set("n_1", node);
+    });
+    await appendUpdate(project.id, Y.encodeStateAsUpdate(nodesDoc1), owner.id);
+    const version = await createProjectVersion(project.id, { kind: "manual", createdBy: owner.id });
+
+    // A second node added *after* the version was saved.
+    const nodesDoc2 = new Y.Doc();
+    nodesDoc2.transact(() => {
+      const node = new Y.Map<unknown>();
+      node.set("id", "n_2");
+      nodesDoc2.getMap("nodes").set("n_2", node);
+    });
+    await appendUpdate(project.id, Y.encodeStateAsUpdate(nodesDoc2), owner.id);
+
+    const { doc: beforeRestore } = await loadProjectDoc(project.id);
+    expect(beforeRestore.getMap("nodes").size).toBe(2);
+
+    await restoreProjectVersion(project.id, version.id, owner.id);
+
+    // If this were a merge (Y.applyUpdate onto the live doc) rather than a
+    // wholesale replace, n_2 would still be present — it isn't.
+    const { doc: afterRestore } = await loadProjectDoc(project.id);
+    expect(afterRestore.getMap("nodes").size).toBe(1);
+    expect(afterRestore.getMap("nodes").has("n_1")).toBe(true);
+    expect(afterRestore.getMap("nodes").has("n_2")).toBe(false);
+  });
+
+  it("restoring twice in a row (restore to A, then restore that same pre_restore snapshot back) round-trips correctly", async () => {
+    const owner = await createTestUser("docstorage-restore-roundtrip-owner");
+    const project = await createTestProject(owner.id);
+
+    const editor = createMarkerEditor();
+    await appendUpdate(project.id, editor.setMarker("state-A"), owner.id);
+    const versionA = await createProjectVersion(project.id, { kind: "manual", createdBy: owner.id });
+
+    await appendUpdate(project.id, editor.setMarker("state-B"), owner.id);
+
+    const firstRestore = await restoreProjectVersion(project.id, versionA.id, owner.id);
+    const { doc: afterFirstRestore } = await loadProjectDoc(project.id);
+    expect(afterFirstRestore.getMap("meta").get("marker")).toBe("state-A");
+
+    // Restore back to the pre_restore snapshot of state B taken by the first restore.
+    await restoreProjectVersion(project.id, firstRestore!.preRestoreVersion.id, owner.id);
+    const { doc: afterSecondRestore } = await loadProjectDoc(project.id);
+    expect(afterSecondRestore.getMap("meta").get("marker")).toBe("state-B");
+  });
+});
+
+describe("appendUpdate auto-versioning", () => {
+  it("creates an 'auto' project_versions snapshot when a threshold-triggered compaction actually folds rows", async () => {
+    const owner = await createTestUser("docstorage-autoversion-owner");
+    const project = await createTestProject(owner.id);
+
+    const THRESHOLD = 2;
+    const editor = createMarkerEditor();
+    for (let i = 0; i < 3; i++) {
+      await appendUpdate(project.id, editor.setMarker(`m${i}`), owner.id, THRESHOLD);
+    }
+
+    const versions = await listProjectVersions(project.id);
+    expect(versions).toHaveLength(1);
+    expect(versions[0]!.kind).toBe("auto");
+
+    const bytes = await getProjectVersionBytes(project.id, versions[0]!.id);
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, bytes!);
+    expect(doc.getMap("meta").get("marker")).toBe("m2");
+  });
+
+  it("does not create an auto version when the append doesn't cross the compaction threshold", async () => {
+    const owner = await createTestUser("docstorage-noautoversion-owner");
+    const project = await createTestProject(owner.id);
+
+    await appendUpdate(project.id, singleMarkerUpdate("below-threshold"), owner.id, 200);
+
+    const versions = await listProjectVersions(project.id);
+    expect(versions).toHaveLength(0);
   });
 });

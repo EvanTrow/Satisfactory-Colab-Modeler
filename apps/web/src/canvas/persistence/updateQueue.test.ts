@@ -188,6 +188,62 @@ describe("createUpdateQueue", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it("onStatusChange reports saved -> saving -> saved for a successful flush", async () => {
+    const push = vi.fn().mockResolvedValue(undefined);
+    const onStatusChange = vi.fn();
+    const editor = createEditor();
+    const queue = createUpdateQueue({ push, delayMs: 1000, onStatusChange });
+
+    expect(queue.getStatus()).toBe("saved");
+
+    queue.enqueue(editor.edit("a", 1));
+    expect(queue.getStatus()).toBe("saving");
+    expect(onStatusChange).toHaveBeenCalledExactlyOnceWith("saving");
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(queue.getStatus()).toBe("saved");
+    expect(onStatusChange).toHaveBeenNthCalledWith(2, "saved");
+    expect(onStatusChange).toHaveBeenCalledTimes(2); // no redundant re-fires for an unchanged status
+  });
+
+  it("onStatusChange reports offline after a failed flush, and the status stays offline (not saving) while a retry is pending", async () => {
+    const onError = vi.fn();
+    const onStatusChange = vi.fn();
+    const push = vi.fn().mockRejectedValue(new Error("network down"));
+    const editor = createEditor();
+    const queue = createUpdateQueue({ push, delayMs: 1000, onError, onStatusChange });
+
+    queue.enqueue(editor.edit("a", 1));
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(queue.getStatus()).toBe("offline");
+    expect(onStatusChange).toHaveBeenLastCalledWith("offline");
+  });
+
+  it("auto-retries a failed flush after delayMs with no new edit required, and reports saved again once it succeeds", async () => {
+    const onStatusChange = vi.fn();
+    let attempt = 0;
+    const push = vi.fn().mockImplementation(() => {
+      attempt++;
+      if (attempt === 1) return Promise.reject(new Error("network down"));
+      return Promise.resolve();
+    });
+    const editor = createEditor();
+    const queue = createUpdateQueue({ push, delayMs: 1000, onStatusChange });
+
+    queue.enqueue(editor.edit("a", 1));
+    await vi.advanceTimersByTimeAsync(1000); // first attempt — fails
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(queue.getStatus()).toBe("offline");
+
+    // Nothing new enqueued — the queue itself schedules the retry.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(push).toHaveBeenCalledTimes(2);
+    expect(queue.getStatus()).toBe("saved");
+    expect(onStatusChange).toHaveBeenLastCalledWith("saved");
+  });
+
   it("serializes overlapping flushes — a flushNow call while a push is already in flight waits for it rather than firing a second concurrent push", async () => {
     const push = vi.fn();
     let resolveFirst!: () => void;

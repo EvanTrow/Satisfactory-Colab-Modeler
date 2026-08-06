@@ -13,7 +13,41 @@ import type { FastifyPluginAsync } from "fastify";
 
 import { canEdit, resolveRole } from "./roles.js";
 import { findActiveProjectById } from "./store.js";
-import { appendUpdate, loadProjectDocUpdate } from "./docStorage.js";
+import {
+  appendUpdate,
+  createProjectVersion,
+  listProjectVersions,
+  loadProjectDocUpdate,
+  restoreProjectVersion,
+  type ProjectVersionSummary,
+} from "./docStorage.js";
+
+/**
+ * Wire shape for `ProjectVersionSummary` — camelCase JSON, matching every
+ * other route's `SerializedProject` convention. `createdAt` is left typed as
+ * `ProjectVersionSummary["createdAt"]` (a real `Date` at runtime) rather than
+ * asserted as `string` and manually `.toISOString()`'d — same as
+ * `routes.ts`'s `SerializedProject.createdAt: Project["created_at"]`.
+ * Fastify's JSON serialization turns the actual `Date` instance into an ISO
+ * string on the wire regardless of what TypeScript calls its type.
+ */
+interface SerializedVersion {
+  id: string;
+  label: string | null;
+  kind: ProjectVersionSummary["kind"];
+  createdBy: string | null;
+  createdAt: ProjectVersionSummary["createdAt"];
+}
+
+function serializeVersion(version: ProjectVersionSummary): SerializedVersion {
+  return {
+    id: version.id,
+    label: version.label,
+    kind: version.kind,
+    createdBy: version.createdBy,
+    createdAt: version.createdAt,
+  };
+}
 
 export const projectDocRoutes: FastifyPluginAsync = async (fastify) => {
   /**
@@ -90,6 +124,105 @@ export const projectDocRoutes: FastifyPluginAsync = async (fastify) => {
 
       await appendUpdate(id, bytes, user.id);
       return reply.code(204).send();
+    },
+  );
+
+  /**
+   * Lists a project's versions, newest first — Job 016's "list a project's
+   * versions (timestamp, label, kind)." Any project member (owner/editor/
+   * viewer) can view the list, same read-only access level as `GET .../doc`.
+   */
+  fastify.get<{ Params: { id: string } }>(
+    "/api/projects/:id/versions",
+    { preHandler: fastify.authenticate },
+    async (request, reply) => {
+      const user = request.user!;
+      const { id } = request.params;
+
+      const role = await resolveRole(id, user.id);
+      if (role === null) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+      const project = await findActiveProjectById(id);
+      if (!project) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+
+      const versions = await listProjectVersions(id);
+      return reply.send(versions.map(serializeVersion));
+    },
+  );
+
+  /**
+   * Creates a `kind: 'manual'` version snapshot of the project's current
+   * state — Job 016's "Save version" button. Owner/editor only, same
+   * write-gate as pushing a doc update (a viewer can't create a durable
+   * checkpoint of state they can't change anyway).
+   */
+  fastify.post<{ Params: { id: string }; Body: { label?: string } }>(
+    "/api/projects/:id/versions",
+    { preHandler: fastify.authenticate },
+    async (request, reply) => {
+      const user = request.user!;
+      const { id } = request.params;
+
+      const role = await resolveRole(id, user.id);
+      if (role === null) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+      const project = await findActiveProjectById(id);
+      if (!project) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+      if (!canEdit(role)) {
+        return reply.code(403).send({ error: "forbidden", detail: "viewer cannot save a version" });
+      }
+
+      const rawLabel = request.body?.label;
+      const label = typeof rawLabel === "string" && rawLabel.trim().length > 0 ? rawLabel.trim() : null;
+
+      const version = await createProjectVersion(id, { kind: "manual", label, createdBy: user.id });
+      return reply.code(201).send(serializeVersion(version));
+    },
+  );
+
+  /**
+   * Restores `versionId` as the project's new current document state —
+   * Job 016's basic restore flow. Owner/editor only (same gate as any other
+   * write). See `docStorage.ts`'s `restoreProjectVersion` for the
+   * "wholesale replace, not merge" mechanism and the `pre_restore` safety
+   * snapshot it takes first. Responds with the safety snapshot's metadata so
+   * the client can show "a pre-restore checkpoint was saved" without a
+   * second round-trip.
+   */
+  fastify.post<{ Params: { id: string; versionId: string } }>(
+    "/api/projects/:id/versions/:versionId/restore",
+    { preHandler: fastify.authenticate },
+    async (request, reply) => {
+      const user = request.user!;
+      const { id, versionId } = request.params;
+
+      const role = await resolveRole(id, user.id);
+      if (role === null) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+      const project = await findActiveProjectById(id);
+      if (!project) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+      if (!canEdit(role)) {
+        return reply.code(403).send({ error: "forbidden", detail: "viewer cannot restore a version" });
+      }
+
+      const result = await restoreProjectVersion(id, versionId, user.id);
+      if (result === null) {
+        return reply.code(404).send({ error: "version_not_found" });
+      }
+
+      return reply.send({
+        restoredVersionId: result.restoredVersionId,
+        preRestoreVersion: serializeVersion(result.preRestoreVersion),
+      });
     },
   );
 };

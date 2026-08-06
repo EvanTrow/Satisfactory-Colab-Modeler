@@ -17,6 +17,7 @@
     "@xyflow/react": "^12.11.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "y-indexeddb": "^9.0.12",
     "yjs": "13.6.32",
     "zustand": "^5.0.14"
   },
