@@ -18,13 +18,13 @@ What it lacks is collaboration. It is a single-user desktop app whose sharing st
 
 `resources/` is a clean extraction of the shipped desktop app's data directory. It contains **no source code** — it is data, art, and localization only. The app is closed-source with no plans to change that ([FAQ](https://satisfactorymodeler.github.io/docs/faq/faq.html)), so this is a clean-room reimplementation from data + public documentation.
 
-| Path | Contents | Use |
-|---|---|---|
-| `resources/game_data/game_data.json` | 136 KB. `Machines` (32), `MultiMachines` (7), `Parts` (170), `Recipes` (332) | **Directly reusable** as the game database |
-| `resources/images/icons/` | 204 PNGs — one per part and machine, plus `Conveyor_Merger` and `Smart_Splitter` | **Directly reusable** as node/part icons |
-| `resources/images/custom_icons/` | `anypart.png`, `Blueprint.png`, `Outpost.png` | Icons for the three abstract node types |
-| `resources/images/ui_icons/` | 43 UI glyphs (`clockspeed`, `somersloop`, `waypoints`, `limit`, `align`, `summary`, `popout`, …) | Reference for the toolbar/feature surface; we'll likely use a modern icon set instead |
-| `resources/languages/languages.json` + `translations/*.json` | 55 locales; `en-US.json` has ~600 keys | **The single most valuable file** — the complete UI string table, which reveals the entire feature surface |
+| Path                                                         | Contents                                                                                         | Use                                                                                                        |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `resources/game_data/game_data.json`                         | 136 KB. `Machines` (32), `MultiMachines` (7), `Parts` (170), `Recipes` (332)                     | **Directly reusable** as the game database                                                                 |
+| `resources/images/icons/`                                    | 204 PNGs — one per part and machine, plus `Conveyor_Merger` and `Smart_Splitter`                 | **Directly reusable** as node/part icons                                                                   |
+| `resources/images/custom_icons/`                             | `anypart.png`, `Blueprint.png`, `Outpost.png`                                                    | Icons for the three abstract node types                                                                    |
+| `resources/images/ui_icons/`                                 | 43 UI glyphs (`clockspeed`, `somersloop`, `waypoints`, `limit`, `align`, `summary`, `popout`, …) | Reference for the toolbar/feature surface; we'll likely use a modern icon set instead                      |
+| `resources/languages/languages.json` + `translations/*.json` | 55 locales; `en-US.json` has ~600 keys                                                           | **The single most valuable file** — the complete UI string table, which reveals the entire feature surface |
 
 ### Icon coverage is exactly complete
 
@@ -34,11 +34,18 @@ What it lacks is collaboration. It is a single-user desktop app whose sharing st
 
 ```jsonc
 // Recipe: ONE Parts array with SIGNED amounts. Negative = input, positive = output.
-{ "Name": "Iron Alloy Ingot", "Machine": "Foundry", "BatchTime": "12",
-  "Alternate": true, "Tier": "3-3",
-  "Parts": [ { "Part": "Iron Ore",   "Amount": "-8" },
-             { "Part": "Copper Ore", "Amount": "-2" },
-             { "Part": "Iron Ingot", "Amount": "15" } ] }
+{
+  "Name": "Iron Alloy Ingot",
+  "Machine": "Foundry",
+  "BatchTime": "12",
+  "Alternate": true,
+  "Tier": "3-3",
+  "Parts": [
+    { "Part": "Iron Ore", "Amount": "-8" },
+    { "Part": "Copper Ore", "Amount": "-2" },
+    { "Part": "Iron Ingot", "Amount": "15" },
+  ],
+}
 ```
 
 Findings that shape the implementation:
@@ -53,7 +60,7 @@ Findings that shape the implementation:
 - 110 of 332 recipes are `Alternate`; 15 parts are `Fluid`; 16 recipes are `Ficsmas`.
 - `IgnoreInputMultiplier` (44 recipes) and `SpaceElevatorMultiplier` (5) exempt/opt-in recipes to the global cost-multiplier settings used for modded games.
 
-> ⚠️ **One place exactness breaks down.** `OverclockPowerExponent` is `1321929/1000000`, used as an *exponent*: `power = base × clock^1.321929`. That is irrational for most inputs. So **part rates stay exact rationals; power is necessarily floating-point.** This is why the original shows rates as fractions but power as decimals, and the reimplementation must do the same.
+> ⚠️ **One place exactness breaks down.** `OverclockPowerExponent` is `1321929/1000000`, used as an _exponent_: `power = base × clock^1.321929`. That is irrational for most inputs. So **part rates stay exact rationals; power is necessarily floating-point.** This is why the original shows rates as fractions but power as decimals, and the reimplementation must do the same.
 
 ### Feature surface revealed by `en-US.json`
 
@@ -67,31 +74,31 @@ The string table exposes the whole app without needing the binary. Highlights: f
 
 Characterized from the official docs plus the string table. **This is the part we copy; Ferrumium supplies only the visual language.**
 
-| Action | Interaction |
-|---|---|
-| Add a machine | **Double-click or right-click the empty canvas** → Recipe Chooser opens. Two lists: specialty machines on the left, filterable recipes on the right. |
-| Connect | **Drag from an output port to an input port, or input→output** (both directions work). Remove by re-dragging or right-clicking the part label. |
-| Pan / zoom | Drag the background to pan; scroll wheel to zoom. |
-| Select | Click a machine; **right-click-drag a marquee** for multi-select. Standard cut/copy/paste/delete keybinds. |
-| Set a limit | A field at the bottom of the machine node. Miners and AWESOME Sinks default to parts-per-minute; everything else defaults to machine count. |
-| Clock speed | Numeric field plus **± buttons that snap the clock so the machine count lands on a whole number** (minus rounds count up, plus rounds it down, capped at 250%). |
-| Auto-round | Toggle that continuously solves clock speed so machine count is a whole number. Manually touching clock or limit switches it off. Signalled by black field backgrounds. |
-| Waypoints | Double-left-click a connection label or waypoint to add one; double-right-click a waypoint to delete it; double-right-click a bare label to delete the connection. Waypoints are draggable and stay put when their machine moves. |
-| Outposts | Nested containers, "like folders." Drill in to edit contents; from outside, the outpost is a single node with input/output ports. |
-| Blueprints | An outpost whose contents are *duplicable*. Put a limit on something inside to define one copy; the blueprint's calculated value is how many copies to build. |
+| Action        | Interaction                                                                                                                                                                                                                       |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add a machine | **Double-click or right-click the empty canvas** → Recipe Chooser opens. Two lists: specialty machines on the left, filterable recipes on the right.                                                                              |
+| Connect       | **Drag from an output port to an input port, or input→output** (both directions work). Remove by re-dragging or right-clicking the part label.                                                                                    |
+| Pan / zoom    | Drag the background to pan; scroll wheel to zoom.                                                                                                                                                                                 |
+| Select        | Click a machine; **right-click-drag a marquee** for multi-select. Standard cut/copy/paste/delete keybinds.                                                                                                                        |
+| Set a limit   | A field at the bottom of the machine node. Miners and AWESOME Sinks default to parts-per-minute; everything else defaults to machine count.                                                                                       |
+| Clock speed   | Numeric field plus **± buttons that snap the clock so the machine count lands on a whole number** (minus rounds count up, plus rounds it down, capped at 250%).                                                                   |
+| Auto-round    | Toggle that continuously solves clock speed so machine count is a whole number. Manually touching clock or limit switches it off. Signalled by black field backgrounds.                                                           |
+| Waypoints     | Double-left-click a connection label or waypoint to add one; double-right-click a waypoint to delete it; double-right-click a bare label to delete the connection. Waypoints are draggable and stay put when their machine moves. |
+| Outposts      | Nested containers, "like folders." Drill in to edit contents; from outside, the outpost is a single node with input/output ports.                                                                                                 |
+| Blueprints    | An outpost whose contents are _duplicable_. Put a limit on something inside to define one copy; the blueprint's calculated value is how many copies to build.                                                                     |
 
-**Critical modeling philosophy** (stated in Planning Basics): the tool is *a visual calculator, not a layout planner*. The correct usage is **one node per recipe**, letting the solver compute quantities — not one node per physical machine. This keeps node counts moderate (tens to low hundreds per outpost), which is what makes DOM-based rendering viable.
+**Critical modeling philosophy** (stated in Planning Basics): the tool is _a visual calculator, not a layout planner_. The correct usage is **one node per recipe**, letting the solver compute quantities — not one node per physical machine. This keeps node counts moderate (tens to low hundreds per outpost), which is what makes DOM-based rendering viable.
 
 **Specialty node types:** Outpost · Blueprint · Splurger (explicit splitter/merger; usually unnecessary since "all connection points act as splitters or mergers by default") · Priority Splurger / Priority Splitter / Priority Merger (two priority tiers — top drains first, bottom takes overflow) · AWESOME Sink (with belt-tier cap) · Storage Container (four modes: Partially Full / Full / Empty / Input = Output) · Dimensional Depot Uploader · Space Elevator phases · Any Part (wildcard).
 
 **The four calculators:**
 
-| Mode | Entered values are… | Models splitter/merger preference? | Speed |
-|---|---|---|---|
-| **Full** (default) | Limits | Yes — even-split preference **and** priority nodes | Can be slow; cancellable |
-| **Basic** | Limits | No | Always fast |
-| **Manual** | *The final values you want* (spreadsheet-like) | No | Always fast |
-| **None** | Nothing computed | — | Instant |
+| Mode               | Entered values are…                            | Models splitter/merger preference?                 | Speed                    |
+| ------------------ | ---------------------------------------------- | -------------------------------------------------- | ------------------------ |
+| **Full** (default) | Limits                                         | Yes — even-split preference **and** priority nodes | Can be slow; cancellable |
+| **Basic**          | Limits                                         | No                                                 | Always fast              |
+| **Manual**         | _The final values you want_ (spreadsheet-like) | No                                                 | Always fast              |
+| **None**           | Nothing computed                               | —                                                  | Instant                  |
 
 ---
 
@@ -153,7 +160,7 @@ create table projects (
   id                uuid primary key default gen_random_uuid(),
   short_id          text unique not null,      -- URL-friendly, e.g. /p/k3n9wq2
   owner_id          uuid not null references users(id),
-  title             text not null default 'Untitled Factory',
+  title             text not null default 'My Factory',
   visibility        text not null default 'private'
                     check (visibility in ('private','link','public')),
   game_data_version text not null,             -- which game_data.json revision it targets
@@ -285,7 +292,7 @@ Y.Doc
 Three deliberate choices:
 
 1. **Each node is its own `Y.Map`, not a JSON blob.** Two users editing different fields of the same machine merge cleanly per field. A blob would make every edit last-writer-wins over the whole node.
-2. **`edgeId` is a deterministic hash of `(fromNode, fromPort, toNode, toPort)`.** If two users draw the same connection simultaneously they write the *same key* and merge into one edge, instead of producing a duplicate. This eliminates a whole conflict class for free.
+2. **`edgeId` is a deterministic hash of `(fromNode, fromPort, toNode, toPort)`.** If two users draw the same connection simultaneously they write the _same key_ and merge into one edge, instead of producing a duplicate. This eliminates a whole conflict class for free.
 3. **No solver output lives in the CRDT.** Calculated values are derived state, recomputed locally from the document. Syncing them would multiply traffic for data every client can compute itself, and would make the log useless for version history.
 
 ---
@@ -296,11 +303,11 @@ Three deliberate choices:
 
 ### Why CRDT over the alternatives
 
-| Approach | Verdict for this app |
-|---|---|
-| **Yjs (CRDT)** ✅ | Convergence is a property of the data structure, not of server logic. Presence, per-user undo, offline buffering, and delta sync all come with it. The document is a bounded node/edge graph — thousands of small values, not a million-character text buffer — which is Yjs's comfortable middle. |
-| **Custom OT layer** ❌ | OT over a nested tree/graph needs a hand-written transform for every operation *pair* (move×delete, connect×delete, reparent×reparent) plus a central sequencer. Months of work and a long tail of convergence bugs, for no advantage a CRDT doesn't already give. |
-| **Server-authoritative broadcast** ⚠️ | Simplest to reason about and enforces invariants centrally — but every edit costs a round trip, so dragging a node feels laggy, and you must build conflict resolution and multi-user undo by hand. |
+| Approach                              | Verdict for this app                                                                                                                                                                                                                                                                               |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Yjs (CRDT)** ✅                     | Convergence is a property of the data structure, not of server logic. Presence, per-user undo, offline buffering, and delta sync all come with it. The document is a bounded node/edge graph — thousands of small values, not a million-character text buffer — which is Yjs's comfortable middle. |
+| **Custom OT layer** ❌                | OT over a nested tree/graph needs a hand-written transform for every operation _pair_ (move×delete, connect×delete, reparent×reparent) plus a central sequencer. Months of work and a long tail of convergence bugs, for no advantage a CRDT doesn't already give.                                 |
+| **Server-authoritative broadcast** ⚠️ | Simplest to reason about and enforces invariants centrally — but every edit costs a round trip, so dragging a node feels laggy, and you must build conflict resolution and multi-user undo by hand.                                                                                                |
 
 The honest tradeoff: **a CRDT guarantees convergence, not correctness.** Two clients always reach the same state, but that state can violate application invariants — the classic case being user A deleting a machine while user B connects an edge to it, which converges to an edge pointing at nothing.
 
@@ -370,7 +377,7 @@ Authorization Code flow with PKCE. Discord is a confidential client here (the se
 
 ### Tying sessions to the WebSocket layer
 
-Browsers cannot set headers on a WebSocket handshake. Cookies *are* sent on a same-origin handshake, and the chosen deployment is same-origin — but a **short-lived ticket** keeps us portable if the frontend later moves to a CDN, and avoids the WS layer depending on cookie semantics:
+Browsers cannot set headers on a WebSocket handshake. Cookies _are_ sent on a same-origin handshake, and the chosen deployment is same-origin — but a **short-lived ticket** keeps us portable if the frontend later moves to a CDN, and avoids the WS layer depending on cookie semantics:
 
 ```
 GET /api/realtime/ticket?projectId=…     (authenticated by the session cookie)
@@ -422,15 +429,15 @@ Two boundaries worth defending:
 
 ### Key libraries
 
-| Concern | Choice |
-|---|---|
-| Canvas | `@xyflow/react` (React Flow v12) |
-| CRDT | `yjs`, `@hocuspocus/server`, `@hocuspocus/provider`, `y-indexeddb` |
-| API | Fastify + `zod` |
-| DB | `postgres.js` + Kysely (typed SQL, no heavy ORM over `bytea` blobs) |
-| Styling | Tailwind CSS |
-| State | Zustand for ephemeral UI state only — the document lives in Yjs |
-| Rationals | Custom `BigInt`-backed type in `packages/rational` |
+| Concern   | Choice                                                              |
+| --------- | ------------------------------------------------------------------- |
+| Canvas    | `@xyflow/react` (React Flow v12)                                    |
+| CRDT      | `yjs`, `@hocuspocus/server`, `@hocuspocus/provider`, `y-indexeddb`  |
+| API       | Fastify + `zod`                                                     |
+| DB        | `postgres.js` + Kysely (typed SQL, no heavy ORM over `bytea` blobs) |
+| Styling   | Tailwind CSS                                                        |
+| State     | Zustand for ephemeral UI state only — the document lives in Yjs     |
+| Rationals | Custom `BigInt`-backed type in `packages/rational`                  |
 
 > **Why a custom rational type:** the solver needs exact `+ − × ÷` and comparison over arbitrary-precision fractions, with parsing of user input like `2 1/3` and canonical `n/d` formatting for storage. That is a small, well-understood, heavily-testable module — and depending on a library that quietly falls back to doubles would silently break the tool's central promise.
 
@@ -440,16 +447,16 @@ Two boundaries worth defending:
 
 **The single most important sequencing decision: build the canvas on a local Yjs document from day one** (Phase 2), with no server. Retrofitting a CRDT under an established Zustand store means rewriting every mutation, so paying the (small) cost upfront turns Phase 5 into mostly plumbing.
 
-| Phase | Scope | Exit criteria |
-|---|---|---|
-| **0 · Foundations** | Monorepo, Vite/Tailwind/Fastify scaffold, Docker Compose with Postgres. `packages/rational` with full test coverage. `packages/gamedata` parsing `game_data.json` into typed indices (recipes-by-part, recipes-by-machine, MultiMachine resolution) with icon manifest. | `pnpm dev` runs; rational and gamedata suites green. |
-| **1 · Auth & projects** | Discord OAuth2 end to end, sessions, `users`/`sessions`/`projects`/`project_members` migrations, project list UI, create/rename/delete. | Log in with Discord; create a project; see it after a restart. |
-| **2 · Solo canvas editor** | React Flow canvas over a **local Yjs doc**. Recipe Chooser (double/right-click). Recipe nodes with ports, limit, clock ±, shards. Drag-to-connect. Marquee select, cut/copy/paste/delete. `Y.UndoManager` for undo/redo. Snap-to-grid. Waypoints with the documented gestures. Outposts with drill-in + breadcrumbs. Ferrumium-inspired visual pass, dark + light. | Build a multi-outpost factory in-browser; refresh loses it (no persistence yet). |
-| **3 · Persistence** | Yjs ↔ Postgres: `project_doc_state` + `project_doc_updates`, debounced flush, compaction job, `y-indexeddb` cache, autosave indicator, `project_versions` snapshots. | Factory survives reload and server restart; a version can be restored. |
-| **4 · Calculators** | `packages/solver`: **Manual**, **Basic**, **None** over exact rationals. Cancellable Web Worker + debounce + dirty-subgraph caching. Summary panel with scope selector. Red/orange value highlighting. Number-format settings. | Golden-value tests pass against known Satisfactory ratios; a ~200-node factory solves under 200 ms. |
-| **5 · Multiplayer** | Hocuspocus server, ticket auth, roles, share-by-link + invites, presence avatars/cursors/selection, soft field indicators, integrity reducer on both ends, connection-status UI. | Two browsers edit one factory concurrently; concurrent delete-vs-connect converges with no dangling edges. |
-| **6 · Full calculator** | Splitter/merger even-split preference and priority splitters/mergers as an exact-rational LP. Priority Splurger node type. Progress + STOP UI. Relational projection tables. | Full-mode results match the desktop tool on a shared benchmark set. |
-| **7 · Polish & deploy** | Blueprints, auto-round, connection styles, minimap, i18n wiring (55 locales already in `resources/`), accessibility pass, production deploy, backups, error tracking. | Deployed, monitored, backed up. |
+| Phase                      | Scope                                                                                                                                                                                                                                                                                                                                                              | Exit criteria                                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| **0 · Foundations**        | Monorepo, Vite/Tailwind/Fastify scaffold, Docker Compose with Postgres. `packages/rational` with full test coverage. `packages/gamedata` parsing `game_data.json` into typed indices (recipes-by-part, recipes-by-machine, MultiMachine resolution) with icon manifest.                                                                                            | `pnpm dev` runs; rational and gamedata suites green.                                                       |
+| **1 · Auth & projects**    | Discord OAuth2 end to end, sessions, `users`/`sessions`/`projects`/`project_members` migrations, project list UI, create/rename/delete.                                                                                                                                                                                                                            | Log in with Discord; create a project; see it after a restart.                                             |
+| **2 · Solo canvas editor** | React Flow canvas over a **local Yjs doc**. Recipe Chooser (double/right-click). Recipe nodes with ports, limit, clock ±, shards. Drag-to-connect. Marquee select, cut/copy/paste/delete. `Y.UndoManager` for undo/redo. Snap-to-grid. Waypoints with the documented gestures. Outposts with drill-in + breadcrumbs. Ferrumium-inspired visual pass, dark + light. | Build a multi-outpost factory in-browser; refresh loses it (no persistence yet).                           |
+| **3 · Persistence**        | Yjs ↔ Postgres: `project_doc_state` + `project_doc_updates`, debounced flush, compaction job, `y-indexeddb` cache, autosave indicator, `project_versions` snapshots.                                                                                                                                                                                               | Factory survives reload and server restart; a version can be restored.                                     |
+| **4 · Calculators**        | `packages/solver`: **Manual**, **Basic**, **None** over exact rationals. Cancellable Web Worker + debounce + dirty-subgraph caching. Summary panel with scope selector. Red/orange value highlighting. Number-format settings.                                                                                                                                     | Golden-value tests pass against known Satisfactory ratios; a ~200-node factory solves under 200 ms.        |
+| **5 · Multiplayer**        | Hocuspocus server, ticket auth, roles, share-by-link + invites, presence avatars/cursors/selection, soft field indicators, integrity reducer on both ends, connection-status UI.                                                                                                                                                                                   | Two browsers edit one factory concurrently; concurrent delete-vs-connect converges with no dangling edges. |
+| **6 · Full calculator**    | Splitter/merger even-split preference and priority splitters/mergers as an exact-rational LP. Priority Splurger node type. Progress + STOP UI. Relational projection tables.                                                                                                                                                                                       | Full-mode results match the desktop tool on a shared benchmark set.                                        |
+| **7 · Polish & deploy**    | Blueprints, auto-round, connection styles, minimap, i18n wiring (55 locales already in `resources/`), accessibility pass, production deploy, backups, error tracking.                                                                                                                                                                                              | Deployed, monitored, backed up.                                                                            |
 
 Phases 0–5 are the MVP. A rough sizing, assuming one developer: Phase 2 and Phase 5 are the two large ones, Phase 6 is the highest-variance.
 

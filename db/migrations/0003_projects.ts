@@ -8,7 +8,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     // URL-friendly id, e.g. /p/k3n9wq2
     .addColumn("short_id", "text", (col) => col.notNull().unique())
     .addColumn("owner_id", "uuid", (col) => col.notNull().references("users.id"))
-    .addColumn("title", "text", (col) => col.notNull().defaultTo("Untitled Factory"))
+    .addColumn("title", "text", (col) => col.notNull().defaultTo("My Factory"))
     .addColumn("visibility", "text", (col) => col.notNull().defaultTo("private"))
     // Which game_data.json revision this project targets.
     .addColumn("game_data_version", "text", (col) => col.notNull())
@@ -18,10 +18,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn("updated_at", "timestamptz", (col) => col.notNull().defaultTo(sql`now()`))
     // Soft delete.
     .addColumn("deleted_at", "timestamptz")
-    .addCheckConstraint(
-      "projects_visibility_check",
-      sql`visibility in ('private','link','public')`,
-    )
+    .addCheckConstraint("projects_visibility_check", sql`visibility in ('private','link','public')`)
     .execute();
 
   await db.schema

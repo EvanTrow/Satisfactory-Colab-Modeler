@@ -38,7 +38,7 @@ function isUniqueViolation(err: unknown): boolean {
   );
 }
 
-const DEFAULT_TITLE = "Untitled Factory";
+const DEFAULT_TITLE = "My Factory";
 const MAX_SHORT_ID_ATTEMPTS = 5;
 
 /** A project row plus the requesting user's role on it — what the list/create/etc. endpoints return. */
@@ -140,17 +140,19 @@ export interface RenameProjectInput {
 
 /** Renames a project. Caller must already have verified the role via `roles.ts`. */
 export async function renameProject({ projectId, title }: RenameProjectInput): Promise<Project> {
-  return db
-    .updateTable("projects")
-    // `sql`now()`` (matching the migration's own `defaultTo(sql`now()`)`)
-    // rather than a JS `new Date()` — there's no `updated_at` trigger in
-    // the migration, so every mutating route has to bump it itself, and
-    // letting Postgres stamp the time avoids clock skew between the app
-    // server and the database.
-    .set({ title, updated_at: sql`now()` })
-    .where("id", "=", projectId)
-    .returningAll()
-    .executeTakeFirstOrThrow();
+  return (
+    db
+      .updateTable("projects")
+      // `sql`now()`` (matching the migration's own `defaultTo(sql`now()`)`)
+      // rather than a JS `new Date()` — there's no `updated_at` trigger in
+      // the migration, so every mutating route has to bump it itself, and
+      // letting Postgres stamp the time avoids clock skew between the app
+      // server and the database.
+      .set({ title, updated_at: sql`now()` })
+      .where("id", "=", projectId)
+      .returningAll()
+      .executeTakeFirstOrThrow()
+  );
 }
 
 /** Soft-deletes a project by setting `deleted_at`. Caller must already have verified owner-only access. */
@@ -203,14 +205,22 @@ export async function listMembers(projectId: string): Promise<ProjectMemberSumma
   return db
     .selectFrom("project_members")
     .innerJoin("users", "users.id", "project_members.user_id")
-    .select(["project_members.user_id as userId", "users.username as username", "project_members.role as role"])
+    .select([
+      "project_members.user_id as userId",
+      "users.username as username",
+      "project_members.role as role",
+    ])
     .where("project_members.project_id", "=", projectId)
     .orderBy("users.username", "asc")
     .execute();
 }
 
 /** Updates an existing member's role. Caller must already have verified owner-only access and that `userId` isn't the project's owner. */
-export async function updateMemberRole(projectId: string, userId: string, role: "editor" | "viewer"): Promise<void> {
+export async function updateMemberRole(
+  projectId: string,
+  userId: string,
+  role: "editor" | "viewer",
+): Promise<void> {
   await db
     .updateTable("project_members")
     .set({ role })
@@ -221,10 +231,17 @@ export async function updateMemberRole(projectId: string, userId: string, role: 
 
 /** Removes a member's `project_members` row entirely. Caller must already have verified owner-only access and that `userId` isn't the project's owner. */
 export async function removeMember(projectId: string, userId: string): Promise<void> {
-  await db.deleteFrom("project_members").where("project_id", "=", projectId).where("user_id", "=", userId).execute();
+  await db
+    .deleteFrom("project_members")
+    .where("project_id", "=", projectId)
+    .where("user_id", "=", userId)
+    .execute();
 }
 
-export async function duplicateProject(source: Project, duplicatorId: string): Promise<ProjectWithRole> {
+export async function duplicateProject(
+  source: Project,
+  duplicatorId: string,
+): Promise<ProjectWithRole> {
   const copyTitle = `${source.title} (copy)`;
 
   for (let attempt = 1; attempt <= MAX_SHORT_ID_ATTEMPTS; attempt++) {

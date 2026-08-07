@@ -49,7 +49,7 @@ describe("POST /api/projects", () => {
     const res = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie } });
     expect(res.statusCode).toBe(201);
     const body = res.json();
-    expect(body.title).toBe("Untitled Factory");
+    expect(body.title).toBe("My Factory");
     expect(body.ownerId).toBe(owner.id);
     expect(body.role).toBe("owner");
     expect(body.shortId).toBeTruthy();
@@ -140,10 +140,18 @@ describe("GET /api/projects", () => {
       .execute();
 
     // Soft-delete the second project.
-    await app.inject({ method: "DELETE", url: `/api/projects/${toDeleteProject.id}`, headers: { cookie: ownerCookie } });
+    await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${toDeleteProject.id}`,
+      headers: { cookie: ownerCookie },
+    });
 
     // Owner sees only the non-deleted owned project.
-    const ownerList = await app.inject({ method: "GET", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const ownerList = await app.inject({
+      method: "GET",
+      url: "/api/projects",
+      headers: { cookie: ownerCookie },
+    });
     const ownerIds = ownerList.json().map((p: { id: string }) => p.id);
     expect(ownerIds).toContain(ownedProject.id);
     expect(ownerIds).not.toContain(toDeleteProject.id);
@@ -160,7 +168,11 @@ describe("GET /api/projects", () => {
     expect(shared.role).toBe("viewer");
 
     // Stranger (non-member) sees neither project.
-    const strangerList = await app.inject({ method: "GET", url: "/api/projects", headers: { cookie: strangerCookie } });
+    const strangerList = await app.inject({
+      method: "GET",
+      url: "/api/projects",
+      headers: { cookie: strangerCookie },
+    });
     const strangerIds = strangerList.json().map((p: { id: string }) => p.id);
     expect(strangerIds).not.toContain(ownedProject.id);
     expect(strangerIds).not.toContain(toDeleteProject.id);
@@ -176,7 +188,11 @@ describe("PATCH /api/projects/:id — role enforcement", () => {
     const owner = await createTestUser("patch-owner");
     const cookie = await cookieFor(owner.id);
 
-    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie } });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie },
+    });
     const project = createRes.json();
 
     const patchRes = await app.inject({
@@ -204,9 +220,16 @@ describe("PATCH /api/projects/:id — role enforcement", () => {
     const ownerCookie = await cookieFor(owner.id);
     const editorCookie = await cookieFor(editor.id);
 
-    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie: ownerCookie },
+    });
     const project = createRes.json();
-    await db.insertInto("project_members").values({ project_id: project.id, user_id: editor.id, role: "editor" }).execute();
+    await db
+      .insertInto("project_members")
+      .values({ project_id: project.id, user_id: editor.id, role: "editor" })
+      .execute();
 
     const patchRes = await app.inject({
       method: "PATCH",
@@ -227,9 +250,16 @@ describe("PATCH /api/projects/:id — role enforcement", () => {
     const ownerCookie = await cookieFor(owner.id);
     const viewerCookie = await cookieFor(viewer.id);
 
-    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie: ownerCookie },
+    });
     const project = createRes.json();
-    await db.insertInto("project_members").values({ project_id: project.id, user_id: viewer.id, role: "viewer" }).execute();
+    await db
+      .insertInto("project_members")
+      .values({ project_id: project.id, user_id: viewer.id, role: "viewer" })
+      .execute();
 
     const patchRes = await app.inject({
       method: "PATCH",
@@ -240,9 +270,13 @@ describe("PATCH /api/projects/:id — role enforcement", () => {
     expect(patchRes.statusCode).toBe(403);
 
     // Title unchanged.
-    const listRes = await app.inject({ method: "GET", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const listRes = await app.inject({
+      method: "GET",
+      url: "/api/projects",
+      headers: { cookie: ownerCookie },
+    });
     const found = listRes.json().find((p: { id: string }) => p.id === project.id);
-    expect(found.title).toBe("Untitled Factory");
+    expect(found.title).toBe("My Factory");
 
     await app.close();
   });
@@ -255,7 +289,11 @@ describe("PATCH /api/projects/:id — role enforcement", () => {
     const ownerCookie = await cookieFor(owner.id);
     const strangerCookie = await cookieFor(stranger.id);
 
-    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie: ownerCookie },
+    });
     const project = createRes.json();
 
     const patchRes = await app.inject({
@@ -292,7 +330,11 @@ describe("PATCH /api/projects/:id — role enforcement", () => {
     const owner = await createTestUser("patch-owner-6");
     const cookie = await cookieFor(owner.id);
 
-    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie } });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie },
+    });
     const project = createRes.json();
 
     const res = await app.inject({
@@ -314,16 +356,28 @@ describe("DELETE /api/projects/:id — owner-only soft delete", () => {
     const owner = await createTestUser("delete-owner");
     const cookie = await cookieFor(owner.id);
 
-    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie } });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie },
+    });
     const project = createRes.json();
 
-    const deleteRes = await app.inject({ method: "DELETE", url: `/api/projects/${project.id}`, headers: { cookie } });
+    const deleteRes = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}`,
+      headers: { cookie },
+    });
     expect(deleteRes.statusCode).toBe(204);
 
     const listRes = await app.inject({ method: "GET", url: "/api/projects", headers: { cookie } });
     expect(listRes.json().map((p: { id: string }) => p.id)).not.toContain(project.id);
 
-    const row = await db.selectFrom("projects").selectAll().where("id", "=", project.id).executeTakeFirst();
+    const row = await db
+      .selectFrom("projects")
+      .selectAll()
+      .where("id", "=", project.id)
+      .executeTakeFirst();
     expect(row).toBeDefined();
     expect(row?.deleted_at).not.toBeNull();
 
@@ -338,11 +392,22 @@ describe("DELETE /api/projects/:id — owner-only soft delete", () => {
     const ownerCookie = await cookieFor(owner.id);
     const editorCookie = await cookieFor(editor.id);
 
-    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie: ownerCookie },
+    });
     const project = createRes.json();
-    await db.insertInto("project_members").values({ project_id: project.id, user_id: editor.id, role: "editor" }).execute();
+    await db
+      .insertInto("project_members")
+      .values({ project_id: project.id, user_id: editor.id, role: "editor" })
+      .execute();
 
-    const res = await app.inject({ method: "DELETE", url: `/api/projects/${project.id}`, headers: { cookie: editorCookie } });
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}`,
+      headers: { cookie: editorCookie },
+    });
     expect(res.statusCode).toBe(403);
 
     await app.close();
@@ -356,11 +421,22 @@ describe("DELETE /api/projects/:id — owner-only soft delete", () => {
     const ownerCookie = await cookieFor(owner.id);
     const viewerCookie = await cookieFor(viewer.id);
 
-    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie: ownerCookie },
+    });
     const project = createRes.json();
-    await db.insertInto("project_members").values({ project_id: project.id, user_id: viewer.id, role: "viewer" }).execute();
+    await db
+      .insertInto("project_members")
+      .values({ project_id: project.id, user_id: viewer.id, role: "viewer" })
+      .execute();
 
-    const res = await app.inject({ method: "DELETE", url: `/api/projects/${project.id}`, headers: { cookie: viewerCookie } });
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}`,
+      headers: { cookie: viewerCookie },
+    });
     expect(res.statusCode).toBe(403);
 
     await app.close();
@@ -374,10 +450,18 @@ describe("DELETE /api/projects/:id — owner-only soft delete", () => {
     const ownerCookie = await cookieFor(owner.id);
     const strangerCookie = await cookieFor(stranger.id);
 
-    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie: ownerCookie },
+    });
     const project = createRes.json();
 
-    const res = await app.inject({ method: "DELETE", url: `/api/projects/${project.id}`, headers: { cookie: strangerCookie } });
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}`,
+      headers: { cookie: strangerCookie },
+    });
     expect(res.statusCode).toBe(404);
 
     await app.close();
@@ -399,7 +483,11 @@ describe("POST /api/projects/:id/duplicate — full clone (Job 015: metadata + d
     });
     const original = createRes.json();
 
-    const dupRes = await app.inject({ method: "POST", url: `/api/projects/${original.id}/duplicate`, headers: { cookie } });
+    const dupRes = await app.inject({
+      method: "POST",
+      url: `/api/projects/${original.id}/duplicate`,
+      headers: { cookie },
+    });
     expect(dupRes.statusCode).toBe(201);
     const copy = dupRes.json();
 
@@ -413,7 +501,11 @@ describe("POST /api/projects/:id/duplicate — full clone (Job 015: metadata + d
     expect(copy.metadataOnly).toBeUndefined();
 
     // The original project is untouched.
-    const originalRow = await db.selectFrom("projects").selectAll().where("id", "=", original.id).executeTakeFirst();
+    const originalRow = await db
+      .selectFrom("projects")
+      .selectAll()
+      .where("id", "=", original.id)
+      .executeTakeFirst();
     expect(originalRow?.title).toBe("Original");
 
     await app.close();
@@ -447,11 +539,19 @@ describe("POST /api/projects/:id/duplicate — full clone (Job 015: metadata + d
     });
     expect(pushRes.statusCode).toBe(204);
 
-    const dupRes = await app.inject({ method: "POST", url: `/api/projects/${original.id}/duplicate`, headers: { cookie } });
+    const dupRes = await app.inject({
+      method: "POST",
+      url: `/api/projects/${original.id}/duplicate`,
+      headers: { cookie },
+    });
     expect(dupRes.statusCode).toBe(201);
     const copy = dupRes.json();
 
-    const docRes = await app.inject({ method: "GET", url: `/api/projects/${copy.id}/doc`, headers: { cookie } });
+    const docRes = await app.inject({
+      method: "GET",
+      url: `/api/projects/${copy.id}/doc`,
+      headers: { cookie },
+    });
     expect(docRes.statusCode).toBe(200);
     const copiedDoc = new Y.Doc();
     Y.applyUpdate(copiedDoc, Buffer.from(docRes.json().update, "base64"));
@@ -468,9 +568,16 @@ describe("POST /api/projects/:id/duplicate — full clone (Job 015: metadata + d
     const ownerCookie = await cookieFor(owner.id);
     const viewerCookie = await cookieFor(viewer.id);
 
-    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie: ownerCookie },
+    });
     const original = createRes.json();
-    await db.insertInto("project_members").values({ project_id: original.id, user_id: viewer.id, role: "viewer" }).execute();
+    await db
+      .insertInto("project_members")
+      .values({ project_id: original.id, user_id: viewer.id, role: "viewer" })
+      .execute();
 
     const dupRes = await app.inject({
       method: "POST",
@@ -491,7 +598,11 @@ describe("POST /api/projects/:id/duplicate — full clone (Job 015: metadata + d
     const ownerCookie = await cookieFor(owner.id);
     const strangerCookie = await cookieFor(stranger.id);
 
-    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie: ownerCookie },
+    });
     const original = createRes.json();
 
     const res = await app.inject({
