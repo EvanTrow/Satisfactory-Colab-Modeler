@@ -23,7 +23,7 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 | 015 | [Doc persistence](015-doc-persistence.md) | 3 · Persistence | 014, 006 | Done |
 | 016 | [IndexedDB cache & versions](016-indexeddb-versions.md) | 3 · Persistence | 015 | Done |
 | 017 | [Solver core](017-solver-core.md) | 4 · Calculators | 002 | Done |
-| 018 | [Solver worker host](018-solver-worker.md) | 4 · Calculators | 017, 016 | Not started |
+| 018 | [Solver worker host](018-solver-worker.md) | 4 · Calculators | 017, 016 | Done |
 | 019 | [Summary panel & formats](019-summary-panel.md) | 4 · Calculators | 018 | Not started |
 | 020 | [Hocuspocus server](020-hocuspocus-server.md) | 5 · Multiplayer | 019 | Not started |
 | 021 | [Presence](021-presence.md) | 5 · Multiplayer | 020 | Not started |
@@ -43,6 +43,8 @@ Every job file is self-contained: it names its PLAN.md section(s), its dependenc
 **Phase 3 (Persistence) is now fully complete** as of Job 016 — Yjs↔Postgres snapshot+log persistence with compaction (Job 015), plus `y-indexeddb` local caching (instant render from cache on reload, reconciled against the server), a live autosave-status indicator with auto-retry, and `project_versions` auto/manual snapshots with a working restore flow (Job 016) are all in place. Phase 4 (Calculators) starts next at Job 017, which is pure solver logic with no dependency on the canvas/persistence track beyond `packages/rational`.
 
 **Job 017 (`packages/solver`) is done** — None/Manual/Basic calculators over exact `Rational` arithmetic, with a documented deterministic fixed-point propagation algorithm for Basic mode (PLAN.md §5 point 4's requirement), all four PLAN.md §9 golden-value tests passing exactly, and zero Yjs/React/DOM dependency. Phase 4 continues at Job 018, which wraps `solve()` in a cancellable/debounced Web Worker host.
+
+**Job 018 (solver worker host) is done** — a Web Worker (`apps/web/src/workers/solverWorker.ts`) hosting `@scm/solver`'s `solve()`, plus a main-thread `useSolver(sfmDoc)` hook/scheduler that debounces edits (~150ms), genuinely cancels a superseded in-flight solve via `Worker.terminate()` (with a pre-warmed spare worker so cancellation never re-pays `@scm/gamedata`'s module-init cost), and partitions the real underlying node/edge graph (never a container-scoped slice) into connected components so an edit only re-solves the component(s) it actually touched. Verified live in a browser: dirty-subgraph invalidation is byte-precise, rapid edits collapse to one final solve, and a synthetic 500-node/808-edge Basic solve completes in ~14-73ms end to end through the real worker — well under PLAN.md §9's 200ms budget. Phase 4 continues at Job 019, which builds the real summary panel/highlighting UI on top of `useSolver`'s `{result, staleness, nodeResultById, edgeResultById}`.
 
 ## Conventions for every job file
 

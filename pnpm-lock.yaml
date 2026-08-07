@@ -99,6 +99,9 @@ importers:
       '@scm/rational':
         specifier: workspace:*
         version: link:../../packages/rational
+      '@scm/solver':
+        specifier: workspace:*
+        version: link:../../packages/solver
       '@scm/ydoc':
         specifier: workspace:*
         version: link:../../packages/ydoc

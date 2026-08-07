@@ -17,5 +17,11 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // `solverWorker.ts` runs inside a Worker's own global scope (`self`,
+  // `postMessage`, etc.), which the WebWorker lib declares incompatibly
+  // with this config's DOM lib (both declare a differently-typed global
+  // `self`). It gets its own isolated `tsconfig.worker.json` instead — see
+  // that file's header and this app's root `tsconfig.json`'s references.
+  "exclude": ["src/workers/solverWorker.ts"]
 }

@@ -8,14 +8,59 @@
 // Rendered only in dev builds (`import.meta.env.DEV`) by `CanvasView.tsx` —
 // see that file for the `window.__sfmDoc` console-inspection hook this
 // panel's instructions refer to.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { addNode } from "@scm/ydoc";
 import { Panel } from "@xyflow/react";
 
 import { useCanvasDoc } from "./CanvasDocContext";
+import { useSolver } from "../workers";
 
 let testNodeCounter = 0;
+
+/**
+ * Job 018's manual-verification hook, per that job's Notes section: this
+ * dev-only panel calls `useSolver(sfmDoc)` and surfaces its live
+ * `{result, staleness}` plus dispatch/cancel counters, so a real running
+ * browser session can confirm (via the numbers on screen, or
+ * `window.__solveDebug` in the console) that editing one connected
+ * component never re-triggers a solve of a disconnected one, and that a
+ * superseded in-flight solve is genuinely cancelled rather than just
+ * ignored. Job 019 owns the real summary panel/highlighting UI — this is
+ * diagnostic tooling only, same spirit as `window.__sfmDoc` above.
+ */
+function SolverDebugPanel() {
+  const { sfmDoc } = useCanvasDoc();
+  const dispatchCountRef = useRef(0);
+  const cancelCountRef = useRef(0);
+  const [counts, setCounts] = useState({ dispatch: 0, cancel: 0 });
+
+  const { result, staleness } = useSolver(sfmDoc, {
+    onDispatch: () => setCounts({ dispatch: ++dispatchCountRef.current, cancel: cancelCountRef.current }),
+    onCancel: () => setCounts({ dispatch: dispatchCountRef.current, cancel: ++cancelCountRef.current }),
+  });
+
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      (window as unknown as { __solveDebug?: unknown }).__solveDebug = { result, staleness, counts };
+    }
+  }, [result, staleness, counts]);
+
+  const invalidNodeCount = result?.nodes.filter((n) => !n.valid).length ?? 0;
+
+  return (
+    <div className="mt-3 border-t border-[var(--border-default)] pt-2">
+      <p className="text-[var(--text-muted)]">
+        Solver (Job 018 diagnostic — real panel is Job 019): mode <code>{result?.mode ?? "(none yet)"}</code>,{" "}
+        <span className={staleness === "stale-recomputing" ? "text-amber-500" : ""}>{staleness}</span>
+      </p>
+      <p className="text-[var(--text-muted)]">
+        nodes solved: {result?.nodes.length ?? 0} ({invalidNodeCount} invalid) · worker dispatches: {counts.dispatch} · cancelled: {counts.cancel}
+      </p>
+      <p className="mt-1 text-[var(--text-muted)]">Inspect <code>window.__solveDebug</code> for the full result.</p>
+    </div>
+  );
+}
 
 export function DevNodeTools() {
   const { sfmDoc, containerId } = useCanvasDoc();
@@ -71,6 +116,7 @@ export function DevNodeTools() {
         Drag a node, then inspect <code>window.__sfmDoc</code> in the console to confirm its x/y wrote back to the
         doc.
       </p>
+      <SolverDebugPanel />
     </Panel>
   );
 }
