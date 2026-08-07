@@ -4,9 +4,12 @@
 // `type: "part"` `useYjsSync.ts`'s `edgeRecordToFlowEdge` now assigns to
 // every edge.
 //
-// Renders a straight-segment polyline through `[source, ...waypoints,
-// target]` (multi-segment routing — Job 014 owns curve/step visual style
-// per PLAN.md §3's later-phase "connection style options"), plus:
+// Renders a `[source, ...waypoints, target]` polyline (multi-segment
+// routing) through `connectionStyle.ts`'s `buildStyledPathD` — Job 027 wires
+// up PLAN.md §3's later-phase "connection style options"
+// (Direct/Curves/Horizontal/Vertical, i.e. straight/bezier/step/smoothstep)
+// on top of the same point sequence this job (011) originally rendered as a
+// plain straight-segment path. Plus:
 //   - one small draggable marker per waypoint, and
 //   - a single label (the edge's `part` name) positioned at `labelPos`
 //     (a 0..1 arc-length t-parameter — see Handoff notes for why this
@@ -29,8 +32,10 @@ import { BaseEdge, EdgeLabelRenderer, useReactFlow, type EdgeProps } from "@xyfl
 import { useCanvasDoc } from "../CanvasDocContext";
 import { isDoubleClick, type ClickPoint } from "../doubleClick";
 import { snapPointToGrid } from "../snapToGrid";
+import { useSettings } from "../useSettings";
 import type { CanvasEdge } from "../useYjsSync";
-import { buildPolyline, nearestSegmentIndex, pointAtT, toPathD, type Point } from "./edgeGeometry";
+import { buildStyledPathD, resolveConnectionStyle } from "./connectionStyle";
+import { buildPolyline, nearestSegmentIndex, pointAtT, type Point } from "./edgeGeometry";
 
 // `transform` is set entirely via inline `style` below (both the
 // -50%/-50% centering offset and the flow-position translate need to
@@ -76,6 +81,13 @@ export const ConnectionEdge = memo(function ConnectionEdge({
 }: EdgeProps<CanvasEdge>) {
   const { sfmDoc } = useCanvasDoc();
   const { screenToFlowPosition } = useReactFlow();
+  // Job 027: document-wide default + per-edge override (`record.style`) —
+  // see `connectionStyle.ts`'s header for the precedence rule and the
+  // Direct/Curves/Horizontal/Vertical <-> straight/bezier/step/smoothstep
+  // name mapping. Subscribing per-edge-instance mirrors `RecipeNode.tsx`'s
+  // own `useSettings(sfmDoc)` call (Job 019's established precedent for
+  // "each canvas element reads live settings itself"), not a new pattern.
+  const settings = useSettings(sfmDoc);
 
   // Local optimistic drag state for a waypoint being dragged — mirrors
   // `useYjsSync.ts`'s node-drag pattern (smooth local movement, single
@@ -102,7 +114,16 @@ export const ConnectionEdge = memo(function ConnectionEdge({
     dragIndex !== null && dragPoint ? storedWaypoints.map((w, i) => (i === dragIndex ? dragPoint : w)) : storedWaypoints;
 
   const points = buildPolyline(source, renderedWaypoints, target);
-  const pathD = toPathD(points);
+  const effectiveStyle = resolveConnectionStyle(record.style, settings.connectionStyle);
+  const pathD = buildStyledPathD(points, effectiveStyle);
+  // `pointAtT`'s arc-length walk still operates on the STRAIGHT polyline
+  // regardless of rendering style — the label's 0..1 `labelPos` convention
+  // (confirmed by Job 011) was defined relative to that polyline, and a
+  // label positioned "62% of the way along the (visually curved) path"
+  // would drift if this were changed to walk the curved geometry instead.
+  // The label still reads as "roughly the right place" for every style,
+  // since a Curves/Horizontal/Vertical render stays close to the straight
+  // polyline it's derived from.
   const labelPoint = pointAtT(points, record.labelPos ?? DEFAULT_LABEL_POS);
 
   function addWaypointAtClient(clientX: number, clientY: number) {

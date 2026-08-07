@@ -29,6 +29,8 @@ import { updateSettings, type NumberFormats, type Settings, type SolverMode } fr
 
 import type { SfmDocument } from "@scm/ydoc";
 
+import { CONNECTION_STYLE_OPTIONS } from "./edges";
+
 export interface SettingsMenuProps {
   sfmDoc: SfmDocument;
   settings: Settings;
@@ -158,6 +160,42 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
                 {SOLVER_MODES.map((mode) => (
                   <option key={mode.value} value={mode.value}>
                     {mode.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {/*
+              Job 027: `Settings.connectionStyle` — the document-wide
+              default connection rendering (PLAN.md §3's later-phase
+              "connection style options"). PLAN.md's own UI copy
+              (Direct/Curves/Horizontal/Vertical) differs from the schema's
+              React-Flow-native enum (straight/bezier/step/smoothstep) — see
+              `edges/connectionStyle.ts`'s header for the full reconciliation
+              this job commits to; `CONNECTION_STYLE_OPTIONS` is the single
+              place that mapping lives, so this dropdown and
+              `ConnectionEdge.tsx`'s actual rendering can never drift apart.
+              A per-edge override (`EdgeRecord.style`) also exists and takes
+              precedence over this default when set, but has no UI of its
+              own yet — see this job's Handoff notes.
+            */}
+            <p className="mb-1 mt-3 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+              Connections
+            </p>
+            <label className={rowClass}>
+              <span>Style</span>
+              <select
+                className={selectClass}
+                value={settings.connectionStyle}
+                onChange={(event) =>
+                  updateSettings(sfmDoc, {
+                    connectionStyle: event.target.value as Settings["connectionStyle"],
+                  })
+                }
+              >
+                {CONNECTION_STYLE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
                   </option>
                 ))}
               </select>

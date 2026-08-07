@@ -12,8 +12,11 @@ export {
   clampShards,
   computeMachineCount,
   defaultLimitMode,
+  deriveClockForTargetCount,
   effectiveClockPercent,
   effectiveLimitValue,
+  floorToBigInt,
+  isIntegerRational,
   primaryPart,
   ratePerMachineAtFullClock,
   referenceRateAtFullClock,
@@ -29,3 +32,9 @@ export {
 export type { RecipeNodeValidity, RecipeNodeValidityState } from "./validityState";
 
 export { computeNodeValidityState, type IncidentEdgeRef } from "./computeValidity";
+
+// Job 027: Auto-round — see this module's own header for the "why does this
+// converge instead of looping" argument, and `useAutoRound.ts`'s header for
+// how "manually touching clock/limit switches it off" is implemented.
+export { computeAutoRoundClock, nearestWholeMachineCount } from "./autoRound";
+export { useAutoRound, AUTO_ROUND_ORIGIN } from "./useAutoRound";

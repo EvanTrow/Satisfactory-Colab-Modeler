@@ -88,6 +88,19 @@ const fieldInputClass =
   "nodrag w-16 rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] px-1.5 py-0.5 text-right text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none";
 
 /**
+ * Job 027: "Signalled by black field backgrounds" (PLAN.md §2's Auto-round
+ * row, verbatim) — deliberately a LITERAL black, not a themed
+ * `--surface-*` token, the same "fixed regardless of theme" treatment
+ * `index.css`'s `--node-header` already uses for a different reason (Job
+ * 014's own comment on that token). Applied to both the limit and clock
+ * fields (plural "field*s*" in PLAN.md's own wording) — the limit is what
+ * actually determines the target rate auto-round is solving the clock
+ * against, so both read as "under auto-round's control" together, not just
+ * the one field this feature literally writes to.
+ */
+const autoRoundFieldClass = "!bg-black !text-white placeholder:!text-white/60";
+
+/**
  * Binds a text input to a "committed" `Rational`-bearing string (`node.limit`
  * / `node.clock`), letting the user type freely without every keystroke
  * fighting a Yjs-driven re-render: local text only resyncs from the
@@ -343,12 +356,24 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
     : "0";
   const clockDisplayText = formatRational(effectiveClockPercent(node), numberFormats);
 
+  // Job 027: "Manually touching clock or limit switches [auto-round] off"
+  // (PLAN.md §2, verbatim) — every one of this card's three real-user-edit
+  // paths for these two fields (`commitLimit`, `commitClock`, and the ±
+  // buttons' `handleClockStep` below) clears `autoRound` in the SAME
+  // `updateNode` call as the value change, unconditionally (a no-op write
+  // when it was already `false`, cheap and simpler than a conditional).
+  // This call-site separation — not a Yjs transaction-origin check — is
+  // what makes "was this touch manual" unambiguous: `useAutoRound.ts`'s own
+  // automatic correction is the ONLY code path that ever writes `clock`
+  // WITHOUT also writing `autoRound: false`, and it lives in a completely
+  // different file that these three functions never call into. See
+  // `useAutoRound.ts`'s header for the other half of this contract.
   function commitLimit(raw: string): boolean {
     const trimmed = raw.trim();
     if (!trimmed) return false;
     try {
       const parsed = parseRational(trimmed);
-      updateNode(sfmDoc, id, { limit: toFractionString(parsed) });
+      updateNode(sfmDoc, id, { limit: toFractionString(parsed), autoRound: false });
       return true;
     } catch {
       return false;
@@ -360,7 +385,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
     if (!trimmed) return false;
     try {
       const parsed = parseRational(trimmed);
-      updateNode(sfmDoc, id, { clock: toFractionString(clampClockPercent(parsed)) });
+      updateNode(sfmDoc, id, { clock: toFractionString(clampClockPercent(parsed)), autoRound: false });
       return true;
     } catch {
       return false;
@@ -377,7 +402,20 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
       localMachineCount,
       direction,
     );
-    updateNode(sfmDoc, id, { clock: toFractionString(result.clockPercent) });
+    updateNode(sfmDoc, id, { clock: toFractionString(result.clockPercent), autoRound: false });
+  }
+
+  /**
+   * The auto-round toggle itself — a direct, explicit field write, not a
+   * "manual touch" of clock/limit (toggling ON doesn't change either
+   * field's value; `useAutoRound.ts`'s effect picks up from wherever they
+   * currently sit and corrects the clock on its own next settled solve).
+   * Plain default origin (unlike `useAutoRound.ts`'s own writes) — this IS
+   * a real user action and belongs on the undo stack like any other field
+   * edit.
+   */
+  function handleAutoRoundToggle(checked: boolean) {
+    updateNode(sfmDoc, id, { autoRound: checked });
   }
 
   function handleShardStep(delta: number) {
@@ -554,11 +592,13 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
             <input
               type="text"
               inputMode="decimal"
-              className={`${fieldInputClass} ${highlightRingClass(validityState?.fields?.limit) ?? ""}`}
+              className={`${fieldInputClass} ${node.autoRound ? autoRoundFieldClass : ""} ${highlightRingClass(validityState?.fields?.limit) ?? ""}`}
               title={
                 validityState?.fields?.limit === "invalid"
                   ? "This limit could not be resolved to a machine count."
-                  : undefined
+                  : node.autoRound
+                    ? "Auto-round is on — editing this will turn it off."
+                    : undefined
               }
               {...limitField}
               onFocus={() => {
@@ -595,7 +635,8 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               <input
                 type="text"
                 inputMode="decimal"
-                className={`${fieldInputClass} ${highlightRingClass(validityState?.fields?.clock) ?? ""}`}
+                className={`${fieldInputClass} ${node.autoRound ? autoRoundFieldClass : ""} ${highlightRingClass(validityState?.fields?.clock) ?? ""}`}
+                title={node.autoRound ? "Auto-round is on — editing this will turn it off." : undefined}
                 {...clockField}
                 onFocus={() => {
                   clockField.onFocus();
@@ -620,6 +661,30 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
             </button>
           </div>
         </div>
+
+        {/*
+          Job 027: the auto-round toggle — "near the clock field", per this
+          job's own Notes. Toggling ON does not itself touch `clock`/`limit`
+          (see `handleAutoRoundToggle`'s own comment) — `useAutoRound.ts`
+          picks up from wherever they currently sit on its own next settled
+          solve, which is what makes toggling this on for an
+          already-non-whole node visibly correct itself a beat later rather
+          than needing this handler to duplicate that math locally.
+        */}
+        <label className="flex items-center justify-between gap-2">
+          <span
+            className="text-[var(--text-secondary)]"
+            title="Continuously adjusts clock so this node's machine count stays a whole number. Editing clock or limit turns it off."
+          >
+            Auto-round
+          </span>
+          <input
+            type="checkbox"
+            checked={node.autoRound}
+            onChange={(event) => handleAutoRoundToggle(event.target.checked)}
+            className="nodrag accent-[var(--accent)]"
+          />
+        </label>
 
         <div className="flex items-center justify-between gap-2">
           <span className="text-[var(--text-secondary)]">Somersloops</span>

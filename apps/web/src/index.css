@@ -142,6 +142,21 @@
   --xy-controls-button-color: var(--text-secondary);
   --xy-controls-button-color-hover: var(--text-primary);
   --xy-controls-box-shadow: var(--shadow-card);
+
+  /*
+   * Job 027: `<MiniMap>` (PLAN.md §3's later-phase "minimap" bullet) has no
+   * themeable class props either, same gotcha Job 014 already documented
+   * and fixed for `<Controls>` above — these are the equivalent `--xy-*`
+   * overrides for it, reusing this app's own tokens instead of xyflow's
+   * light-only shipped defaults (`#fff` background / `#e2e2e2` nodes),
+   * which would otherwise stay light-only under dark theme for the exact
+   * same specificity reason `<Controls>`'s comment explains.
+   */
+  --xy-minimap-background-color: var(--surface-panel);
+  --xy-minimap-mask-background-color: var(--surface-hover);
+  --xy-minimap-mask-stroke-color: var(--border-strong);
+  --xy-minimap-node-background-color: var(--accent-soft);
+  --xy-minimap-node-stroke-color: var(--border-default);
 }
 
 .dark {
@@ -204,6 +219,13 @@
   --xy-controls-button-color: var(--text-secondary);
   --xy-controls-button-color-hover: var(--text-primary);
   --xy-controls-box-shadow: var(--shadow-card);
+
+  /* Job 027 — see the light theme's own comment above for the full rationale. */
+  --xy-minimap-background-color: var(--surface-panel);
+  --xy-minimap-mask-background-color: var(--surface-hover);
+  --xy-minimap-mask-stroke-color: var(--border-strong);
+  --xy-minimap-node-background-color: var(--accent-soft);
+  --xy-minimap-node-stroke-color: var(--border-default);
 }
 
 html,

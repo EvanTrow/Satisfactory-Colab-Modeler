@@ -278,12 +278,13 @@ export interface ClockSnapResult {
   clamped: boolean;
 }
 
-function isIntegerRational(value: Rational): boolean {
+/** Exported for Job 027's `autoRound.ts` — nearest-integer rounding needs the same floor primitive. */
+export function isIntegerRational(value: Rational): boolean {
   return value.denominator === 1n;
 }
 
-/** Floor toward −∞, exact (bigint division truncates toward zero, so negative non-exact values need a −1 correction). */
-function floorToBigInt(value: Rational): bigint {
+/** Floor toward −∞, exact (bigint division truncates toward zero, so negative non-exact values need a −1 correction). Exported for `autoRound.ts` (Job 027). */
+export function floorToBigInt(value: Rational): bigint {
   const quotient = value.numerator / value.denominator;
   const remainder = value.numerator % value.denominator;
   return remainder === 0n || value.numerator >= 0n ? quotient : quotient - 1n;
@@ -292,6 +293,32 @@ function floorToBigInt(value: Rational): bigint {
 /** Ceil toward +∞, via `ceil(x) = −floor(−x)`. */
 function ceilToBigInt(value: Rational): bigint {
   return -floorToBigInt(negate(value));
+}
+
+/**
+ * The shared clock-solving core behind both `snapClockToWholeMachineCount`
+ * (the manual ± buttons, which pick `targetCount` directionally) and Job
+ * 027's `autoRound.ts` (which picks `targetCount` via nearest-integer
+ * rounding instead — there's no "+"/"-" click to imply a preferred
+ * direction for a background process). Given the node's current
+ * `(clockPercent, machineCount)` pair and a desired whole-number
+ * `targetCount`, solves `targetCount × newClock = currentMachineCount ×
+ * currentClockPercent` for `newClock` (the same clock/count-invariance
+ * argument `snapClockToWholeMachineCount`'s own doc comment explains),
+ * clamped to `[MIN_CLOCK_PERCENT, MAX_CLOCK_PERCENT]`.
+ */
+export function deriveClockForTargetCount(
+  currentClockPercent: Rational,
+  currentMachineCount: Rational,
+  targetCount: Rational,
+): ClockSnapResult {
+  const exactNewClock = divide(multiply(currentMachineCount, currentClockPercent), targetCount);
+  const clampedClock = clampClockPercent(exactNewClock);
+  const clamped = !equals(clampedClock, exactNewClock);
+  const machineCount = clamped
+    ? divide(multiply(currentMachineCount, currentClockPercent), clampedClock)
+    : targetCount;
+  return { clockPercent: clampedClock, machineCount, clamped };
 }
 
 /**
@@ -342,14 +369,7 @@ export function snapClockToWholeMachineCount(
   }
   if (compare(targetCount, ONE) < 0) targetCount = ONE; // never solve for 0 or negative machines
 
-  const exactNewClock = divide(multiply(currentMachineCount, currentClockPercent), targetCount);
-  const clampedClock = clampClockPercent(exactNewClock);
-  const clamped = !equals(clampedClock, exactNewClock);
-  const machineCount = clamped
-    ? divide(multiply(currentMachineCount, currentClockPercent), clampedClock)
-    : targetCount;
-
-  return { clockPercent: clampedClock, machineCount, clamped };
+  return deriveClockForTargetCount(currentClockPercent, currentMachineCount, targetCount);
 }
 
 // ---------------------------------------------------------------------------

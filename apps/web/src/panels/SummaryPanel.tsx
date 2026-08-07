@@ -6,12 +6,14 @@
 // solver output via `SolverResultContext` (never calling `useSolver` itself
 // — see that context's own header comment for why).
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { defaultGameData } from "@scm/gamedata";
 import { formatRational, parseRational } from "@scm/rational";
 import { listNodes, type NodeRecord, type NumberFormats, type SfmDocument } from "@scm/ydoc";
 
 import { useSolverResult } from "../canvas/SolverResultContext";
+import type { ThemeMode } from "../theme";
 import type { CanvasNode } from "../canvas/useYjsSync";
 import {
   nodeIdsForScope,
@@ -19,6 +21,7 @@ import {
   type ScopedSummary,
   type SummaryScope,
 } from "./summary/summaryMath";
+import { usePopoutWindow } from "./summary/usePopoutWindow";
 
 const gameData = defaultGameData;
 
@@ -53,6 +56,8 @@ export interface SummaryPanelProps {
   /** The currently-rendered canvas nodes (`useYjsSync`'s own scoped list) — used only to read Job 012's `.selected` flags for the "Selected" scope. */
   nodes: CanvasNode[];
   numberFormats: NumberFormats;
+  /** Job 027: threaded through so the popped-out window's own `<html>` gets the same `dark`/`light` class as the main window — see `SummaryPanel`'s theme-sync effect below. */
+  theme: ThemeMode;
 }
 
 const SCOPES: readonly SummaryScope[] = ["everything", "outpost", "selected"];
@@ -110,11 +115,132 @@ function BalanceRow({ part, balance, numberFormats }: BalanceRowProps) {
   );
 }
 
-export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats }: SummaryPanelProps) {
+interface SummaryBodyProps {
+  scope: SummaryScope;
+  onScopeChange: (scope: SummaryScope) => void;
+  summary: ScopedSummary;
+  numberFormats: NumberFormats;
+  stale: boolean;
+}
+
+/**
+ * The actual content — scope tabs + balance table + power/sink readouts +
+ * cost-to-build list — extracted so it can be rendered in EITHER the inline
+ * popover OR (Job 027) the popped-out window's portal without duplicating
+ * this JSX. Contains no popover/portal-specific chrome of its own (no
+ * backdrop, no pop-out button) — the two call sites below each wrap it in
+ * whatever container makes sense for where it's rendered.
+ */
+function SummaryBody({ scope, onScopeChange, summary, numberFormats, stale }: SummaryBodyProps) {
+  const partNames = Object.keys(summary.perPart).sort();
+
+  return (
+    <>
+      <div className="mb-3 flex gap-1" role="tablist" aria-label="Summary scope">
+        {SCOPES.map((s) => (
+          <button
+            key={s}
+            type="button"
+            role="tab"
+            aria-selected={scope === s}
+            onClick={() => onScopeChange(s)}
+            className={`rounded px-2 py-1 transition-colors ${
+              scope === s
+                ? "bg-[var(--accent)] text-[var(--accent-contrast)]"
+                : "bg-[var(--surface-sunken)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            }`}
+          >
+            {SCOPE_LABELS[s]}
+          </button>
+        ))}
+      </div>
+
+      <div className={stale ? "opacity-50 transition-opacity" : "transition-opacity"}>
+        <p className="mb-1 text-[var(--text-muted)]">
+          {summary.solvedNodeCount}/{summary.nodeCount} node(s) in scope solved
+        </p>
+
+        <table className="mb-3 w-full border-collapse">
+          <thead>
+            <tr className="text-left text-[var(--text-muted)]">
+              <th className="pb-1 font-normal">Part</th>
+              <th className="pb-1 text-right font-normal">Made</th>
+              <th className="pb-1 text-right font-normal">Used</th>
+              <th className="pb-1 text-right font-normal">Unmade</th>
+              <th className="pb-1 text-right font-normal">Unused</th>
+            </tr>
+          </thead>
+          <tbody>
+            {partNames.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="py-2 text-center text-[var(--text-muted)]">
+                  Nothing in scope.
+                </td>
+              </tr>
+            ) : (
+              partNames.map((part) => (
+                <BalanceRow key={part} part={part} balance={summary.perPart[part]!} numberFormats={numberFormats} />
+              ))
+            )}
+          </tbody>
+        </table>
+
+        <div className="mb-3 space-y-0.5">
+          <p className="flex justify-between text-[var(--text-secondary)]">
+            <span>Power made</span>
+            <span className="tabular-nums text-[var(--text-primary)]">{fmtPower(summary.powerMade)}</span>
+          </p>
+          <p className="flex justify-between text-[var(--text-secondary)]">
+            <span>Power used</span>
+            <span className="tabular-nums text-[var(--text-primary)]">{fmtPower(summary.powerUsed)}</span>
+          </p>
+          <p className="flex justify-between text-[var(--text-secondary)]">
+            <span>Power net</span>
+            <span
+              className={`tabular-nums ${summary.powerNet < 0 ? "text-[var(--danger)]" : "text-[var(--text-primary)]"}`}
+            >
+              {fmtPower(summary.powerNet)}
+            </span>
+          </p>
+          <p className="flex justify-between text-[var(--text-secondary)]">
+            <span>Sink points</span>
+            <span
+              className="tabular-nums text-[var(--text-primary)]"
+              title="No AWESOME Sink node type exists yet (Job 017's documented limitation) — always 0."
+            >
+              {fmt(summary.sinkPoints, numberFormats)}
+            </span>
+          </p>
+        </div>
+
+        <p className="mb-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Cost to build</p>
+        {summary.cost.length === 0 ? (
+          <p className="text-[var(--text-muted)]">Nothing in scope.</p>
+        ) : (
+          <ul className="space-y-0.5">
+            {summary.cost.map((entry) => (
+              <li key={entry.part} className="flex justify-between text-[var(--text-secondary)]">
+                <span>{entry.part}</span>
+                <span className="tabular-nums text-[var(--text-primary)]">
+                  {fmt(entry.amount, numberFormats)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </>
+  );
+}
+
+export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme }: SummaryPanelProps) {
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<SummaryScope>("everything");
   const { result, staleness } = useSolverResult();
   const allNodes = useAllRecipeNodes(sfmDoc);
+  // Job 027: the pop-out window — see `usePopoutWindow.ts`'s own header for
+  // why this is a portal, not a second React root.
+  const popout = usePopoutWindow();
 
   const nodeRecordById = new Map(allNodes.map((n) => [n.id, n] as const));
   const selectedNodeIds = new Set(
@@ -128,22 +254,51 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats }: Summ
     selectedNodeIds,
   });
   const summary = summarizeScope(nodeIds, result?.nodes ?? [], nodeRecordById, gameData);
-  const partNames = Object.keys(summary.perPart).sort();
   const stale = staleness === "stale-recomputing";
+
+  // Job 027: keep the popped-out window's own `<html>` in sync with the
+  // main window's theme — `usePopoutWindow.ts` copies stylesheets once at
+  // open time, but the `dark`/`light` CLASS those tokens key off (Job 014's
+  // `@custom-variant dark` mechanism) is separate document state that has
+  // to be re-applied whenever `theme` changes while popped out, not just
+  // once at open time.
+  useEffect(() => {
+    if (!popout.containerEl) return;
+    const root = popout.containerEl.ownerDocument.documentElement;
+    root.classList.toggle("dark", theme === "dark");
+    root.classList.toggle("light", theme === "light");
+  }, [popout.containerEl, theme]);
+
+  function handleSummaryButtonClick() {
+    if (popout.isOpen) {
+      popout.open("Summary — Satisfactory Colab Modeler"); // already open — this just focuses it, see usePopoutWindow's own `open()`
+      return;
+    }
+    setOpen((v) => !v);
+  }
+
+  function handlePopOut() {
+    popout.open("Summary — Satisfactory Colab Modeler");
+    setOpen(false); // the inline popover and the pop-out window are never both visible at once
+  }
+
+  const body = (
+    <SummaryBody scope={scope} onScopeChange={setScope} summary={summary} numberFormats={numberFormats} stale={stale} />
+  );
 
   return (
     <div className="relative">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={handleSummaryButtonClick}
         title="Summary panel"
         aria-label="Summary panel"
         aria-expanded={open}
         className="nodrag inline-flex h-7 items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 text-xs text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
       >
-        Summary
+        Summary{popout.isOpen ? " (popped out)" : ""}
       </button>
-      {open && (
+      {open && !popout.isOpen && (
         <>
           {/*
             Same backdrop-vs-content mousedown-ordering fix `SettingsMenu.tsx`
@@ -157,130 +312,68 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats }: Summ
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-                Summary
-              </p>
-              {/*
-                Job 018's staleness state, surfaced here per PLAN.md §5
-                point 3 ("show the last result greyed/stale while
-                recomputing rather than blanking values") — the numbers
-                below stay exactly as they were (see the `opacity-50` wrapper
-                further down), this is just the textual cue that a recompute
-                is in flight.
-              */}
-              {stale && <span className="text-[var(--text-muted)]">recalculating…</span>}
-            </div>
-
-            <div className="mb-3 flex gap-1" role="tablist" aria-label="Summary scope">
-              {SCOPES.map((s) => (
+              <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Summary</p>
+              <div className="flex items-center gap-2">
+                {/*
+                  Job 018's staleness state, surfaced here per PLAN.md §5
+                  point 3 ("show the last result greyed/stale while
+                  recomputing rather than blanking values") — the numbers
+                  below stay exactly as they were (see `SummaryBody`'s own
+                  `opacity-50` wrapper), this is just the textual cue that a
+                  recompute is in flight.
+                */}
+                {stale && <span className="text-[var(--text-muted)]">recalculating…</span>}
+                {/*
+                  Job 027: "pop out" — PLAN.md §3's later-phase "pop-out
+                  summary windows". See `usePopoutWindow.ts`'s header for the
+                  mechanism (a portal, not a second React root) and this
+                  component's own `handlePopOut`/theme-sync effect above.
+                */}
                 <button
-                  key={s}
                   type="button"
-                  role="tab"
-                  aria-selected={scope === s}
-                  onClick={() => setScope(s)}
-                  className={`rounded px-2 py-1 transition-colors ${
-                    scope === s
-                      ? "bg-[var(--accent)] text-[var(--accent-contrast)]"
-                      : "bg-[var(--surface-sunken)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                  }`}
+                  onClick={handlePopOut}
+                  title="Pop out into a separate window"
+                  className="rounded border border-[var(--border-default)] px-1.5 py-0.5 text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
                 >
-                  {SCOPE_LABELS[s]}
+                  ⧉ Pop out
                 </button>
-              ))}
-            </div>
-
-            <div className={stale ? "opacity-50 transition-opacity" : "transition-opacity"}>
-              <p className="mb-1 text-[var(--text-muted)]">
-                {summary.solvedNodeCount}/{summary.nodeCount} node(s) in scope solved
-              </p>
-
-              <table className="mb-3 w-full border-collapse">
-                <thead>
-                  <tr className="text-left text-[var(--text-muted)]">
-                    <th className="pb-1 font-normal">Part</th>
-                    <th className="pb-1 text-right font-normal">Made</th>
-                    <th className="pb-1 text-right font-normal">Used</th>
-                    <th className="pb-1 text-right font-normal">Unmade</th>
-                    <th className="pb-1 text-right font-normal">Unused</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {partNames.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="py-2 text-center text-[var(--text-muted)]">
-                        Nothing in scope.
-                      </td>
-                    </tr>
-                  ) : (
-                    partNames.map((part) => (
-                      <BalanceRow
-                        key={part}
-                        part={part}
-                        balance={summary.perPart[part]!}
-                        numberFormats={numberFormats}
-                      />
-                    ))
-                  )}
-                </tbody>
-              </table>
-
-              <div className="mb-3 space-y-0.5">
-                <p className="flex justify-between text-[var(--text-secondary)]">
-                  <span>Power made</span>
-                  <span className="tabular-nums text-[var(--text-primary)]">
-                    {fmtPower(summary.powerMade)}
-                  </span>
-                </p>
-                <p className="flex justify-between text-[var(--text-secondary)]">
-                  <span>Power used</span>
-                  <span className="tabular-nums text-[var(--text-primary)]">
-                    {fmtPower(summary.powerUsed)}
-                  </span>
-                </p>
-                <p className="flex justify-between text-[var(--text-secondary)]">
-                  <span>Power net</span>
-                  <span
-                    className={`tabular-nums ${summary.powerNet < 0 ? "text-[var(--danger)]" : "text-[var(--text-primary)]"}`}
-                  >
-                    {fmtPower(summary.powerNet)}
-                  </span>
-                </p>
-                <p className="flex justify-between text-[var(--text-secondary)]">
-                  <span>Sink points</span>
-                  <span
-                    className="tabular-nums text-[var(--text-primary)]"
-                    title="No AWESOME Sink node type exists yet (Job 017's documented limitation) — always 0."
-                  >
-                    {fmt(summary.sinkPoints, numberFormats)}
-                  </span>
-                </p>
               </div>
-
-              <p className="mb-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-                Cost to build
-              </p>
-              {summary.cost.length === 0 ? (
-                <p className="text-[var(--text-muted)]">Nothing in scope.</p>
-              ) : (
-                <ul className="space-y-0.5">
-                  {summary.cost.map((entry) => (
-                    <li
-                      key={entry.part}
-                      className="flex justify-between text-[var(--text-secondary)]"
-                    >
-                      <span>{entry.part}</span>
-                      <span className="tabular-nums text-[var(--text-primary)]">
-                        {fmt(entry.amount, numberFormats)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
             </div>
+
+            {body}
           </div>
         </>
       )}
+      {/*
+        Job 027: the live pop-out — a `createPortal` into the OTHER window's
+        own DOM node, still inside this exact React tree (see
+        `usePopoutWindow.ts`'s header for why that's what keeps it live
+        without any extra plumbing). Rendered unconditionally whenever
+        `popout.containerEl` exists; nothing here duplicates `body` inline
+        at the same time, since the popover above is gated on
+        `!popout.isOpen`.
+      */}
+      {popout.containerEl &&
+        createPortal(
+          <div className="p-3 text-xs text-[var(--text-primary)]">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Summary</p>
+              <div className="flex items-center gap-2">
+                {stale && <span className="text-[var(--text-muted)]">recalculating…</span>}
+                <button
+                  type="button"
+                  onClick={popout.close}
+                  title="Close this window and return to the inline panel"
+                  className="rounded border border-[var(--border-default)] px-1.5 py-0.5 text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+                >
+                  ← Return
+                </button>
+              </div>
+            </div>
+            {body}
+          </div>,
+          popout.containerEl,
+        )}
     </div>
   );
 }

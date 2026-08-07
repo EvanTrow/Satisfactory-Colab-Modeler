@@ -25,6 +25,7 @@ import {
   Background,
   BackgroundVariant,
   Controls,
+  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -48,7 +49,7 @@ import { SettingsMenu } from "./SettingsMenu";
 import { SolverResultContext } from "./SolverResultContext";
 import { type ClickPoint, isDoubleClick } from "./doubleClick";
 import { ConnectionEdge, useConnectionHandlers } from "./edges";
-import { RecipeNode } from "./nodes";
+import { RecipeNode, useAutoRound } from "./nodes";
 import {
   BlueprintNode,
   BoundaryEdge,
@@ -273,6 +274,14 @@ function CanvasViewReady({
   const [containerId, setContainerId] = useState(rootContainerId);
   const navigateToContainer = useCallback((id: string) => setContainerId(id), []);
 
+  // Job 027: minimap show/hide — a simple local toggle, not a persisted
+  // `Settings` field (per this job's own scope note: "doesn't need to be a
+  // persisted setting unless you judge it should be" — a per-session UI
+  // preference reads as the right scope for something this cosmetic,
+  // matching how e.g. the summary/settings popovers' own `open` state is
+  // also plain unpersisted local state).
+  const [showMinimap, setShowMinimap] = useState(true);
+
   const docContext: CanvasDocContextValue = useMemo(
     () => ({
       sfmDoc,
@@ -295,6 +304,13 @@ function CanvasViewReady({
   // only happens when the solver's own output actually changes, not on
   // every unrelated re-render of this component (e.g. a theme toggle).
   const solver = useSolver(sfmDoc);
+  // Job 027: auto-round — reacts to every SETTLED solve result (never a
+  // stale/in-flight one) and nudges any `autoRound`-enabled node's clock
+  // back to a whole machine count. Mounted here, once, for the same reason
+  // `useSolver` itself is only ever called once (see this file's own
+  // `solver`/`solverContextValue` comment) — see `useAutoRound.ts`'s header
+  // for the full convergence argument.
+  useAutoRound(sfmDoc, solver.nodeResultById, solver.staleness);
   const solverContextValue = useMemo(
     () => ({
       result: solver.result,
@@ -401,7 +417,22 @@ function CanvasViewReady({
                 containerId={containerId}
                 nodes={sync.nodes}
                 numberFormats={settings.numberFormats}
+                theme={theme}
               />
+              {/* Job 027: minimap show/hide — see `showMinimap`'s own comment above for why this is plain local state, not a persisted setting. */}
+              <button
+                type="button"
+                onClick={() => setShowMinimap((v) => !v)}
+                title={showMinimap ? "Hide minimap" : "Show minimap"}
+                aria-pressed={showMinimap}
+                className={`nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border text-xs transition-colors ${
+                  showMinimap
+                    ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+                    : "border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+                }`}
+              >
+                🗺
+              </button>
               {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. Job 019 added the solver-mode/number-format sections. */}
               <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
@@ -428,7 +459,7 @@ function CanvasViewReady({
             child of the explicit provider below so it can call the hook.
           */}
             <ReactFlowProvider>
-              <CanvasFlow sync={sync} settings={settings} theme={theme} />
+              <CanvasFlow sync={sync} settings={settings} theme={theme} showMinimap={showMinimap} />
             </ReactFlowProvider>
           </div>
         </div>
@@ -458,6 +489,8 @@ interface CanvasFlowProps {
    * closes that gap.
    */
   theme: ThemeMode;
+  /** Job 027: minimap show/hide — see `CanvasViewReady`'s `showMinimap` state comment. */
+  showMinimap: boolean;
 }
 
 /** Pending Recipe Chooser state: both coordinate systems captured at the moment of the triggering click. */
@@ -474,7 +507,7 @@ interface ChooserState {
  * Split out from `CanvasView` only so it can sit inside
  * `<ReactFlowProvider>` and call `useReactFlow()`.
  */
-function CanvasFlow({ sync, settings, theme }: CanvasFlowProps) {
+function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
   const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = sync;
   const { sfmDoc, containerId, undoManager, navigateToContainer, awareness, localPresence } = useCanvasDoc();
   const { screenToFlowPosition } = useReactFlow();
@@ -647,6 +680,18 @@ function CanvasFlow({ sync, settings, theme }: CanvasFlowProps) {
           color="var(--grid-dot)"
         />
         <Controls />
+        {/*
+          Job 027: React Flow's built-in minimap (PLAN.md §3's later-phase
+          "minimap" bullet) — themed via the SAME `--xy-minimap-*` custom-
+          property override mechanism `index.css` already uses for
+          `<Controls>` (Job 014's own documented gotcha: `<MiniMap>` has no
+          themeable class props of its own either, and reads `colorMode`'s
+          `light`/`dark` class exactly like `<Controls>` does — see this
+          file's own `colorMode={theme}` prop above, already wired for
+          `<Controls>` and covering this for free). `pannable`/`zoomable` so
+          it doubles as a real navigation aid, not just a static overview.
+        */}
+        {showMinimap && <MiniMap pannable zoomable />}
         <DevNodeTools />
       </ReactFlow>
       {/* Job 021: other collaborators' live cursors, container-scoped to `containerId` — see `PresenceCursors.tsx`'s header comment for the coordinate-space handling. A plain sibling of `<ReactFlow>` (not a child), same layering approach as `MarqueeOverlay`/`RecipeChooser` below. */}
