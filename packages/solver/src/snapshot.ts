@@ -23,8 +23,12 @@
 // package resolves them against a `GameData` at solve time, it does not
 // re-validate or index the game data itself (that's `@scm/gamedata`'s job).
 
-/** The three calculators this job implements. `"full"` is Job 023's job. */
-export type SolverMode = "none" | "manual" | "basic";
+/**
+ * The four calculators PLAN.md §2 names. `"full"` (Job 023) models
+ * even-split preference AND two-tier priority routing at splitters/mergers
+ * as an exact-rational LP — see `full.ts`.
+ */
+export type SolverMode = "none" | "manual" | "basic" | "full";
 
 export type LimitMode = "machines" | "ppm";
 
@@ -63,6 +67,35 @@ export interface SolverNode {
   readonly shards: number;
 }
 
+/**
+ * Two-tier priority for Full mode's splitter/merger model (Job 023):
+ * `"top"` drains/fills first from the shared pool at a splitter/merger
+ * point; `"bottom"` only receives whatever's left over once every
+ * `"top"`-tier sibling edge (same owning node + part + direction — see
+ * `full.ts`'s `buildSplitGroups`) has taken its share, up to its own
+ * capacity. `undefined` (the only value None/Manual/Basic mode ever see,
+ * and the default for any edge that doesn't set it) behaves identically to
+ * `"top"` — every edge participates in the same even-split-preferred pool
+ * unless at least one sibling is explicitly tagged `"bottom"`, so existing
+ * snapshots with no priority metadata at all behave exactly as before this
+ * field existed.
+ *
+ * This is deliberately a single, direction-agnostic property of the edge
+ * itself (not "priority as a splitter output" vs "priority as a merger
+ * input" separately) — see jobs/023-full-calculator.md's Handoff notes for
+ * the reasoning and its one documented limitation (an edge that is
+ * simultaneously a priority-tagged splitter output AND a priority-tagged
+ * merger input can't have a different intended tier on each side today).
+ *
+ * There is still no dedicated "Priority Splurger" node type anywhere in
+ * this snapshot (Job 024's job, per this package's Job 017 Handoff notes on
+ * what a later job needs to add) — this field is the minimal extension that
+ * lets Full mode's solver compute priority-tier routing correctly for ANY
+ * node whose multiple same-part edges should be tiered, ahead of that
+ * dedicated node type/UI existing.
+ */
+export type PriorityTier = "top" | "bottom";
+
 export interface SolverEdge {
   readonly id: string;
   /** The `@scm/gamedata` `Part.name` this connection carries. */
@@ -71,6 +104,12 @@ export interface SolverEdge {
   readonly fromPort: string;
   readonly toNode: string;
   readonly toPort: string;
+  /**
+   * Full mode only (Job 023) — see `PriorityTier`'s own doc comment.
+   * Ignored entirely by None/Manual/Basic mode (they have no splitter
+   * priority concept at all).
+   */
+  readonly priorityTier?: PriorityTier;
 }
 
 export interface SolverSnapshot {

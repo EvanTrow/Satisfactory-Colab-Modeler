@@ -96,4 +96,13 @@ export interface SolveResult {
   readonly valid: boolean;
   /** Flattened, human-readable copy of every node/edge issue, for a single place to check "did anything go wrong." */
   readonly warnings: readonly string[];
+  /**
+   * `true` only for a Full-mode solve (Job 023) that was cancelled
+   * mid-computation via `FullSolveOptions.signal` — see `full.ts`. When
+   * `true`, `nodes`/`edges` are empty and `valid` is `false`; every other
+   * mode, and every non-cancelled Full-mode solve, always leaves this
+   * `undefined` (never `false`) so existing `result.cancelled` checks don't
+   * need an explicit `=== false`.
+   */
+  readonly cancelled?: boolean;
 }
