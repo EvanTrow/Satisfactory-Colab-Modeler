@@ -132,14 +132,14 @@ export type CanvasEdge = RFEdge<CanvasEdgeData>;
 
 function nodeRecordToFlowNode(record: NodeRecord, selected = false): CanvasNode {
   return {
-    // `kind: "recipe"` is the only kind with a real custom node type so far
-    // (`RecipeNode`, registered under the `"recipe"` key in
-    // `CanvasView.tsx`'s `nodeTypes`) — every other kind (splurger/storage,
-    // none built yet, plus the `"debug"` kind `DevNodeTools` uses) falls
-    // back to React Flow's built-in "default" box, same as every kind did
-    // before this job.
+    // `kind: "recipe"` (`RecipeNode`) and, since Job 024, `kind: "splurger"`
+    // (`SplurgerNode`) are the only kinds with a real custom node type so
+    // far — both registered in `CanvasView.tsx`'s `nodeTypes`. Every other
+    // kind (storage, none built yet, plus the `"debug"` kind `DevNodeTools`
+    // uses) falls back to React Flow's built-in "default" box, same as
+    // every kind did before Job 010.
     id: record.id,
-    type: record.kind === "recipe" ? "recipe" : "default",
+    type: record.kind === "recipe" ? "recipe" : record.kind === "splurger" ? "splurger" : "default",
     position: { x: record.x, y: record.y },
     // Job 012: `selected` is carried over from whatever the store's
     // previous copy of this node had (see `syncAll` below) — this

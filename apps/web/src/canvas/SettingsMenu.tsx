@@ -18,6 +18,11 @@
 // decimal, digits, rounding"). Both are still plain `updateSettings` calls,
 // same mechanism as the pre-existing checkboxes — no new state-management
 // pattern introduced.
+//
+// Job 024 widens the mode selector to include Full, now that `@scm/solver`
+// actually implements it (Job 023) and the worker host actually dispatches
+// it (Job 018/024's `solveScheduler.ts`/`useSolver.ts`) — see
+// `SOLVER_MODES` below.
 import { useState } from "react";
 
 import { updateSettings, type NumberFormats, type Settings, type SolverMode } from "@scm/ydoc";
@@ -35,20 +40,16 @@ const selectClass =
   "nodrag rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] px-1.5 py-0.5 text-xs text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none";
 
 /**
- * PLAN.md §2's table names four modes (Full/Basic/Manual/None), but Full
- * doesn't exist anywhere in the codebase yet (Job 023's addition — see
- * `@scm/solver`'s `solve()`, which only implements `"none"`/`"manual"`/
- * `"basic"`, and `useSolver.ts`'s own defensive fallback for anything else
- * to `"none"`). `Settings.solverMode`'s zod schema already allows `"full"`
- * in anticipation of that job, but offering it here would silently do
- * nothing (or rather, silently behave as if `"none"` were chosen) — so this
- * selector only offers the three modes that actually compute something
- * different today.
+ * PLAN.md §2's table names four modes (Full/Basic/Manual/None). Full is now
+ * real end to end — `@scm/solver`'s `solveFull` (Job 023), dispatched by
+ * `solveScheduler.ts`'s widened `SUPPORTED_MODES` and `useSolver.ts`'s
+ * resync (Job 024) — so it's offered here alongside the other three.
  */
-const SOLVER_MODES: readonly { value: Exclude<SolverMode, "full">; label: string }[] = [
+const SOLVER_MODES: readonly { value: SolverMode; label: string }[] = [
   { value: "none", label: "None (nothing computed)" },
   { value: "manual", label: "Manual (entered values are final)" },
   { value: "basic", label: "Basic (entered values are limits)" },
+  { value: "full", label: "Full (limits + even-split & priority routing)" },
 ];
 
 const NUMBER_FORMAT_STYLES: readonly { value: NumberFormats["style"]; label: string }[] = [
@@ -149,7 +150,7 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
               <span>Mode</span>
               <select
                 className={selectClass}
-                value={settings.solverMode === "full" ? "none" : settings.solverMode}
+                value={settings.solverMode}
                 onChange={(event) =>
                   updateSettings(sfmDoc, { solverMode: event.target.value as SolverMode })
                 }

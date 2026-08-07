@@ -3,6 +3,7 @@
 // contract (wire format for `limit`/`clock`, port handle id scheme, the
 // `validityState` slot for Job 019).
 export { RecipeNode } from "./RecipeNode";
+export { SplurgerNode } from "./SplurgerNode";
 
 export {
   MAX_CLOCK_PERCENT,

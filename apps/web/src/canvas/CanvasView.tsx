@@ -75,6 +75,8 @@ import { ThemeToggle, useTheme, type ThemeMode } from "../theme";
 import { useSettings } from "./useSettings";
 import { useSolver } from "../workers";
 import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
+import { SolveStatusIndicator } from "./SolveStatusIndicator";
+import { SplurgerNode } from "./nodes";
 
 // Module-level constants (not created inside the component) so React Flow
 // never sees a new `nodeTypes`/`edgeTypes` object identity on every render
@@ -87,7 +89,7 @@ import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
 // what `useYjsSync.ts` assigns to a normal direct edge (Job 011's
 // `ConnectionEdge`); `"boundary"` (Job 013) matches a boundary-crossing
 // projected edge (`outposts/BoundaryEdge.tsx`).
-const nodeTypes = { recipe: RecipeNode, outpost: OutpostNode };
+const nodeTypes = { recipe: RecipeNode, outpost: OutpostNode, splurger: SplurgerNode };
 const edgeTypes = { part: ConnectionEdge, boundary: BoundaryEdge };
 
 /**
@@ -296,10 +298,24 @@ function CanvasViewReady({
     () => ({
       result: solver.result,
       staleness: solver.staleness,
+      // Job 024: Full-mode progress + the STOP button's entry point,
+      // threaded through the same single context so `SolveStatusIndicator`
+      // (and anything else) never needs its own `useSolver` call — see
+      // `SolverResultContext.ts`'s header comment on why that's a real,
+      // previously-hit bug class (Job 019's Handoff notes).
+      fullProgress: solver.fullProgress,
+      stop: solver.stop,
       nodeResultById: solver.nodeResultById,
       edgeResultById: solver.edgeResultById,
     }),
-    [solver.result, solver.staleness, solver.nodeResultById, solver.edgeResultById],
+    [
+      solver.result,
+      solver.staleness,
+      solver.fullProgress,
+      solver.stop,
+      solver.nodeResultById,
+      solver.edgeResultById,
+    ],
   );
 
   // Dev-only escape hatch matching Job 008's acceptance criteria wording
@@ -376,6 +392,8 @@ function CanvasViewReady({
                   ↷ Redo
                 </button>
               </div>
+              {/* Job 024: "Solving… [STOP]" — visible only while a Full-mode solve is genuinely in flight. */}
+              <SolveStatusIndicator sfmDoc={sfmDoc} />
               {/* Job 019: the real summary panel — made/used/unmade/unused, power, sink points, cost-to-build, scoped Everything/Current Outpost/Selected. */}
               <SummaryPanel
                 sfmDoc={sfmDoc}

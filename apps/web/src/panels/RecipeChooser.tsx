@@ -121,6 +121,38 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
     onClose();
   }
 
+  /**
+   * Job 024: "+ New Splurger" — a real, distinct `kind: "splurger"` node,
+   * placed immediately (no naming/variant sub-step, unlike a MultiMachine
+   * recipe's variant picker — there's nothing to pick: a Splurger has no
+   * recipe/machine at all). One node kind covers Splurger, Priority
+   * Splitter, and Priority Merger — which one it *reads* as is purely a
+   * function of how it ends up wired (see `SplurgerNode.tsx`'s header for
+   * why that's the right call, matching real splitter/merger hardware's own
+   * "never both multi-in and multi-out" shape).
+   */
+  function handleCreateSplurger() {
+    addNode(sfmDoc, {
+      containerId,
+      kind: "splurger",
+      recipe: null,
+      machine: null,
+      x: flowPosition.x,
+      y: flowPosition.y,
+      title: "Splurger",
+      color: "#7c3aed",
+      limit: null,
+      limitMode: "machines",
+      clock: null,
+      autoRound: false,
+      shards: 0,
+      purity: null,
+      beltTier: null,
+      storageMode: null,
+    });
+    onClose();
+  }
+
   function handlePickRecipe(recipe: Recipe) {
     const resolved = resolveMachine(recipe.machine, gameData);
     if (resolved.kind === "machine") {
@@ -155,6 +187,16 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
                 title="Create a nested outpost container here — PLAN.md's 'like folders' framing"
               >
                 + New Outpost
+              </button>
+            )}
+            {!creatingOutpost && !pendingRecipe && (
+              <button
+                type="button"
+                onClick={handleCreateSplurger}
+                className="rounded-md border border-[var(--splurger-border)] bg-[var(--splurger-soft)] px-2 py-1 text-xs font-medium text-[var(--splurger)] hover:brightness-110"
+                title="Create a Splurger — an explicit priority splitter/merger routing point (PLAN.md §3)"
+              >
+                + New Splurger
               </button>
             )}
             <button

@@ -41,6 +41,7 @@ export {
 } from "./outposts";
 export {
   RecipeNode,
+  SplurgerNode,
   defaultLimitMode,
   computeNodeValidityState,
   type RecipeNodeValidity,
@@ -49,6 +50,7 @@ export {
 } from "./nodes";
 export {
   ConnectionEdge,
+  WILDCARD_PART,
   connectPorts,
   isValidPortConnection,
   parsePortHandleId,
@@ -60,6 +62,8 @@ export {
   type PortInfo,
   type ResolvedEndpoints,
 } from "./edges";
+// Job 024: STOP/progress UI for Full-mode solves.
+export { SolveStatusIndicator } from "./SolveStatusIndicator";
 export { isDoubleClick, DOUBLE_CLICK_MS, DOUBLE_CLICK_PX, type ClickPoint } from "./doubleClick";
 // Job 015: doc load/save. Exported from the barrel (not just used
 // internally by CanvasView.tsx) since Job 016 (IndexedDB cache +

@@ -92,6 +92,17 @@
   --mismatch: #c2410c;
   --mismatch-soft: rgba(194, 65, 12, 0.14);
 
+  /*
+   * Job 024: the Splurger node's own accent — violet, distinct from
+   * `--accent` (indigo, selection), `--outpost` (amber), and `--mismatch`
+   * (red-orange) so a Splurger reads as its own kind of thing at a glance,
+   * same "own identity" reasoning `--outpost`'s comment (Job 014) already
+   * established for outposts.
+   */
+  --splurger: #7c3aed;
+  --splurger-soft: rgba(124, 58, 237, 0.14);
+  --splurger-border: rgba(124, 58, 237, 0.55);
+
   --node-header: #2f4f4f;
   --node-header-text: #f5f5f4;
 
@@ -151,6 +162,11 @@
   /* Job 019 — see the light theme's own comment above for the full rationale. */
   --mismatch: #fb923c;
   --mismatch-soft: rgba(251, 146, 60, 0.18);
+
+  /* Job 024 — see the light theme's own comment above for the full rationale. */
+  --splurger: #a78bfa;
+  --splurger-soft: rgba(167, 139, 250, 0.18);
+  --splurger-border: rgba(167, 139, 250, 0.55);
 
   --node-header: #24413f;
   --node-header-text: #f4f4f5;

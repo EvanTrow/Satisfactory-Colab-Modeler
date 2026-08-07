@@ -1,6 +1,7 @@
 // Public surface of Job 011's connection/waypoint UI.
 export { ConnectionEdge } from "./ConnectionEdge";
 export {
+  WILDCARD_PART,
   connectPorts,
   isValidPortConnection,
   parsePortHandleId,

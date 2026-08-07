@@ -22,6 +22,14 @@ function createFakeWorker(responseDelayMs = 10) {
     onmessage: null,
     postMessage(message: HostToWorkerMessage) {
       worker.postMessageCalls.push(message);
+      // Job 024: `stop()`/a superseding dispatch now also sends a
+      // best-effort `cancel` message before `terminate()` — this fake
+      // worker has no cooperative signal of its own (it just calls
+      // `solve()` directly with no `options`), so a `cancel` message is a
+      // pure no-op here, same as it effectively is for a real,
+      // already-synchronously-blocked worker (see `protocol.ts`'s
+      // `CancelMessage` doc comment).
+      if (message.type !== "solve") return;
       setTimeout(() => {
         if (terminated) return;
         const result = solve(message.snapshot, message.mode, defaultGameData);
@@ -188,7 +196,7 @@ describe("createSolveScheduler", () => {
       const w = createFakeWorker(5);
       const originalPost = w.postMessage.bind(w);
       w.postMessage = (message) => {
-        dispatchedSnapshots.push(message.snapshot);
+        if (message.type === "solve") dispatchedSnapshots.push(message.snapshot);
         originalPost(message);
       };
       return w;
@@ -237,21 +245,44 @@ describe("createSolveScheduler", () => {
         warnings: [],
       },
       staleness: "fresh",
+      fullProgress: null,
     });
     expect(postMessageCalls).toHaveLength(0);
   });
 
-  it("falls back to None behavior for an unsupported mode string (e.g. Job 023's future 'full') rather than crashing", () => {
+  it("falls back to None behavior for a genuinely unsupported/unknown mode string rather than crashing", () => {
     const scheduler = createSolveScheduler({ createWorker: () => createFakeWorker(), debounceMs: 150, onStateChange: () => {} });
     // Cast past the type system to simulate a caller passing a mode string
-    // outside @scm/solver's current SolverMode union — matching
-    // `@scm/ydoc`'s wider `Settings.solverMode` schema (Job 007), which
-    // already allows "full" (Job 023's job). `useSolver.ts` maps this case
+    // outside @scm/solver's current SolverMode union entirely (e.g. a
+    // future, not-yet-supported mode) — `useSolver.ts` maps any such case
     // to "none" before it ever reaches the scheduler in practice; this test
-    // exercises the scheduler's own defensive fallback directly.
-    const unsupportedMode = "full" as unknown as SolverMode;
+    // exercises the scheduler's own defensive fallback directly. Job 024
+    // widened `SUPPORTED_MODES` to include "full" (see the dedicated Full
+    // mode tests below), so this now uses a string that's unsupported for
+    // real.
+    const unsupportedMode = "bogus" as unknown as SolverMode;
     scheduler.submit({ nodes: [node("a")], edges: [] }, unsupportedMode);
     expect(scheduler.getState().result?.mode).toBe("none");
+  });
+
+  it("'full' mode is dispatched to the worker like any other supported mode (Job 024)", async () => {
+    const dispatchedModes: SolverMode[] = [];
+    const createWorker = () => {
+      const w = createFakeWorker(5);
+      const originalPost = w.postMessage.bind(w);
+      w.postMessage = (message) => {
+        if (message.type === "solve") dispatchedModes.push(message.mode);
+        originalPost(message);
+      };
+      return w;
+    };
+    const scheduler = createSolveScheduler({ createWorker, debounceMs: 150, onStateChange: () => {} });
+
+    scheduler.submit({ nodes: [node("a", { limit: "30" })], edges: [] }, "full");
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(dispatchedModes).toEqual(["full"]);
+    expect(scheduler.getState().result?.mode).toBe("full");
   });
 
   it("onDispatch fires only when a component actually needs solving, never for a debounce tick that's entirely cache hits", async () => {
@@ -275,6 +306,102 @@ describe("createSolveScheduler", () => {
     scheduler.submit({ nodes: [componentA, componentB], edges: [] }, "basic");
     await vi.advanceTimersByTimeAsync(200);
     expect(dispatchCount).toBe(1);
+  });
+
+  it("relays a Full-mode progress message into fullProgress while the request is still in flight, and clears it once the result lands", async () => {
+    const createWorker = () => {
+      const w = createFakeWorker(50);
+      const originalPost = w.postMessage.bind(w);
+      w.postMessage = (message) => {
+        originalPost(message);
+        if (message.type === "solve") {
+          // Simulate `solverWorker.ts` relaying a real @scm/solver
+          // `onProgress` callback mid-solve — delivered well before the
+          // fake worker's own 50ms "result" timer fires.
+          setTimeout(() => {
+            w.onmessage?.({
+              data: { type: "progress", requestId: message.requestId, info: { phase: "propagate", pass: 1, resolvedCount: 3, totalCount: 10 } },
+            });
+          }, 5);
+        }
+      };
+      return w;
+    };
+    const states: SolveHostState[] = [];
+    const scheduler = createSolveScheduler({ createWorker, debounceMs: 150, onStateChange: (s) => states.push(s) });
+
+    scheduler.submit({ nodes: [node("a", { limit: "30" })], edges: [] }, "full");
+    await vi.advanceTimersByTimeAsync(160); // past debounce + the 5ms progress tick, before the 50ms result
+
+    expect(scheduler.getState().fullProgress).toEqual({ phase: "propagate", pass: 1, resolvedCount: 3, totalCount: 10 });
+
+    await vi.advanceTimersByTimeAsync(50); // let the result land
+    expect(scheduler.getState().fullProgress).toBeNull();
+  });
+
+  it("stop() terminates the active worker, sends a best-effort cancel message, and never applies that request's result", async () => {
+    const createdWorkers: ReturnType<typeof createFakeWorker>[] = [];
+    const createWorker = () => {
+      const w = createFakeWorker(250);
+      createdWorkers.push(w);
+      return w;
+    };
+    let cancelCount = 0;
+    const scheduler = createSolveScheduler({
+      createWorker,
+      debounceMs: 150,
+      onStateChange: () => {},
+      onCancel: () => cancelCount++,
+    });
+
+    scheduler.submit({ nodes: [node("a", { limit: "10" })], edges: [] }, "full");
+    await vi.advanceTimersByTimeAsync(150); // debounce fires -> dispatched, 250ms result still pending
+
+    const activeWorker = createdWorkers[0]!;
+    expect(activeWorker.postMessageCalls).toHaveLength(1);
+
+    scheduler.stop();
+
+    expect(activeWorker.terminateCalls).toBe(1);
+    expect(cancelCount).toBe(1);
+    expect(activeWorker.postMessageCalls).toHaveLength(2);
+    expect(activeWorker.postMessageCalls[1]).toMatchObject({ type: "cancel", requestId: activeWorker.postMessageCalls[0]!.requestId });
+
+    const stateAfterStop = scheduler.getState();
+    expect(stateAfterStop.staleness).toBe("fresh");
+    expect(stateAfterStop.fullProgress).toBeNull();
+    expect(stateAfterStop.result).toBeNull(); // never solved anything before this — stop() must not fabricate a result
+
+    // Let the (terminated) fake worker's own timer elapse, if it were going
+    // to fire at all — it must not, since `terminated` is set.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(scheduler.getState().result).toBeNull();
+  });
+
+  it("stop() is a harmless no-op when nothing is in flight", () => {
+    const scheduler = createSolveScheduler({ createWorker: () => createFakeWorker(), debounceMs: 150, onStateChange: () => {} });
+    expect(() => scheduler.stop()).not.toThrow();
+    expect(scheduler.getState().staleness).toBe("fresh");
+  });
+
+  it("a submit() after stop() behaves completely normally (stop() doesn't poison future requests)", async () => {
+    const createdWorkers: ReturnType<typeof createFakeWorker>[] = [];
+    const createWorker = () => {
+      const w = createFakeWorker(5);
+      createdWorkers.push(w);
+      return w;
+    };
+    const scheduler = createSolveScheduler({ createWorker, debounceMs: 150, onStateChange: () => {} });
+
+    scheduler.submit({ nodes: [node("a", { limit: "10" })], edges: [] }, "full");
+    await vi.advanceTimersByTimeAsync(150);
+    scheduler.stop();
+
+    scheduler.submit({ nodes: [node("a", { limit: "50" })], edges: [] }, "full");
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(scheduler.getState().result?.nodes[0]?.partRates["Iron Ore"]).toBe("50");
+    expect(scheduler.getState().staleness).toBe("fresh");
   });
 
   it("dispose cancels a pending debounce timer and terminates both the active and spare workers", async () => {

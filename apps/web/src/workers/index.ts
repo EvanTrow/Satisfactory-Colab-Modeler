@@ -14,7 +14,16 @@ export {
 } from "./mergeResults";
 export { idCompare, sortedIds } from "./ordering";
 export { partitionSnapshot, type SolverComponent } from "./partition";
-export type { HostToWorkerMessage, SolveErrorMessage, SolveRequestMessage, SolveResultMessage, WorkerLike, WorkerToHostMessage } from "./protocol";
+export type {
+  CancelMessage,
+  HostToWorkerMessage,
+  ProgressMessage,
+  SolveErrorMessage,
+  SolveRequestMessage,
+  SolveResultMessage,
+  WorkerLike,
+  WorkerToHostMessage,
+} from "./protocol";
 export {
   createSolveScheduler,
   type SolveHostState,
@@ -23,3 +32,26 @@ export {
   type SolveStaleness,
 } from "./solveScheduler";
 export { useSolver, type UseSolverDiagnostics, type UseSolverResult } from "./useSolver";
+// Job 024: Splurger node type — pure priority-tier storage + solver-facing
+// pass-through rewrite, shared by `buildSnapshot.ts` and
+// `canvas/nodes/SplurgerNode.tsx`.
+export {
+  EMPTY_TIER_ASSIGNMENT,
+  computeSplurgerPassthroughEdges,
+  computeSplurgerShape,
+  decodePriorityOrder,
+  encodePriorityOrder,
+  moveWithinTier,
+  setTier,
+  tierForEdge,
+  withDefaultedEdges,
+  withoutStaleEdges,
+  type PassthroughSolverEdge,
+  type PriorityTier,
+  type SplurgerEdgeLike,
+  type SplurgerNodeLike,
+  type SplurgerPassthroughResult,
+  type SplurgerShape,
+  type SplurgerShapeKind,
+  type TierAssignment,
+} from "./splurgerPassthrough";

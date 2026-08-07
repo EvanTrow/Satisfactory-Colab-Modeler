@@ -7,7 +7,8 @@
 // derived from the Yjs doc" pattern `useYjsSync.ts` (Job 008/013) and
 // `useSettings.ts` (Job 014) already established (PLAN.md §7's "State" row).
 //
-// Job 019's exact consumption contract:
+// Job 019's exact consumption contract (Job 024 additively widened it with
+// `fullProgress`/`stop` — see `UseSolverResult`'s own doc comments):
 //   const { result, staleness, nodeResultById, edgeResultById } = useSolver(sfmDoc);
 //   - `result`: the full `SolveResult | null` (null only before the very
 //     first solve has ever completed) — read `result.summary` for the
@@ -27,7 +28,7 @@
 // re-trigger a solve or change `nodeResultById`'s contents at all. Job 019
 // looks up a given rendered node's result by id regardless of which
 // container the canvas is currently showing.
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { getSettings, type SfmDocument } from "@scm/ydoc";
 import type { EdgeSolveResult, NodeSolveResult, SolveResult, SolverMode } from "@scm/solver";
@@ -45,6 +46,7 @@ function createSolveStore() {
   return create<SolveStoreState>((set) => ({
     result: null,
     staleness: "fresh",
+    fullProgress: null,
     setState: (state) => set(state),
   }));
 }
@@ -66,6 +68,14 @@ function createBrowserWorker() {
 export interface UseSolverResult extends SolveHostState {
   readonly nodeResultById: ReadonlyMap<string, NodeSolveResult>;
   readonly edgeResultById: ReadonlyMap<string, EdgeSolveResult>;
+  /**
+   * Job 024: the STOP button's entry point — see `solveScheduler.ts`'s own
+   * `stop()` doc comment for exactly what this does and does not guarantee.
+   * Stable across renders (a ref-backed callback, same pattern `diagnostics`
+   * below uses) — safe to pass straight into a `<button onClick>` without
+   * it changing identity every render.
+   */
+  readonly stop: () => void;
 }
 
 const EMPTY_NODE_RESULTS = new Map<string, NodeSolveResult>();
@@ -111,6 +121,16 @@ export function useSolver(sfmDoc: SfmDocument, diagnostics?: UseSolverDiagnostic
   const diagnosticsRef = useRef(diagnostics);
   diagnosticsRef.current = diagnostics;
 
+  // Job 024: the scheduler instance is created fresh inside the effect
+  // below (see its own long-standing StrictMode comment) — this ref is how
+  // the stable `stop` callback returned below reaches whichever instance is
+  // CURRENTLY live, without itself becoming a dependency that would force
+  // the effect to re-run.
+  const schedulerRef = useRef<{ stop: () => void } | null>(null);
+  const stop = useCallback(() => {
+    schedulerRef.current?.stop();
+  }, []);
+
   useEffect(() => {
     // The scheduler is deliberately created HERE, inside the effect, not in
     // a `useMemo` above — `SolveScheduler.dispose()` is a one-way operation
@@ -133,17 +153,20 @@ export function useSolver(sfmDoc: SfmDocument, diagnostics?: UseSolverDiagnostic
       onDispatch: () => diagnosticsRef.current?.onDispatch?.(),
       onCancel: () => diagnosticsRef.current?.onCancel?.(),
     });
+    schedulerRef.current = scheduler;
 
     const resync = () => {
       const snapshot = buildSolverSnapshot(sfmDoc);
       // `@scm/ydoc`'s `Settings.solverMode` (Job 007's schema) already
-      // allows `"full"` in anticipation of Job 023 — `@scm/solver` doesn't
-      // implement it yet, so it's mapped to `"none"` here (the same
-      // fallback `solveScheduler.ts` also performs defensively on its own,
-      // in case of a future direct caller — see that module's
-      // `SUPPORTED_MODES` check).
+      // allowed `"full"` since before `@scm/solver` implemented it — Job
+      // 024 is what finally widens this mapping to pass it straight
+      // through (matching `solveScheduler.ts`'s own now-widened
+      // `SUPPORTED_MODES`) instead of silently downgrading to `"none"`.
       const settingsMode = getSettings(sfmDoc).solverMode;
-      const mode: SolverMode = settingsMode === "manual" || settingsMode === "basic" ? settingsMode : "none";
+      const mode: SolverMode =
+        settingsMode === "manual" || settingsMode === "basic" || settingsMode === "full"
+          ? settingsMode
+          : "none";
       scheduler.submit(snapshot, mode);
     };
 
@@ -163,13 +186,15 @@ export function useSolver(sfmDoc: SfmDocument, diagnostics?: UseSolverDiagnostic
       sfmDoc.edges.unobserveDeep(resync);
       sfmDoc.settings.unobserve(resync);
       scheduler.dispose();
+      if (schedulerRef.current === scheduler) schedulerRef.current = null;
     };
   }, [sfmDoc, useStore]);
 
   const nodeResultById = useMemo(() => indexNodes(result), [result]);
   const edgeResultById = useMemo(() => indexEdges(result), [result]);
+  const fullProgress = useStore((s) => s.fullProgress);
 
-  return { result, staleness, nodeResultById, edgeResultById };
+  return { result, staleness, fullProgress, nodeResultById, edgeResultById, stop };
 }
 
 export type { SolveHostState, SolveStaleness };

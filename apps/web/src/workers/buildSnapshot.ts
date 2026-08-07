@@ -20,6 +20,8 @@
 import { listEdges, listNodes, type SfmDocument } from "@scm/ydoc";
 import type { SolverEdge, SolverNode, SolverSnapshot } from "@scm/solver";
 
+import { computeSplurgerPassthroughEdges } from "./splurgerPassthrough";
+
 /**
  * Only `kind: "recipe"` nodes are included — the only node kind
  * `@scm/solver`'s `SolverNode` can represent (see `packages/solver/src/
@@ -27,13 +29,27 @@ import type { SolverEdge, SolverNode, SolverSnapshot } from "@scm/solver";
  * adds one of those [other] kinds to the canvas needs to extend
  * `snapshot.ts` first"). An edge is included only if BOTH endpoints are
  * recipe nodes — an edge touching a node kind the solver can't represent
- * (an outpost boundary node, a future splurger/storage node, `DevNodeTools`'
- * `kind: "debug"` node, ...) is silently excluded rather than passed
- * through with a dangling reference the solver has never heard of.
+ * (an outpost boundary node, `DevNodeTools`' `kind: "debug"` node, ...) is
+ * silently excluded rather than passed through with a dangling reference
+ * the solver has never heard of.
+ *
+ * Job 024 (`kind: "splurger"`, no recipe/machine) is the one deliberate
+ * EXCEPTION to "silently excluded": a Splurger never becomes a `SolverNode`
+ * itself, but its incident edges are first rewritten by
+ * `splurgerPassthrough.ts`'s `computeSplurgerPassthroughEdges` into direct
+ * recipe-to-recipe `SolverEdge`s (carrying the Splurger's own priority-tier
+ * assignment) BEFORE the "both endpoints must be a recipe node" filter runs
+ * — so a real Splurger sitting between two real recipe nodes participates
+ * in the solve as if it weren't there, with zero changes to `@scm/solver`
+ * itself. See that module's header comment for exactly which wiring shapes
+ * this can and can't represent, and jobs/024-priority-nodes.md's Handoff
+ * notes for the full design writeup.
  */
 export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
-  const recipeNodes = listNodes(sfmDoc).filter((node) => node.kind === "recipe");
+  const allNodes = listNodes(sfmDoc);
+  const recipeNodes = allNodes.filter((node) => node.kind === "recipe");
   const recipeNodeIds = new Set(recipeNodes.map((node) => node.id));
+  const splurgerNodes = allNodes.filter((node) => node.kind === "splurger");
 
   const nodes: SolverNode[] = recipeNodes.map((node) => ({
     id: node.id,
@@ -52,7 +68,9 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
     shards: node.shards,
   }));
 
-  const edges: SolverEdge[] = listEdges(sfmDoc)
+  const allEdges = listEdges(sfmDoc);
+
+  const directEdges = allEdges
     .filter((edge) => recipeNodeIds.has(edge.fromNode) && recipeNodeIds.has(edge.toNode))
     .map((edge) => ({
       id: edge.id,
@@ -62,6 +80,26 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
       toNode: edge.toNode,
       toPort: edge.toPort,
     }));
+
+  // Splurger pass-through rewrite (Job 024). A synthetic edge that still
+  // lands on a non-recipe node (a chained Splurger — see
+  // `splurgerPassthrough.ts`'s header on why that's not resolved here) is
+  // filtered out by the same `recipeNodeIds` check `directEdges` uses above,
+  // never passed through with a dangling reference.
+  const passthrough = computeSplurgerPassthroughEdges(splurgerNodes, allEdges);
+  const splurgerEdges = passthrough.edges
+    .filter((edge) => recipeNodeIds.has(edge.fromNode) && recipeNodeIds.has(edge.toNode))
+    .map((edge) => ({
+      id: edge.id,
+      part: edge.part,
+      fromNode: edge.fromNode,
+      fromPort: edge.fromPort,
+      toNode: edge.toNode,
+      toPort: edge.toPort,
+      ...(edge.priorityTier ? { priorityTier: edge.priorityTier } : {}),
+    }));
+
+  const edges: SolverEdge[] = [...directEdges, ...splurgerEdges];
 
   return { nodes, edges };
 }

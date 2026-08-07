@@ -34,7 +34,18 @@
 // (its previous request already completed) is reused directly with no
 // termination at all — cancellation only happens when there's real
 // in-flight work to stop.
-import type { SolveResult, SolverMode, SolverSnapshot } from "@scm/solver";
+//
+// --- Job 024: the STOP button's actual mechanism ---
+//
+// `stop()` below is what a user-facing "Solving… [STOP]" button calls. It
+// does two things, in order: (1) best-effort, sends a `cancel` message for
+// the active request (Job 023's cooperative `signal` — see `protocol.ts`'s
+// `CancelMessage` doc comment for exactly why this alone is NOT sufficient
+// against a synchronous in-worker `solve()` call), then (2) the same real
+// `Worker.terminate()` this module already uses to preempt a superseded
+// request. (2) is the mechanism this job actually verified halts
+// computation — see jobs/024-priority-nodes.md's Handoff notes.
+import type { FullProgressInfo, SolveResult, SolverMode, SolverSnapshot } from "@scm/solver";
 
 import { mergeComponentResults, noneResult, splitResultByComponents, type ComponentResult } from "./mergeResults";
 import { partitionSnapshot, type SolverComponent } from "./partition";
@@ -54,6 +65,16 @@ export interface SolveHostState {
   /** `null` only before the very first `submit()` call has ever resolved. */
   readonly result: SolveResult | null;
   readonly staleness: SolveStaleness;
+  /**
+   * Job 024: the latest Full-mode progress callback relayed from the
+   * active worker for the CURRENTLY in-flight request, or `null` when
+   * there's nothing in flight (before the first progress message arrives,
+   * after a result/error lands, or after an explicit `stop()`). Always
+   * `null` for None/Manual/Basic mode — only `"full"` ever populates it.
+   * `SolveStatusIndicator.tsx` reads this to render e.g. "resolving
+   * splitter groups: 12/47".
+   */
+  readonly fullProgress: FullProgressInfo | null;
 }
 
 export interface SolveSchedulerOptions {
@@ -83,13 +104,26 @@ export interface SolveScheduler {
    */
   submit(snapshot: SolverSnapshot, mode: SolverMode): void;
   getState(): SolveHostState;
+  /**
+   * Job 024: the STOP button's entry point — cancels the currently pending
+   * debounce (if any) and, if a request is genuinely in flight, sends a
+   * best-effort cooperative `cancel` message and then `terminate()`s the
+   * active worker (see this module's header for why `terminate()` is what
+   * actually matters). Leaves `result` exactly as it was (the last
+   * successfully computed answer, per PLAN.md §5 point 3's "show the last
+   * result... rather than blanking") and resets `staleness` to `"fresh"`/
+   * `fullProgress` to `null`, since nothing is pending anymore. A
+   * subsequent document edit behaves completely normally — `stop()` has no
+   * effect on future `submit()` calls.
+   */
+  stop(): void;
   /** Cancels any pending debounce/in-flight request and terminates both workers. Safe to call multiple times. */
   dispose(): void;
 }
 
 const DEFAULT_DEBOUNCE_MS = 150;
 
-const SUPPORTED_MODES = new Set<SolverMode>(["none", "manual", "basic"]);
+const SUPPORTED_MODES = new Set<SolverMode>(["none", "manual", "basic", "full"]);
 
 export function createSolveScheduler(options: SolveSchedulerOptions): SolveScheduler {
   const { createWorker, debounceMs = DEFAULT_DEBOUNCE_MS, onStateChange, onCancel, onDispatch } = options;
@@ -99,6 +133,7 @@ export function createSolveScheduler(options: SolveSchedulerOptions): SolveSched
 
   let lastResult: SolveResult | null = null;
   let staleness: SolveStaleness = "fresh";
+  let fullProgress: FullProgressInfo | null = null;
 
   let pendingSubmission: { snapshot: SolverSnapshot; mode: SolverMode } | null = null;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -110,7 +145,11 @@ export function createSolveScheduler(options: SolveSchedulerOptions): SolveSched
   let activeRequestId = -1;
   let disposed = false;
 
-  function setState(next: { result?: SolveResult | null; staleness?: SolveStaleness }): void {
+  function setState(next: {
+    result?: SolveResult | null;
+    staleness?: SolveStaleness;
+    fullProgress?: FullProgressInfo | null;
+  }): void {
     let changed = false;
     if ("result" in next && next.result !== undefined && next.result !== lastResult) {
       lastResult = next.result;
@@ -120,7 +159,11 @@ export function createSolveScheduler(options: SolveSchedulerOptions): SolveSched
       staleness = next.staleness;
       changed = true;
     }
-    if (changed) onStateChange({ result: lastResult, staleness });
+    if ("fullProgress" in next && next.fullProgress !== undefined && next.fullProgress !== fullProgress) {
+      fullProgress = next.fullProgress;
+      changed = true;
+    }
+    if (changed) onStateChange({ result: lastResult, staleness, fullProgress });
   }
 
   function submit(snapshot: SolverSnapshot, mode: SolverMode): void {
@@ -142,7 +185,7 @@ export function createSolveScheduler(options: SolveSchedulerOptions): SolveSched
       // None is O(1) and touches no graph state at all (matches
       // `solveNone()`'s own contract) — delivered synchronously, no
       // debounce, no worker round trip.
-      setState({ result: noneResult(), staleness: "fresh" });
+      setState({ result: noneResult(), staleness: "fresh", fullProgress: null });
       return;
     }
 
@@ -185,8 +228,22 @@ export function createSolveScheduler(options: SolveSchedulerOptions): SolveSched
 
     const worker = acquireWorkerForNewRequest();
     activeBusy = true;
+    setState({ fullProgress: null });
 
     worker.onmessage = (event) => {
+      const message = event.data;
+
+      // Job 024: a progress relay doesn't complete the request — the
+      // worker is still busy, keep listening for the real result/error.
+      // Guarded by the same `requestId` check as everything else below (a
+      // progress message for an already-superseded request is a harmless
+      // no-op, same as `protocol.ts`'s `CancelMessage` doc comment notes
+      // for the reverse direction).
+      if (message.type === "progress") {
+        if (requestId === activeRequestId) setState({ fullProgress: message.info });
+        return;
+      }
+
       // Guards a theoretical race between `postMessage` and `terminate`
       // (e.g. a message already queued in the event loop before
       // `terminate()` runs) — belt-and-braces on top of the real
@@ -196,7 +253,6 @@ export function createSolveScheduler(options: SolveSchedulerOptions): SolveSched
       if (requestId !== activeRequestId) return;
       activeBusy = false;
 
-      const message = event.data;
       if (message.type === "error") {
         // `solve()` never throws (Job 017's guarantee) — this branch exists
         // for a hypothetical worker/messaging failure, not an expected
@@ -204,7 +260,7 @@ export function createSolveScheduler(options: SolveSchedulerOptions): SolveSched
         // edit is already queued) result rather than discarding it for a
         // transport error.
         console.error("[solverWorker] solve request failed:", message.message);
-        if (!pendingSubmission) setState({ staleness: "fresh" });
+        if (!pendingSubmission) setState({ staleness: "fresh", fullProgress: null });
         return;
       }
 
@@ -231,6 +287,7 @@ export function createSolveScheduler(options: SolveSchedulerOptions): SolveSched
       // real progress but not yet final, so stay greyed rather than
       // flashing "fresh" for one tick.
       staleness: pendingSubmission ? "stale-recomputing" : "fresh",
+      fullProgress: null,
     });
   }
 
@@ -242,7 +299,10 @@ export function createSolveScheduler(options: SolveSchedulerOptions): SolveSched
     }
     if (activeWorker && activeBusy) {
       // Real cancellation: stop the wasted in-flight work outright rather
-      // than merely ignoring its eventual result.
+      // than merely ignoring its eventual result. The best-effort
+      // cooperative `cancel` message (Job 024) is sent first for the same
+      // reason `stop()` sends one — see this module's header.
+      activeWorker.postMessage({ type: "cancel", requestId: activeRequestId });
       activeWorker.terminate();
       onCancel?.();
     }
@@ -253,7 +313,33 @@ export function createSolveScheduler(options: SolveSchedulerOptions): SolveSched
   }
 
   function getState(): SolveHostState {
-    return { result: lastResult, staleness };
+    return { result: lastResult, staleness, fullProgress };
+  }
+
+  function stop(): void {
+    if (disposed) return;
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    pendingSubmission = null;
+
+    if (activeWorker && activeBusy) {
+      // Best-effort cooperative cancel first (see this module's header and
+      // `protocol.ts`'s `CancelMessage` doc comment for why this alone
+      // isn't sufficient), then the real, verified stop.
+      activeWorker.postMessage({ type: "cancel", requestId: activeRequestId });
+      activeWorker.terminate();
+      onCancel?.();
+      // Promote the already-warm spare immediately, mirroring
+      // `acquireWorkerForNewRequest`'s own behavior, so the NEXT `submit()`
+      // isn't stuck re-paying a cold boot just because the user hit STOP.
+      activeWorker = spareWorker ?? createWorker();
+      spareWorker = createWorker();
+      activeBusy = false;
+    }
+
+    setState({ staleness: "fresh", fullProgress: null });
   }
 
   function dispose(): void {
@@ -269,5 +355,5 @@ export function createSolveScheduler(options: SolveSchedulerOptions): SolveSched
     spareWorker = null;
   }
 
-  return { submit, getState, dispose };
+  return { submit, getState, stop, dispose };
 }

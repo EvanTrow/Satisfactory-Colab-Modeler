@@ -1,7 +1,8 @@
-import { addContainer, addEdge, addNode, createDocument, type SfmDocument } from "@scm/ydoc";
+import { addContainer, addEdge, addNode, createDocument, setPriorityOrder, type SfmDocument } from "@scm/ydoc";
 import { describe, expect, it } from "vitest";
 
 import { buildSolverSnapshot } from "./buildSnapshot";
+import { encodePriorityOrder } from "./splurgerPassthrough";
 
 function makeRecipeNode(
   sfmDoc: SfmDocument,
@@ -159,5 +160,134 @@ describe("buildSolverSnapshot", () => {
     const snapshot = buildSolverSnapshot(sfmDoc);
     expect(snapshot.nodes.map((n) => n.id).sort()).toEqual([a.id, b.id].sort());
     expect(snapshot.edges).toHaveLength(1);
+  });
+
+  describe("Job 024: Splurger pass-through", () => {
+    function makeSplurger(sfmDoc: SfmDocument, containerId: string) {
+      return addNode(sfmDoc, {
+        containerId,
+        kind: "splurger",
+        recipe: null,
+        machine: null,
+        x: 0,
+        y: 0,
+        title: "Splurger",
+        color: "#000",
+        limit: null,
+        limitMode: "machines",
+        clock: null,
+        autoRound: false,
+        shards: 0,
+        purity: null,
+        beltTier: null,
+        storageMode: null,
+      });
+    }
+
+    it("never turns a Splurger itself into a SolverNode", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      const splurger = makeSplurger(sfmDoc, root);
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      expect(snapshot.nodes.some((n) => n.id === splurger.id)).toBe(false);
+    });
+
+    it("rewrites a 1-input/N-output Splurger into direct recipe-to-recipe edges carrying the assigned tier", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+
+      const producer = makeRecipeNode(sfmDoc, root, { title: "Producer" });
+      const consumerA = makeRecipeNode(sfmDoc, root, { title: "ConsumerA" });
+      const consumerB = makeRecipeNode(sfmDoc, root, { title: "ConsumerB" });
+      const splurger = makeSplurger(sfmDoc, root);
+
+      const inEdge = addEdge(sfmDoc, {
+        containerId: root,
+        part: "Iron Ingot",
+        fromNode: producer.id,
+        fromPort: "out:Iron Ingot",
+        toNode: splurger.id,
+        toPort: "in:*",
+        style: null,
+        labelPos: null,
+      });
+      const outA = addEdge(sfmDoc, {
+        containerId: root,
+        part: "Iron Ingot",
+        fromNode: splurger.id,
+        fromPort: "out:*",
+        toNode: consumerA.id,
+        toPort: "in:Iron Ingot",
+        style: null,
+        labelPos: null,
+      });
+      const outB = addEdge(sfmDoc, {
+        containerId: root,
+        part: "Iron Ingot",
+        fromNode: splurger.id,
+        fromPort: "out:*",
+        toNode: consumerB.id,
+        toPort: "in:Iron Ingot",
+        style: null,
+        labelPos: null,
+      });
+      setPriorityOrder(sfmDoc, splurger.id, encodePriorityOrder({ top: [outA.id], bottom: [outB.id] }));
+
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      // Producer, ConsumerA, ConsumerB only — never the Splurger itself.
+      expect(snapshot.nodes.map((n) => n.id).sort()).toEqual([consumerA.id, consumerB.id, producer.id].sort());
+      expect(snapshot.edges).toHaveLength(2);
+
+      const toA = snapshot.edges.find((e) => e.toNode === consumerA.id)!;
+      expect(toA).toMatchObject({ fromNode: producer.id, toNode: consumerA.id, part: "Iron Ingot", priorityTier: "top" });
+      const toB = snapshot.edges.find((e) => e.toNode === consumerB.id)!;
+      expect(toB).toMatchObject({ fromNode: producer.id, toNode: consumerB.id, part: "Iron Ingot", priorityTier: "bottom" });
+
+      // Sanity: the original edges into/out of the Splurger never themselves
+      // survive into the snapshot (their endpoints aren't both recipe nodes).
+      expect(snapshot.edges.some((e) => e.id === inEdge.id || e.id === outA.id || e.id === outB.id)).toBe(false);
+    });
+
+    it("excludes a multi-input/multi-output Splurger's edges from the snapshot entirely rather than guessing", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+
+      const producerA = makeRecipeNode(sfmDoc, root, { title: "ProducerA" });
+      const producerB = makeRecipeNode(sfmDoc, root, { title: "ProducerB" });
+      const consumerA = makeRecipeNode(sfmDoc, root, { title: "ConsumerA" });
+      const consumerB = makeRecipeNode(sfmDoc, root, { title: "ConsumerB" });
+      const splurger = makeSplurger(sfmDoc, root);
+
+      for (const producer of [producerA, producerB]) {
+        addEdge(sfmDoc, {
+          containerId: root,
+          part: "Iron Ingot",
+          fromNode: producer.id,
+          fromPort: "out:Iron Ingot",
+          toNode: splurger.id,
+          toPort: "in:*",
+          style: null,
+          labelPos: null,
+        });
+      }
+      for (const consumer of [consumerA, consumerB]) {
+        addEdge(sfmDoc, {
+          containerId: root,
+          part: "Iron Ingot",
+          fromNode: splurger.id,
+          fromPort: "out:*",
+          toNode: consumer.id,
+          toPort: "in:Iron Ingot",
+          style: null,
+          labelPos: null,
+        });
+      }
+
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      expect(snapshot.edges).toHaveLength(0);
+    });
   });
 });

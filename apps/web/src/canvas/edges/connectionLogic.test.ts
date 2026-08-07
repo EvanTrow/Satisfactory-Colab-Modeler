@@ -1,7 +1,14 @@
 import { addContainer, addNode, addWaypoint, createDocument, getEdge, listEdges, moveNode, type SfmDocument } from "@scm/ydoc";
 import { describe, expect, it } from "vitest";
 
-import { connectPorts, isValidPortConnection, parsePortHandleId, reconnectEdge, resolveEdgeEndpoints } from "./connectionLogic";
+import {
+  WILDCARD_PART,
+  connectPorts,
+  isValidPortConnection,
+  parsePortHandleId,
+  reconnectEdge,
+  resolveEdgeEndpoints,
+} from "./connectionLogic";
 
 function makeDoc(): { sfmDoc: SfmDocument; containerId: string; nodeA: string; nodeB: string; nodeC: string } {
   const sfmDoc = createDocument();
@@ -112,6 +119,52 @@ describe("resolveEdgeEndpoints", () => {
   it("rejects a missing node id", () => {
     expect(
       resolveEdgeEndpoints({ source: null, sourceHandle: "out:Iron Plate", target: "n2", targetHandle: "in:Iron Plate" }),
+    ).toBeNull();
+  });
+
+  // Job 024: a Splurger's generic `in:*`/`out:*` handles (no fixed recipe,
+  // so no fixed part list) defer to whichever real part is on the other
+  // end — see `WILDCARD_PART`'s doc comment.
+  it("resolves a wildcard output handle against a concrete input part", () => {
+    const resolved = resolveEdgeEndpoints({
+      source: "splurger1",
+      sourceHandle: `out:${WILDCARD_PART}`,
+      target: "n2",
+      targetHandle: "in:Iron Plate",
+    });
+    expect(resolved).toEqual({
+      fromNode: "splurger1",
+      fromPort: `out:${WILDCARD_PART}`,
+      toNode: "n2",
+      toPort: "in:Iron Plate",
+      part: "Iron Plate",
+    });
+  });
+
+  it("resolves a concrete output part against a wildcard input handle", () => {
+    const resolved = resolveEdgeEndpoints({
+      source: "n1",
+      sourceHandle: "out:Iron Plate",
+      target: "splurger1",
+      targetHandle: `in:${WILDCARD_PART}`,
+    });
+    expect(resolved).toEqual({
+      fromNode: "n1",
+      fromPort: "out:Iron Plate",
+      toNode: "splurger1",
+      toPort: `in:${WILDCARD_PART}`,
+      part: "Iron Plate",
+    });
+  });
+
+  it("rejects two wildcard handles (no real part to assign — Splurger-to-Splurger chaining isn't a supported shape)", () => {
+    expect(
+      resolveEdgeEndpoints({
+        source: "splurger1",
+        sourceHandle: `out:${WILDCARD_PART}`,
+        target: "splurger2",
+        targetHandle: `in:${WILDCARD_PART}`,
+      }),
     ).toBeNull();
   });
 });

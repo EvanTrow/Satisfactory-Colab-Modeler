@@ -51,6 +51,35 @@ export interface ResolvedEndpoints {
 }
 
 /**
+ * Job 024: the part name a Splurger's two generic handles (`in:*`/`out:*` —
+ * see `canvas/nodes/SplurgerNode.tsx`) use. A Splurger has no recipe, so it
+ * has no fixed part list to build real `${dir}:${part}` handles from ahead
+ * of time the way `RecipeNode.tsx`'s `PartRow` does — its two handles accept
+ * ANY part, and the connection's real part name comes from whichever real
+ * recipe port is on the other end. See `reconcilePart` below for exactly how
+ * this interacts with the existing exact-part-match rule.
+ */
+export const WILDCARD_PART = "*";
+
+/**
+ * Job 024: reconciles two ports' part names for a connection, with one new
+ * case beyond Job 011's original exact-match rule — a wildcard
+ * (`WILDCARD_PART`) side defers to the other side's real part name. Two
+ * wildcard sides (a direct Splurger-to-Splurger wire, with neither end
+ * anchored to a real part) has no real part to assign and is rejected —
+ * `EdgeRecord.part` is a required, non-nullable string, so there is no
+ * "unknown part" value to fall back to; this also matches this job's
+ * documented decision that chained/adjacent Splurgers aren't a supported
+ * shape (see `workers/splurgerPassthrough.ts`'s header).
+ */
+function reconcilePart(a: string, b: string): string | null {
+  if (a === b) return a === WILDCARD_PART ? null : a;
+  if (a === WILDCARD_PART) return b;
+  if (b === WILDCARD_PART) return a;
+  return null;
+}
+
+/**
  * Normalizes a React-Flow-`Connection`-shaped object into `@scm/ydoc`'s
  * directional `fromNode/fromPort -> toNode/toPort` edge endpoints, with
  * `fromPort` always the `"out:"` handle and `toPort` always the `"in:"`
@@ -78,7 +107,8 @@ export function resolveEdgeEndpoints(connection: ConnectionLike): ResolvedEndpoi
   const sourceInfo = parsePortHandleId(connection.sourceHandle);
   const targetInfo = parsePortHandleId(connection.targetHandle);
   if (!sourceInfo || !targetInfo) return null;
-  if (sourceInfo.part !== targetInfo.part) return null;
+  const part = reconcilePart(sourceInfo.part, targetInfo.part);
+  if (part === null) return null;
 
   if (sourceInfo.direction === "out" && targetInfo.direction === "in") {
     return {
@@ -86,7 +116,7 @@ export function resolveEdgeEndpoints(connection: ConnectionLike): ResolvedEndpoi
       fromPort: connection.sourceHandle as string,
       toNode: connection.target,
       toPort: connection.targetHandle as string,
-      part: sourceInfo.part,
+      part,
     };
   }
   if (sourceInfo.direction === "in" && targetInfo.direction === "out") {
@@ -95,7 +125,7 @@ export function resolveEdgeEndpoints(connection: ConnectionLike): ResolvedEndpoi
       fromPort: connection.targetHandle as string,
       toNode: connection.source,
       toPort: connection.sourceHandle as string,
-      part: sourceInfo.part,
+      part,
     };
   }
   // Both "in" or both "out" — not a valid input/output pair (shouldn't
