@@ -11,6 +11,10 @@
 
   "projects.heading": "Your projects",
   "projects.new": "New project",
+  "projects.newProjectHeading": "Name your project",
+  "projects.projectNameLabel": "Project name",
+  "projects.projectNamePlaceholder": "Untitled Factory",
+  "projects.create": "Create",
   "projects.creating": "Creating…",
   "projects.loading": "Loading projects…",
   "projects.loadError": "Couldn't load projects: {{message}}",
@@ -38,6 +42,12 @@
 
   "locale.label": "Locale",
   "locale.switcherTitle": "Change display language",
+
+  "settingsPage.navLabel": "Settings",
+  "settingsPage.heading": "Settings",
+  "settingsPage.back": "Back",
+  "settingsPage.language": "Language",
+  "settingsPage.languageDescription": "Choose the display language for the app's interface.",
 
   "canvas.loadingProject": "Loading project…",
   "canvas.loadProjectError": "Couldn't load this project: {{message}}",

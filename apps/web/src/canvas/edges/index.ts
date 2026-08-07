@@ -13,7 +13,7 @@ export {
 } from "./connectionLogic";
 export { buildPolyline, nearestSegmentIndex, pointAtT, polylineLength, toPathD, type Point } from "./edgeGeometry";
 export { useConnectionHandlers, type ConnectionHandlers } from "./useConnectionHandlers";
-// Job 027: connection style rendering (Direct/Curves/Horizontal/Vertical).
+// Job 027: connection style rendering (Direct/Curves/Horizontal).
 export {
   buildStyledPath,
   buildStyledPathD,

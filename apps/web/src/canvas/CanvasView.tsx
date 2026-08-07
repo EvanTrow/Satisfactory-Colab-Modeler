@@ -45,7 +45,6 @@ import {
 import { SummaryPanel } from "../panels";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
-import { DevNodeTools } from "./DevNodeTools";
 import { SettingsMenu } from "./SettingsMenu";
 import { SolverResultContext } from "./SolverResultContext";
 import { type ClickPoint, isDoubleClick } from "./doubleClick";
@@ -80,7 +79,6 @@ import { useSolver } from "../workers";
 import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
 import { SolveStatusIndicator } from "./SolveStatusIndicator";
 import { SplurgerNode } from "./nodes";
-import { LocaleSwitcher } from "../i18n";
 
 // Module-level constants (not created inside the component) so React Flow
 // never sees a new `nodeTypes`/`edgeTypes` object identity on every render
@@ -447,7 +445,6 @@ function CanvasViewReady({
               </button>
               {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. Job 019 added the solver-mode/number-format sections. */}
               <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
-              <LocaleSwitcher />
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
               {/* Job 016: version history + restore, and the live autosave-status indicator (replaces Job 015's static "autosaves ~1.5s..." placeholder text). */}
               <VersionPanel projectId={projectId} role={role} onRestored={onRestored} />
@@ -705,7 +702,6 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
           it doubles as a real navigation aid, not just a static overview.
         */}
         {showMinimap && <MiniMap pannable zoomable />}
-        <DevNodeTools />
       </ReactFlow>
       {/* Job 021: other collaborators' live cursors, container-scoped to `containerId` — see `PresenceCursors.tsx`'s header comment for the coordinate-space handling. A plain sibling of `<ReactFlow>` (not a child), same layering approach as `MarqueeOverlay`/`RecipeChooser` below. */}
       <PresenceCursors awareness={awareness} containerId={containerId} />

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 
+import { useFocusTrap } from "../a11y/useFocusTrap";
 import {
   ApiError,
   createProject,
@@ -45,6 +46,16 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  // New-project naming dialog (asked up front rather than silently creating
+  // an "My Factory" and requiring a separate rename afterward).
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [newProjectTitle, setNewProjectTitle] = useState("");
+  const createDialogRef = useRef<HTMLDivElement>(null);
+  const newProjectInputRef = useRef<HTMLInputElement>(null);
+  useFocusTrap(createDialogRef, showCreateDialog, {
+    onClose: () => setShowCreateDialog(false),
+    initialFocusRef: newProjectInputRef,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -63,12 +74,24 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
     };
   }, []);
 
+  function openCreateDialog() {
+    setActionError(null);
+    setNewProjectTitle("");
+    setShowCreateDialog(true);
+  }
+
+  function closeCreateDialog() {
+    setShowCreateDialog(false);
+    setNewProjectTitle("");
+  }
+
   async function handleCreate() {
     setActionError(null);
     setCreating(true);
     try {
-      const project = await createProject();
+      const project = await createProject(newProjectTitle.trim() || undefined);
       setProjects((prev) => [project, ...prev]);
+      closeCreateDialog();
     } catch (err) {
       setActionError(describeError(err, t));
     } finally {
@@ -146,13 +169,64 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
         <h2 className="text-xl font-semibold tracking-tight">{t("projects.heading")}</h2>
         <button
           type="button"
-          onClick={handleCreate}
-          disabled={creating}
+          onClick={openCreateDialog}
           className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
         >
-          {creating ? t("projects.creating") : t("projects.new")}
+          {t("projects.new")}
         </button>
       </div>
+
+      {showCreateDialog && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/20"
+          onMouseDown={closeCreateDialog}
+        >
+          <div
+            ref={createDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("projects.newProjectHeading")}
+            className="w-full max-w-sm rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)] p-4 shadow-[var(--shadow-modal)]"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h3 className="mb-3 text-sm font-semibold">{t("projects.newProjectHeading")}</h3>
+            <label
+              className="mb-1 block text-xs text-[var(--text-muted)]"
+              htmlFor="new-project-title"
+            >
+              {t("projects.projectNameLabel")}
+            </label>
+            <input
+              id="new-project-title"
+              ref={newProjectInputRef}
+              value={newProjectTitle}
+              onChange={(e) => setNewProjectTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleCreate();
+              }}
+              placeholder={t("projects.projectNamePlaceholder")}
+              className="mb-4 w-full rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeCreateDialog}
+                className="rounded-md px-3 py-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              >
+                {t("projects.cancel")}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCreate()}
+                disabled={creating}
+                className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
+              >
+                {creating ? t("projects.creating") : t("projects.create")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {notice && (
         <div className="mb-4 rounded-md border border-[var(--outpost-border)] bg-[var(--outpost-soft)] px-3 py-2 text-sm text-[var(--outpost)]">
@@ -168,9 +242,13 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
         </div>
       )}
 
-      {loadState.status === "loading" && <p className="text-[var(--text-muted)]">{t("projects.loading")}</p>}
+      {loadState.status === "loading" && (
+        <p className="text-[var(--text-muted)]">{t("projects.loading")}</p>
+      )}
       {loadState.status === "error" && (
-        <p className="text-[var(--danger)]">{t("projects.loadError", { message: loadState.message })}</p>
+        <p className="text-[var(--danger)]">
+          {t("projects.loadError", { message: loadState.message })}
+        </p>
       )}
 
       {loadState.status === "ready" && projects.length === 0 && (

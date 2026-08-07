@@ -7,7 +7,7 @@
 // Renders a `[source, ...waypoints, target]` polyline (multi-segment
 // routing) through `connectionStyle.ts`'s `buildStyledPathD` — Job 027 wires
 // up PLAN.md §3's later-phase "connection style options"
-// (Direct/Curves/Horizontal/Vertical, i.e. straight/bezier/step/smoothstep)
+// (Direct/Curves/Horizontal, i.e. straight/bezier/step)
 // on top of the same point sequence this job (011) originally rendered as a
 // plain straight-segment path. Plus:
 //   - one small draggable marker per waypoint, and
@@ -83,7 +83,7 @@ export const ConnectionEdge = memo(function ConnectionEdge({
   const { screenToFlowPosition } = useReactFlow();
   // Job 027: document-wide default + per-edge override (`record.style`) —
   // see `connectionStyle.ts`'s header for the precedence rule and the
-  // Direct/Curves/Horizontal/Vertical <-> straight/bezier/step/smoothstep
+  // Direct/Curves/Horizontal <-> straight/bezier/step
   // name mapping. Subscribing per-edge-instance mirrors `RecipeNode.tsx`'s
   // own `useSettings(sfmDoc)` call (Job 019's established precedent for
   // "each canvas element reads live settings itself"), not a new pattern.

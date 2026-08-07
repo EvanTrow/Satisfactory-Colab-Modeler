@@ -17,27 +17,27 @@ const FOUR_POINTS = [SOURCE, WAYPOINT_1, WAYPOINT_2, TARGET];
 describe("resolveConnectionStyle", () => {
   it("prefers a valid per-edge override over the document default", () => {
     expect(resolveConnectionStyle("bezier", "straight")).toBe("bezier");
-    expect(resolveConnectionStyle("step", "smoothstep")).toBe("step");
+    expect(resolveConnectionStyle("step", "bezier")).toBe("step");
   });
 
   it("falls back to the document default for null/undefined/unrecognized", () => {
     expect(resolveConnectionStyle(null, "bezier")).toBe("bezier");
     expect(resolveConnectionStyle(undefined, "step")).toBe("step");
     expect(resolveConnectionStyle("not-a-real-style", "straight")).toBe("straight");
-    expect(resolveConnectionStyle("", "smoothstep")).toBe("smoothstep");
+    expect(resolveConnectionStyle("", "bezier")).toBe("bezier");
+    // The removed "Vertical"/smoothstep style is no longer recognized —
+    // an edge still carrying that legacy value falls back to the default.
+    expect(resolveConnectionStyle("smoothstep", "straight")).toBe("straight");
   });
 });
 
 describe("CONNECTION_STYLE_OPTIONS", () => {
-  it("maps all four PLAN.md-facing labels to the schema's four enum values, 1:1", () => {
-    expect(CONNECTION_STYLE_OPTIONS).toHaveLength(4);
+  it("maps all three PLAN.md-facing labels to the schema's three enum values, 1:1", () => {
+    expect(CONNECTION_STYLE_OPTIONS).toHaveLength(3);
     const values = CONNECTION_STYLE_OPTIONS.map((o) => o.value);
-    expect(new Set(values)).toEqual(new Set(["straight", "bezier", "step", "smoothstep"]));
-    // Job 028: labels are now i18n keys (looked up in the original string
-    // table's `translation` namespace — see `connectionStyle.ts`'s header
-    // comment on `labelKey`) rather than literal English strings.
+    expect(new Set(values)).toEqual(new Set(["straight", "bezier", "step"]));
     const labelKeys = CONNECTION_STYLE_OPTIONS.map((o) => o.labelKey);
-    expect(new Set(labelKeys)).toEqual(new Set(["DIRECT", "CURVES", "HORIZONTAL", "VERTICAL"]));
+    expect(new Set(labelKeys)).toEqual(new Set(["DIRECT", "CURVES", "HORIZONTAL"]));
   });
 });
 
@@ -48,7 +48,7 @@ describe("buildStyledPath / buildStyledPathD — degenerate inputs", () => {
   });
 
   it("returns a bare moveto for a single point, regardless of style", () => {
-    for (const style of ["straight", "bezier", "step", "smoothstep"] as const) {
+    for (const style of ["straight", "bezier", "step"] as const) {
       expect(buildStyledPath([SOURCE], style)).toEqual([{ type: "M", point: SOURCE }]);
     }
   });
@@ -58,15 +58,15 @@ describe("buildStyledPath / buildStyledPathD — degenerate inputs", () => {
  * The core "remains compatible with existing waypoints" invariant (Job 011):
  * every ORIGINAL point (source, every waypoint, target — never a synthetic
  * routing corner) must appear, in order, as some command's own anchor
- * (`.point`), for every one of the four styles. This is what "correctly
+ * (`.point`), for every one of the three styles. This is what "correctly
  * routes through existing waypoints" concretely means and is checkable.
  */
-function anchors(style: "straight" | "bezier" | "step" | "smoothstep"): Point[] {
+function anchors(style: "straight" | "bezier" | "step"): Point[] {
   return buildStyledPath(FOUR_POINTS, style).map((cmd) => cmd.point);
 }
 
 describe("every style routes through every original point, in order", () => {
-  it.each(["straight", "bezier", "step", "smoothstep"] as const)("%s", (style) => {
+  it.each(["straight", "bezier", "step"] as const)("%s", (style) => {
     const points = anchors(style);
     // Each of FOUR_POINTS must appear, and in the same relative order —
     // i.e. FOUR_POINTS is a subsequence of the command anchors.
@@ -104,6 +104,43 @@ describe("bezier", () => {
   it("produces a different path than straight for a genuinely bent polyline", () => {
     expect(buildStyledPathD(FOUR_POINTS, "bezier")).not.toBe(buildStyledPathD(FOUR_POINTS, "straight"));
   });
+
+  /**
+   * Regression test for the reported "Curves looks identical to Direct"
+   * bug: a fresh connection with no waypoints (exactly two points) used to
+   * degenerate to collinear control points (Catmull-Rom has nothing to
+   * derive curvature from with only two real points), rendering the same
+   * as a straight line despite emitting a `C` command. `twoPointBezier`
+   * fixes this by bowing the curve into an S-shape instead.
+   */
+  it("bows into a genuine curve for the plain 2-point (no-waypoint) case", () => {
+    const a: Point = { x: 0, y: 0 };
+    const b: Point = { x: 200, y: 60 };
+    const commands = buildStyledPath([a, b], "bezier");
+    expect(commands).toEqual([
+      { type: "M", point: a },
+      {
+        type: "C",
+        c1: { x: 100, y: 0 },
+        c2: { x: 100, y: 60 },
+        point: b,
+      },
+    ]);
+    // The control points must NOT be collinear with a/b — that's exactly
+    // what made this render identically to "straight".
+    const { c1, c2 } = commands[1] as { c1: Point; c2: Point };
+    expect(c1.y).not.toBe(c2.y);
+    expect(buildStyledPathD([a, b], "bezier")).not.toBe(buildStyledPathD([a, b], "straight"));
+  });
+
+  it("bows around the vertical axis when the segment is taller than it is wide", () => {
+    const a: Point = { x: 0, y: 0 };
+    const b: Point = { x: 40, y: 300 };
+    const commands = buildStyledPath([a, b], "bezier");
+    const { c1, c2 } = commands[1] as { c1: Point; c2: Point };
+    expect(c1).toEqual({ x: 0, y: 150 });
+    expect(c2).toEqual({ x: 40, y: 150 });
+  });
 });
 
 describe("step (Horizontal)", () => {
@@ -128,35 +165,11 @@ describe("step (Horizontal)", () => {
   });
 });
 
-describe("smoothstep (Vertical)", () => {
-  it("bends around a horizontal midline — distinct axis from step", () => {
-    const a = SOURCE;
-    const b = WAYPOINT_1;
-    // Radius may pull the corner's neighbors in, but the corner ITSELF
-    // (the `Q` control point) is still the sharp bend at the horizontal
-    // midline, unlike step's vertical-midline bend.
-    const commands = buildStyledPath([a, b], "smoothstep");
-    const qCommands = commands.filter((c) => c.type === "Q");
-    expect(qCommands).toHaveLength(2);
-    expect(qCommands[0]).toMatchObject({ c: { x: a.x, y: (a.y + b.y) / 2 } });
-    expect(qCommands[1]).toMatchObject({ c: { x: b.x, y: (a.y + b.y) / 2 } });
-  });
-
-  it("uses Q (rounded corners) unlike step's sharp L-only corners", () => {
-    const commands = buildStyledPath(FOUR_POINTS, "smoothstep");
-    expect(commands.some((c) => c.type === "Q")).toBe(true);
-  });
-
-  it("renders a visibly different path string than step for the same points", () => {
-    expect(buildStyledPathD(FOUR_POINTS, "smoothstep")).not.toBe(buildStyledPathD(FOUR_POINTS, "step"));
-  });
-});
-
-describe("all four styles render distinctly for the same input", () => {
-  it("produces four different path strings", () => {
-    const paths = (["straight", "bezier", "step", "smoothstep"] as const).map((style) =>
+describe("all three styles render distinctly for the same input", () => {
+  it("produces three different path strings", () => {
+    const paths = (["straight", "bezier", "step"] as const).map((style) =>
       buildStyledPathD(FOUR_POINTS, style),
     );
-    expect(new Set(paths).size).toBe(4);
+    expect(new Set(paths).size).toBe(3);
   });
 });

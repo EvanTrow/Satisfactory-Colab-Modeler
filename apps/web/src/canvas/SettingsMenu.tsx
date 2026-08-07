@@ -31,7 +31,6 @@ import { updateSettings, type NumberFormats, type Settings, type SolverMode } fr
 import type { SfmDocument } from "@scm/ydoc";
 
 import { useFocusTrap } from "../a11y";
-import { LocaleSwitcher } from "../i18n";
 import { CONNECTION_STYLE_OPTIONS } from "./edges";
 
 export interface SettingsMenuProps {
@@ -150,23 +149,7 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
             // without this line.
             onMouseDown={(event) => event.stopPropagation()}
           >
-            {/*
-              Job 028: locale preference — a browser/UI-level choice (like
-              `theme/useTheme.ts`'s dark/light toggle), not a per-document
-              CRDT `Settings` field, so `<LocaleSwitcher>` writes straight to
-              its own localStorage key rather than through `updateSettings`.
-              Placed first since it's the setting most likely to matter to a
-              non-English-reading user opening this menu for the first time.
-            */}
             <p className="mb-1 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-              {tRaw("LANGUAGE")}
-            </p>
-            <label className={rowClass}>
-              <span>{tRaw("LANGUAGE")}</span>
-              <LocaleSwitcher className={selectClass} />
-            </label>
-
-            <p className="mb-1 mt-3 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
               {t("settings.snapToGrid")}
             </p>
             <label className={rowClass}>
@@ -232,8 +215,8 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
               Job 027: `Settings.connectionStyle` — the document-wide
               default connection rendering (PLAN.md §3's later-phase
               "connection style options"). PLAN.md's own UI copy
-              (Direct/Curves/Horizontal/Vertical) differs from the schema's
-              React-Flow-native enum (straight/bezier/step/smoothstep) — see
+              (Direct/Curves/Horizontal) differs from the schema's
+              React-Flow-native enum (straight/bezier/step) — see
               `edges/connectionStyle.ts`'s header for the full reconciliation
               this job commits to; `CONNECTION_STYLE_OPTIONS` is the single
               place that mapping lives, so this dropdown and

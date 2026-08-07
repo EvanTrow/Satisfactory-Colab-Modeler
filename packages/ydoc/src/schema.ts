@@ -40,7 +40,7 @@ export type Meta = z.infer<typeof MetaSchema>;
 export const SolverModeSchema = z.enum(["none", "manual", "basic", "full"]);
 export type SolverMode = z.infer<typeof SolverModeSchema>;
 
-export const ConnectionStyleSchema = z.enum(["straight", "step", "smoothstep", "bezier"]);
+export const ConnectionStyleSchema = z.enum(["straight", "step", "bezier"]);
 export type ConnectionStyle = z.infer<typeof ConnectionStyleSchema>;
 
 export const PointSchema = z.object({

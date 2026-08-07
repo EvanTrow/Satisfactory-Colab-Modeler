@@ -44,26 +44,26 @@ export interface CreateDocumentOptions {
 
 const DEFAULT_META: Meta = {
   schemaVersion: CURRENT_SCHEMA_VERSION,
-  title: "Untitled Factory",
+  title: "My Factory",
   gameDataVersion: "",
 };
 
 const DEFAULT_SETTINGS: Settings = {
-  solverMode: "none",
+  solverMode: "full",
   inputMultiplier: 1,
   powerMultiplier: 1,
   spaceElevatorMultiplier: 1,
-  snapMachines: true,
+  snapMachines: false,
   gridMachine: { x: 100, y: 100 },
-  snapWaypoints: true,
+  snapWaypoints: false,
   gridWaypoint: { x: 50, y: 50 },
   numberFormats: {
     style: "decimal",
-    digits: 3,
+    digits: 2,
     rounding: "round",
     trimTrailingZeros: true,
   },
-  connectionStyle: "smoothstep",
+  connectionStyle: "bezier",
 };
 
 function setPlainFields(map: Y.Map<unknown>, values: Record<string, unknown>): void {

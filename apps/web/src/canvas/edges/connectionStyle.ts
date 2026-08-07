@@ -1,8 +1,6 @@
 // Job 027: connection style rendering — PLAN.md §3's "connection style
-// options (Direct/Curves/Horizontal/Vertical)", wired to `@scm/ydoc`'s
-// already-existing `Settings.connectionStyle`/`EdgeRecord.style` (Job 007's
-// schema, unused by any rendering code until this job — see Job 014's own
-// Handoff notes flagging both fields explicitly as this job's territory).
+// options (Direct/Curves/Horizontal)", wired to `@scm/ydoc`'s already-
+// existing `Settings.connectionStyle`/`EdgeRecord.style` (Job 007's schema).
 // Pure geometry, kept separate from `edgeGeometry.ts` (Job 011's straight-
 // polyline math, which this module reuses conceptually but not by import —
 // see below) so it's independently unit-testable without any DOM/React Flow
@@ -11,15 +9,14 @@
 // ---------------------------------------------------------------------------
 // Naming reconciliation — PLAN.md's UI copy vs. `@scm/ydoc`'s schema enum
 // ---------------------------------------------------------------------------
-// PLAN.md's own wording names four *user-facing* options — Direct / Curves /
-// Horizontal / Vertical — but `ConnectionStyleSchema`
-// (`packages/ydoc/src/schema.ts`) types the field as React-Flow-native
-// names: `"straight" | "step" | "smoothstep" | "bezier"`. Job 007 picked
-// those names to match `@xyflow/react`'s own edge-type vocabulary (a
-// sensible schema choice on its own), but never reconciled them against
-// PLAN.md's later "Later phases" UI wording — this job is the first to need
-// both at once, so here's the mapping this file (and `SettingsMenu.tsx`,
-// which shows the PLAN.md-facing labels) commits to:
+// PLAN.md's own wording names three *user-facing* options — Direct / Curves /
+// Horizontal — but `ConnectionStyleSchema` (`packages/ydoc/src/schema.ts`)
+// types the field as React-Flow-native names: `"straight" | "step" |
+// "bezier"`. The fourth original option ("Vertical" / `"smoothstep"`) was
+// removed by user request — it duplicated Horizontal's orthogonal-routing
+// shape with only the axis and corner-rounding differing, and wasn't worth
+// the extra option. Mapping this file (and `SettingsMenu.tsx`, which shows
+// the PLAN.md-facing labels) commits to:
 //
 //   Direct     -> "straight"    literal straight-line segments through
 //                                every waypoint — Job 011's original,
@@ -32,23 +29,6 @@
 //   Horizontal -> "step"        orthogonal (right-angle) routing whose
 //                                first and last legs out of each endpoint
 //                                are HORIZONTAL, sharp corners.
-//   Vertical   -> "smoothstep"  the same orthogonal routing shape, but
-//                                VERTICAL first/last legs, with corners
-//                                rounded (a small quadratic-Bezier cut) —
-//                                this is also what gives "smoothstep" a
-//                                visibly distinct look from "step" beyond
-//                                just the axis, matching its name.
-//
-// "step" vs. "smoothstep" in `@xyflow/react`'s own built-in edge types
-// differ ONLY by corner rounding, not by axis — this app's reinterpretation
-// (axis AND rounding both differ) is a deliberate, documented choice to get
-// four *visually and semantically distinct* options out of the schema's
-// four-name enum, rather than two pairs that only differ in one subtle
-// dimension. If a future job wants literal `@xyflow/react`-identical step/
-// smoothstep behavior instead, this is the one file to change — nothing
-// downstream (`ConnectionEdge.tsx`, `SettingsMenu.tsx`) depends on the
-// specific shape, only on `buildStyledPathD` producing *some* valid path
-// through every point.
 //
 // ---------------------------------------------------------------------------
 // Precedence: per-edge `EdgeRecord.style` vs. document-wide `Settings.connectionStyle`
@@ -84,10 +64,9 @@ export const CONNECTION_STYLE_OPTIONS: readonly { value: ConnectionStyleName; la
   { value: "straight", labelKey: "DIRECT" },
   { value: "bezier", labelKey: "CURVES" },
   { value: "step", labelKey: "HORIZONTAL" },
-  { value: "smoothstep", labelKey: "VERTICAL" },
 ];
 
-const KNOWN_STYLES: ReadonlySet<string> = new Set(["straight", "step", "smoothstep", "bezier"]);
+const KNOWN_STYLES: ReadonlySet<string> = new Set(["straight", "step", "bezier"]);
 
 /** The precedence rule described above — a per-edge override wins when it's a recognized style, else the document-wide default. */
 export function resolveConnectionStyle(
@@ -108,21 +87,29 @@ export type PathCommand =
   | { type: "C"; c1: Point; c2: Point; point: Point }
   | { type: "Q"; c: Point; point: Point };
 
-function distance(a: Point, b: Point): number {
-  return Math.hypot(b.x - a.x, b.y - a.y);
-}
-
-/** Point `dist` of the way from `from` toward `towards` (clamped so it never overshoots `towards`). */
-function pullBack(from: Point, towards: Point, dist: number): Point {
-  const total = distance(from, towards);
-  if (total === 0) return { x: from.x, y: from.y };
-  const t = Math.min(1, dist / total);
-  return { x: from.x + (towards.x - from.x) * t, y: from.y + (towards.y - from.y) * t };
-}
-
 function straightPath(points: readonly Point[]): PathCommand[] {
   const [first, ...rest] = points as [Point, ...Point[]];
   return [{ type: "M", point: first }, ...rest.map((point) => ({ type: "L" as const, point }))];
+}
+
+/**
+ * The common case: a fresh connection with no waypoints at all (exactly
+ * `[source, target]`). Catmull-Rom (below) has nothing to derive curvature
+ * from here — with only two real points, both of its "phantom" neighbor
+ * points collapse onto the source/target themselves, so all four control
+ * points end up collinear and the curve renders as a dead-straight line
+ * indistinguishable from "Direct" (the bug this fixes). Instead, bow the
+ * curve into the standard flowchart "S" shape: pull each control point to
+ * the midpoint of whichever axis dominates the segment, leaving the other
+ * axis untouched at its own endpoint.
+ */
+function twoPointBezier(a: Point, b: Point): PathCommand[] {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const horizontalDominant = Math.abs(dx) >= Math.abs(dy);
+  const c1: Point = horizontalDominant ? { x: a.x + dx / 2, y: a.y } : { x: a.x, y: a.y + dy / 2 };
+  const c2: Point = horizontalDominant ? { x: b.x - dx / 2, y: b.y } : { x: b.x, y: b.y - dy / 2 };
+  return [{ type: "M", point: a }, { type: "C", c1, c2, point: b }];
 }
 
 /**
@@ -134,11 +121,14 @@ function straightPath(points: readonly Point[]): PathCommand[] {
  * (the standard uniform-Catmull-Rom-to-Bezier conversion) — endpoints are
  * clamped by duplicating the first/last point rather than extrapolating
  * past them, so the curve doesn't overshoot outside the source/target
- * bounds at either end.
+ * bounds at either end. The plain 2-point case is delegated to
+ * `twoPointBezier` above, since this duplication degenerates fully (both
+ * ends at once) when there are no waypoints to anchor curvature to.
  */
 function bezierPath(points: readonly Point[]): PathCommand[] {
-  const commands: PathCommand[] = [{ type: "M", point: points[0]! }];
   const n = points.length;
+  if (n === 2) return twoPointBezier(points[0]!, points[1]!);
+  const commands: PathCommand[] = [{ type: "M", point: points[0]! }];
   for (let i = 0; i < n - 1; i++) {
     const p0 = points[Math.max(0, i - 1)]!;
     const p1 = points[i]!;
@@ -153,56 +143,24 @@ function bezierPath(points: readonly Point[]): PathCommand[] {
 
 /**
  * One right-angle "hop" from `a` to `b` via two auto-inserted corners at the
- * midline of whichever axis is NOT the dominant direction (`axis`
- * `"horizontal"` bends around a vertical midline at `(mid.x, a.y)` ->
- * `(mid.x, b.y)`; `"vertical"` bends around a horizontal midline). `a`
+ * midline of the horizontal axis (`(mid.x, a.y)` -> `(mid.x, b.y)`). `a`
  * itself is assumed already emitted by the caller (either the initial `M`,
  * or the previous hop's own terminal `L b`) — this function only appends
- * the corner(s) and the final `L point: b`, which is what guarantees every
+ * the two corners and the final `L point: b`, which is what guarantees every
  * REAL point in the original list (never just the synthetic corners) ends
- * up as some command's anchor, for every one of the four styles.
+ * up as some command's anchor.
  */
-function appendOrthogonalHop(
-  commands: PathCommand[],
-  a: Point,
-  b: Point,
-  axis: "horizontal" | "vertical",
-  rounded: boolean,
-): void {
+function appendOrthogonalHop(commands: PathCommand[], a: Point, b: Point): void {
   const midX = (a.x + b.x) / 2;
-  const midY = (a.y + b.y) / 2;
-  const corner1: Point = axis === "horizontal" ? { x: midX, y: a.y } : { x: a.x, y: midY };
-  const corner2: Point = axis === "horizontal" ? { x: midX, y: b.y } : { x: b.x, y: midY };
-
-  if (!rounded) {
-    commands.push({ type: "L", point: corner1 });
-    commands.push({ type: "L", point: corner2 });
-    commands.push({ type: "L", point: b });
-    return;
-  }
-
-  // A small rounded-corner cut at each of the two bends: pull back `radius`
-  // px along each adjacent segment and replace the sharp corner with a
-  // quadratic curve through it. `radius` is capped by HALF of every
-  // adjacent segment's own length so a short hop (e.g. two nearly-touching
-  // points) never produces overlapping/backwards control geometry.
-  const radius = Math.min(8, distance(a, corner1) / 2, distance(corner1, corner2) / 2, distance(corner2, b) / 2);
-  const preCorner1 = pullBack(corner1, a, radius);
-  const postCorner1 = pullBack(corner1, corner2, radius);
-  const preCorner2 = pullBack(corner2, corner1, radius);
-  const postCorner2 = pullBack(corner2, b, radius);
-
-  commands.push({ type: "L", point: preCorner1 });
-  commands.push({ type: "Q", c: corner1, point: postCorner1 });
-  commands.push({ type: "L", point: preCorner2 });
-  commands.push({ type: "Q", c: corner2, point: postCorner2 });
+  commands.push({ type: "L", point: { x: midX, y: a.y } });
+  commands.push({ type: "L", point: { x: midX, y: b.y } });
   commands.push({ type: "L", point: b });
 }
 
-function orthogonalPath(points: readonly Point[], axis: "horizontal" | "vertical", rounded: boolean): PathCommand[] {
+function orthogonalPath(points: readonly Point[]): PathCommand[] {
   const commands: PathCommand[] = [{ type: "M", point: points[0]! }];
   for (let i = 0; i < points.length - 1; i++) {
-    appendOrthogonalHop(commands, points[i]!, points[i + 1]!, axis, rounded);
+    appendOrthogonalHop(commands, points[i]!, points[i + 1]!);
   }
   return commands;
 }
@@ -224,9 +182,7 @@ export function buildStyledPath(points: readonly Point[], style: ConnectionStyle
     case "bezier":
       return bezierPath(points);
     case "step":
-      return orthogonalPath(points, "horizontal", false);
-    case "smoothstep":
-      return orthogonalPath(points, "vertical", true);
+      return orthogonalPath(points);
   }
 }
 

@@ -57,13 +57,13 @@ function setUp() {
 describe("settings mutations", () => {
   it("updateSettings patches top-level fields and leaves the rest untouched", () => {
     const { sfmDoc } = setUp();
-    expect(getSettings(sfmDoc).snapMachines).toBe(true);
-
-    const updated = updateSettings(sfmDoc, { snapMachines: false });
-    expect(updated.snapMachines).toBe(false);
-    // Untouched fields survive the patch (Job 007's other defaults).
-    expect(updated.snapWaypoints).toBe(true);
     expect(getSettings(sfmDoc).snapMachines).toBe(false);
+
+    const updated = updateSettings(sfmDoc, { snapMachines: true });
+    expect(updated.snapMachines).toBe(true);
+    // Untouched fields survive the patch (Job 007's other defaults).
+    expect(updated.snapWaypoints).toBe(false);
+    expect(getSettings(sfmDoc).snapMachines).toBe(true);
   });
 
   it("updateSettings replaces a nested Point field as a whole object", () => {

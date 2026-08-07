@@ -4,8 +4,8 @@ import { useTranslation } from "react-i18next";
 import { listProjects, type ProjectSummary } from "./api/projects";
 import { CanvasView } from "./canvas";
 import { discordAvatarUrl, type LocalUserIdentity } from "./collab";
-import { LocaleSwitcher } from "./i18n";
 import { ProjectsPage } from "./routes/ProjectsPage";
+import { UserSettingsPage } from "./routes/UserSettingsPage";
 import { InviteRedeemPage } from "./sharing";
 import { ThemeToggle, useTheme } from "./theme";
 
@@ -60,7 +60,13 @@ type AuthState = { status: "loading" } | { status: "anonymous" } | { status: "au
  * endpoint that doesn't exist yet — explicitly out of this job's scope
  * (no backend/API changes).
  */
-type View = { name: "projects" } | { name: "canvas"; project: ProjectSummary };
+type View =
+  | { name: "projects" }
+  | { name: "canvas"; project: ProjectSummary }
+  // Account-level settings (`routes/UserSettingsPage.tsx`) — only reachable
+  // from the project list's own header, not from inside a project (no
+  // `CanvasView` entry point), so it always closes back to "projects".
+  | { name: "settings" };
 
 function App() {
   const { t } = useTranslation("app");
@@ -100,6 +106,10 @@ function App() {
     setView({ name: "projects" });
     window.history.pushState({}, "", "/");
   }, []);
+
+  const openSettings = useCallback(() => setView({ name: "settings" }), []);
+
+  const closeSettings = useCallback(() => setView({ name: "projects" }), []);
 
   // Browser back button while the canvas is open: pop out to the project
   // list instead of leaving the SPA (there's nowhere else for this History
@@ -232,7 +242,14 @@ function App() {
               </a>
             </div>
           )}
-          <LocaleSwitcher />
+          <button
+            type="button"
+            onClick={openSettings}
+            title={t("settingsPage.navLabel")}
+            className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+          >
+            {t("settingsPage.navLabel")}
+          </button>
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </div>
       </header>
@@ -251,12 +268,19 @@ function App() {
         />
       )}
 
+      {/* Settings is reachable regardless of auth state (it currently only
+          holds the language picker, a plain browser-level preference with
+          no account dependency — same as the header's `<ThemeToggle>`), so
+          it's checked before the auth route guard below rather than being
+          gated behind it. */}
+      {!pendingInviteToken && view.name === "settings" && <UserSettingsPage onBack={closeSettings} />}
+
       {/* Route guard: only an authenticated user gets past this point to
           the project list / canvas. Anonymous and loading states render the
           login prompt above with no project content underneath — the
           closest thing to "redirect to the login flow" available without a
           real router (see the View comment above). */}
-      {!pendingInviteToken && auth.status !== "authenticated" && (
+      {!pendingInviteToken && view.name !== "settings" && auth.status !== "authenticated" && (
         <div className="mx-auto max-w-3xl px-4 py-16 text-center text-[var(--text-muted)]">
           {auth.status === "loading" ? t("app.loading") : t("app.logInPrompt")}
         </div>

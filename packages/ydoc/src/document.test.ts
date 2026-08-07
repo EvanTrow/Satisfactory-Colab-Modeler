@@ -7,12 +7,15 @@ describe("createDocument", () => {
     const sfmDoc = createDocument();
     const meta = getMeta(sfmDoc);
     expect(meta.schemaVersion).toBe(1);
-    expect(meta.title).toBe("Untitled Factory");
+    expect(meta.title).toBe("My Factory");
 
     const settings = getSettings(sfmDoc);
-    expect(settings.solverMode).toBe("none");
-    expect(settings.snapMachines).toBe(true);
+    expect(settings.solverMode).toBe("full");
+    expect(settings.snapMachines).toBe(false);
+    expect(settings.snapWaypoints).toBe(false);
     expect(settings.numberFormats.style).toBe("decimal");
+    expect(settings.numberFormats.digits).toBe(2);
+    expect(settings.connectionStyle).toBe("bezier");
   });
 
   it("applies meta/settings overrides passed to createDocument", () => {
