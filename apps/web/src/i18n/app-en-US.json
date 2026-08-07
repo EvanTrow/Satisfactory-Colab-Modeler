@@ -65,6 +65,7 @@
   "canvas.close": "Close",
   "canvas.addMachine": "Add a machine",
   "canvas.newOutpostHeading": "New outpost",
+  "canvas.defaultOutpostTitle": "New Outpost",
   "canvas.outpostName": "Outpost name",
   "canvas.createOutpost": "Create outpost",
   "canvas.searchRecipes": "Search recipes…",
