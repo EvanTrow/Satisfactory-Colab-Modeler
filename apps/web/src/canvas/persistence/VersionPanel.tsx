@@ -7,8 +7,9 @@
 // history browser with diffing is not") — no diffing, no rich version
 // management beyond a label field, styled as a `SettingsMenu.tsx`-style
 // dropdown rather than a full modal.
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import { useFocusTrap } from "../../a11y";
 import type { ProjectRole } from "../../api/projects";
 import { listProjectVersions, restoreProjectVersion, saveProjectVersion, type ProjectVersionInfo } from "./docApi";
 
@@ -45,6 +46,12 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
   const [actionError, setActionError] = useState<string | null>(null);
 
   const canEdit = role === "owner" || role === "editor";
+
+  // Job 029: focus trap while the panel is open — see
+  // `a11y/useFocusTrap.ts`'s header comment; same shape as
+  // `SettingsMenu`/`SharingPanel`.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, open, { onClose: () => setOpen(false) });
 
   async function refresh() {
     setList({ status: "loading" });
@@ -108,6 +115,8 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
         onClick={toggleOpen}
         title="Version history"
         aria-label="Version history"
+        aria-haspopup="dialog"
+        aria-expanded={open}
         className="nodrag inline-flex h-7 items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 text-xs text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
       >
         <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden>
@@ -123,6 +132,10 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
         <>
           <div className="fixed inset-0 z-40" onMouseDown={() => setOpen(false)} />
           <div
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Version history"
             className="absolute right-0 top-full z-50 mt-1 w-80 rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)] p-2 shadow-[var(--shadow-modal)]"
             onMouseDown={(event) => event.stopPropagation()}
           >

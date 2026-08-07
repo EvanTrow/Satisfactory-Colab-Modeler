@@ -12,8 +12,9 @@
 //   - Members: visible to every role (`memberRoutes.ts`'s own "any member
 //     can view the list" rule), but role-change/remove controls only render
 //     for the owner — the server enforces this regardless, this is just UX.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { useFocusTrap } from "../a11y";
 import type { ProjectRole } from "../api/projects";
 import {
   buildInviteLink,
@@ -76,6 +77,12 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
   const [freshLink, setFreshLink] = useState<{ url: string; copied: boolean } | null>(null);
 
   const isOwner = role === "owner";
+
+  // Job 029: focus trap while the panel is open — see
+  // `a11y/useFocusTrap.ts`'s header comment; same shape as
+  // `SettingsMenu`/`VersionPanel`.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, open, { onClose: () => setOpen(false) });
 
   async function refreshMembers() {
     setMembers({ status: "loading" });
@@ -191,6 +198,8 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
         onClick={() => setOpen((wasOpen) => !wasOpen)}
         title="Share this project"
         aria-label="Share this project"
+        aria-haspopup="dialog"
+        aria-expanded={open}
         className="nodrag inline-flex h-7 items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 text-xs text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
       >
         <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden>
@@ -202,6 +211,10 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
         <>
           <div className="fixed inset-0 z-40" onMouseDown={() => setOpen(false)} />
           <div
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Share this project"
             className="absolute right-0 top-full z-50 mt-1 w-96 rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)] p-2 shadow-[var(--shadow-modal)]"
             onMouseDown={(event) => event.stopPropagation()}
           >

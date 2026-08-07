@@ -1,0 +1,36 @@
+# Job 029: keeps the Docker build context (repo root — see
+# infra/Dockerfile's own `docker build -f infra/Dockerfile .` example)
+# clean. Two distinct reasons, not just "smaller image":
+#
+# 1. node_modules/dist/.turbo MUST be excluded, not just "nice to skip" —
+#    if the host's own locally-installed node_modules (built for whatever
+#    OS/arch the dev machine is) leaked into the Linux build context,
+#    `pnpm install` inside the container could see already-present
+#    packages and skip reinstalling native deps (esbuild, etc.) for the
+#    correct platform, producing a silently broken image that only fails
+#    at runtime. A clean context forces a real, correct install every time.
+# 2. .env files must NEVER reach a Docker build context — secrets baked
+#    into an image layer are recoverable by anyone who can pull it, even
+#    after being "removed" in a later layer. Real secrets are supplied at
+#    `docker run`/the host platform's own secrets mechanism (see
+#    README.md's "Production deploy" section), never copied in.
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+.turbo/
+*.tsbuildinfo
+coverage/
+.vite/
+
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+
+.git/
+.vscode/
+.idea/
+*.log

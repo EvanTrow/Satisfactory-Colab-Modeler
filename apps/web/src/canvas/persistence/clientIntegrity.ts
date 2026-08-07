@@ -22,7 +22,9 @@
 // `Y.UndoManager` uses internally, not a novel/fragile trick.
 import * as Y from "yjs";
 
-import { INTEGRITY_ORIGIN, runIntegrityReducer, type SfmDocument } from "@scm/ydoc";
+import { INTEGRITY_ORIGIN, isNoopRepair, runIntegrityReducer, type SfmDocument } from "@scm/ydoc";
+
+import { captureIntegrityRepairSignal } from "../../monitoring/sentry";
 
 /**
  * Attaches the ongoing "repair after every transaction" listener and
@@ -34,7 +36,14 @@ import { INTEGRITY_ORIGIN, runIntegrityReducer, type SfmDocument } from "@scm/yd
 export function attachClientIntegrityReducer(sfmDoc: SfmDocument): () => void {
   const handleAfterTransaction = (transaction: Y.Transaction) => {
     if (transaction.origin === INTEGRITY_ORIGIN) return;
-    runIntegrityReducer(sfmDoc);
+    const repairSummary = runIntegrityReducer(sfmDoc);
+    // Job 029: reports this repair firing as a signal worth a human's
+    // attention — see `monitoring/sentry.ts`'s
+    // `captureIntegrityRepairSignal` doc comment for why a non-fatal
+    // repair is still worth tracking. No-ops when Sentry isn't configured.
+    if (!isNoopRepair(repairSummary)) {
+      captureIntegrityRepairSignal({ phase: "client-afterTransaction", repairSummary });
+    }
   };
 
   sfmDoc.doc.on("afterTransaction", handleAfterTransaction);

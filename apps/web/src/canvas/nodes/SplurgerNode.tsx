@@ -161,6 +161,7 @@ export const SplurgerNode = memo(function SplurgerNode({ id, data, selected }: N
                 <button
                   type="button"
                   title="Move up within its tier"
+                  aria-label={`Move ${row.edge.part} connection up within its tier`}
                   onClick={() => persist(moveWithinTier(assignment, edgeId, "up"))}
                   className="nodrag shrink-0 rounded px-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                 >
@@ -169,6 +170,7 @@ export const SplurgerNode = memo(function SplurgerNode({ id, data, selected }: N
                 <button
                   type="button"
                   title="Move down within its tier"
+                  aria-label={`Move ${row.edge.part} connection down within its tier`}
                   onClick={() => persist(moveWithinTier(assignment, edgeId, "down"))}
                   className="nodrag shrink-0 rounded px-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                 >
@@ -177,6 +179,7 @@ export const SplurgerNode = memo(function SplurgerNode({ id, data, selected }: N
                 <button
                   type="button"
                   title="Disconnect"
+                  aria-label={`Disconnect ${row.edge.part} connection`}
                   onClick={() => removeEdge(sfmDoc, row.edge.id)}
                   className="nodrag shrink-0 rounded px-1 text-[var(--text-muted)] hover:text-[var(--danger)]"
                 >

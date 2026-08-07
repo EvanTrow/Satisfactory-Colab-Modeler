@@ -435,6 +435,7 @@ function CanvasViewReady({
                 type="button"
                 onClick={() => setShowMinimap((v) => !v)}
                 title={showMinimap ? t("canvas.hideMinimap") : t("canvas.showMinimap")}
+                aria-label={showMinimap ? t("canvas.hideMinimap") : t("canvas.showMinimap")}
                 aria-pressed={showMinimap}
                 className={`nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border text-xs transition-colors ${
                   showMinimap

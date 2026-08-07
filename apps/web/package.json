@@ -16,6 +16,7 @@
     "@scm/rational": "workspace:*",
     "@scm/solver": "workspace:*",
     "@scm/ydoc": "workspace:*",
+    "@sentry/react": "^10.69.0",
     "@xyflow/react": "^12.11.2",
     "i18next": "^26.3.6",
     "react": "^19.2.8",

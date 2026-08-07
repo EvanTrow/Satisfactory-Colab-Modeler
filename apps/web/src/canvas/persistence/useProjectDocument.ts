@@ -65,10 +65,19 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import { IndexeddbPersistence, clearDocument } from "y-indexeddb";
 import * as Y from "yjs";
 
-import { type SfmDocument, addContainer, createDocument, createUndoManager, listContainers, runIntegrityReducer } from "@scm/ydoc";
+import {
+  type SfmDocument,
+  addContainer,
+  createDocument,
+  createUndoManager,
+  isNoopRepair,
+  listContainers,
+  runIntegrityReducer,
+} from "@scm/ydoc";
 
 import type { ProjectRole } from "../../api/projects";
 import type { AwarenessHandle } from "../../collab/awareness";
+import { captureIntegrityRepairSignal } from "../../monitoring/sentry";
 import { attachClientIntegrityReducer } from "./clientIntegrity";
 import { computeConnectionStatus, type ConnectionStatus } from "./connectionStatus";
 import { fetchRealtimeTicket, getRealtimeWsUrl } from "./realtimeTicket";
@@ -266,7 +275,15 @@ export function useProjectDocument(
       // edits, remote peers' merged-in edits, and this reducer's own
       // integrity-tagged passes alike (see that module's header comment for
       // why "every transaction" is the correct scope, not just local ones).
-      runIntegrityReducer(sfmDoc);
+      const initialRepairSummary = runIntegrityReducer(sfmDoc);
+      // Job 029: this specific branch means the document was ALREADY
+      // corrupt when hydrated (see `apps/realtime/src/server.ts`'s
+      // matching `afterLoadDocument` comment for the same reasoning on
+      // the server side) — a stronger signal than the ongoing
+      // per-transaction one `attachClientIntegrityReducer` reports below.
+      if (!isNoopRepair(initialRepairSummary)) {
+        captureIntegrityRepairSignal({ phase: "client-repair-on-load", repairSummary: initialRepairSummary });
+      }
       detachIntegrityReducer = attachClientIntegrityReducer(sfmDoc);
 
       let root = listContainers(sfmDoc).find((container) => container.kind === "root");

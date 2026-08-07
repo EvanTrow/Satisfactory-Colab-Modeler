@@ -1,0 +1,83 @@
+# Job 029: Fly.io deploy config for the "single container host with managed
+# Postgres" decision confirmed in PLAN.md's intro. Fly.io is chosen because
+# PLAN.md §10's own confirmed-decisions list names it first among the three
+# options ("Fly.io/Railway/Render") and this job's own instructions treat it
+# as "a reasonable default" when nothing else settled the choice — Railway
+# or Render would work too (this app has no Fly-specific code anywhere;
+# `infra/Dockerfile` is a plain OCI image any of the three hosts can run),
+# but a choice had to be made, and this is it. See README.md's "Production
+# deploy" section for the full step-by-step a human needs to actually use
+# this file — this config is NOT self-deploying: it requires a real Fly.io
+# account, `flyctl` CLI, and `fly launch`/`fly deploy` run by a human. No
+# such account exists in this sandbox and none was created by this job.
+#
+# This is genuinely inert until a human runs (from the repo root):
+#   fly launch --config infra/fly.toml --dockerfile infra/Dockerfile --no-deploy
+#   fly postgres create   # or attach an existing Fly Postgres/other managed instance
+#   fly postgres attach <postgres-app-name>   # sets DATABASE_URL as a Fly secret automatically
+#   fly secrets set COOKIE_SECRET=... REALTIME_TICKET_SECRET=... REALTIME_INTERNAL_SECRET=... \
+#     DISCORD_CLIENT_ID=... DISCORD_CLIENT_SECRET=... \
+#     SENTRY_DSN=...   # omit SENTRY_DSN entirely to leave error tracking off
+#   fly deploy
+# (DISCORD_REDIRECT_URI is a plain public URL, not a secret — set via this
+# file's own [env] block below, not `fly secrets set`.)
+
+app = "scm-app" # placeholder — `fly launch` prompts for/generates a real globally-unique name; rename here to match once chosen.
+primary_region = "iad" # placeholder — pick the region closest to your managed Postgres instance to minimize latency on every request.
+
+[build]
+  dockerfile = "Dockerfile"
+
+# ONE public service — `infra/docker/proxy/proxy.mjs`'s same-origin reverse
+# proxy inside the container is what makes a single exposed port correct
+# for all of: the web SPA, the REST API, Discord OAuth callbacks, AND the
+# `/collab` WebSocket (see that file's own header comment for the routing
+# rule). There is no second `[[services]]` block for apps/realtime's port
+# — it's never reached directly from outside the container, only via this
+# proxy, matching `infra/.env.example`'s own "never expose this port
+# publicly" note for the *internal* webhook port (a third, even-more-
+# private port that isn't reachable through the proxy at all).
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  auto_stop_machines = false # a live WebSocket connection (multiplayer) is exactly the kind of "traffic" Fly's auto-stop heuristic can miss — keep at least one machine warm rather than risk dropping active collaborators.
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "4s"
+    grace_period = "10s"
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "4s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+    protocol = "http"
+
+# Non-secret runtime config only — every value here is safe to commit.
+# Secrets (DATABASE_URL, COOKIE_SECRET, REALTIME_TICKET_SECRET,
+# REALTIME_INTERNAL_SECRET, DISCORD_CLIENT_ID/SECRET, SENTRY_DSN) are set
+# via `fly secrets set` (see this file's own header comment) — Fly injects
+# them as env vars at runtime without ever writing them into this file or
+# the image. `WEB_DIST_DIR`/`NODE_ENV`/`PORT` are already baked into
+# `infra/Dockerfile` itself (see that file's own comment on why those
+# three specifically are image-level facts, not deployer-supplied config)
+# and don't need repeating here.
+[env]
+  # PLAN.md §6: the Discord OAuth2 redirect URI must exactly match what's
+  # registered in the Discord Developer Portal for this app — update this
+  # (and the `DISCORD_REDIRECT_URI` secret, which must match too) once a
+  # real Fly hostname exists.
+  DISCORD_REDIRECT_URI = "https://scm-app.fly.dev/auth/discord/callback"

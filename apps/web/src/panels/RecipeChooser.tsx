@@ -12,7 +12,7 @@
 // `addNode` to result in *something* showing up, which it does via React
 // Flow's built-in "default" node type (see `useYjsSync.ts`'s
 // `nodeRecordToFlowNode`).
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
 import {
@@ -24,6 +24,7 @@ import {
 } from "@scm/gamedata";
 import { addContainer, addNode } from "@scm/ydoc";
 
+import { useFocusTrap } from "../a11y";
 import { useCanvasDoc } from "../canvas";
 import { useGameTerm } from "../i18n";
 import {
@@ -88,6 +89,20 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
   // — same one-time-default behavior as e.g. a word processor's "Untitled
   // Document" seed text.
   const [outpostTitle, setOutpostTitle] = useState(() => t("canvas.defaultOutpostTitle"));
+
+  // Job 029: focus trap — see `a11y/useFocusTrap.ts`'s header for why this
+  // (a true modal, unlike the other three panels below) needs it just as
+  // much as they do. `modalRef` is the same element the `role="dialog"`/
+  // `aria-modal` attributes below go on. `searchInputRef` is passed as the
+  // trap's `initialFocusRef` so the search box (which already had its own
+  // `autoFocus` since Job 009) keeps that focus rather than the trap's
+  // default "focus the first focusable descendant" picking the "+ New
+  // Outpost" button instead, since that button sits earlier in the DOM —
+  // confirmed live to be a real regression before this fix (opening the
+  // chooser landed keyboard focus on "+ New Outpost", not the search box).
+  const modalRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useFocusTrap(modalRef, true, { onClose, initialFocusRef: searchInputRef });
 
   const machines = useMemo(() => listChooserMachines(gameData), [gameData]);
   const tiers = useMemo(() => listChooserTiers(gameData), [gameData]);
@@ -184,6 +199,10 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
     // Backdrop: clicking outside the modal box closes without selecting.
     <div className="fixed inset-0 z-50 bg-black/20" onMouseDown={onClose}>
       <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={creatingOutpost ? t("canvas.newOutpostHeading") : t("canvas.addMachine")}
         className="absolute flex flex-col overflow-hidden rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-primary)] shadow-[var(--shadow-modal)]"
         style={{ left: modalPosition.left, top: modalPosition.top, width: MODAL_WIDTH, height: MODAL_HEIGHT }}
         onMouseDown={(event) => event.stopPropagation()}
@@ -304,6 +323,7 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] p-2">
                 <input
+                  ref={searchInputRef}
                   type="text"
                   autoFocus
                   placeholder={t("canvas.searchRecipes")}

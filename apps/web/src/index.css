@@ -59,7 +59,22 @@
 
   --text-primary: #2d2c2c;
   --text-secondary: #615f5f;
-  --text-muted: #8a8785;
+  /*
+   * Job 029: darkened from the original #8a8785 — an accessibility-pass
+   * contrast audit (`apps/web/src/a11y/contrastAudit.md`) measured the
+   * original at only 2.64-2.84:1 against `--surface-app`/`--surface-sunken`,
+   * well under WCAG AA's 4.5:1 minimum for normal-size text, and this token
+   * is used as real informational text (timestamps, hint labels, input
+   * placeholders — not just decorative filler) in a dozen-plus places. This
+   * value clears 4.5:1 against every surface token in the light palette
+   * (4.54-5.45:1) — seeAudit doc for the exact numbers. The unavoidable
+   * side effect: on this palette's very pale backgrounds, an AA-passing
+   * "muted" tone sits close to `--text-secondary`'s own darkness — there
+   * isn't much room between "passes AA" and "secondary" on a background
+   * this light. Accepted as the honest tradeoff (contrast over visual
+   * separation) rather than shipping a muted tone that fails AA.
+   */
+  --text-muted: #646160;
   --text-inverted: #f5f5f4;
 
   --accent: #4f46e5;
@@ -67,7 +82,16 @@
   --accent-contrast: #ffffff;
   --accent-soft: rgba(79, 70, 229, 0.12);
 
-  --outpost: #b45309;
+  /*
+   * Job 029: darkened from the original #b45309 — as *text* on
+   * `--outpost-soft` (badges/links, e.g. `SharingPanel`'s invite-link text,
+   * `RecipeChooser`'s "+ New Outpost" button) the original measured only
+   * 3.88:1, under WCAG AA's 4.5:1. This value clears 4.5:1 against
+   * `--outpost-soft` and every plain surface token. `--outpost-soft`/
+   * `--outpost-border` (background/border uses, not text) are left as-is —
+   * WCAG's stricter text ratio doesn't apply to them.
+   */
+  --outpost: #9a4508;
   --outpost-soft: rgba(217, 119, 6, 0.14);
   --outpost-border: rgba(180, 83, 9, 0.55);
 
@@ -99,7 +123,12 @@
    * same "own identity" reasoning `--outpost`'s comment (Job 014) already
    * established for outposts.
    */
-  --splurger: #7c3aed;
+  /*
+   * Job 029: darkened from the original #7c3aed (Tailwind's violet-700
+   * instead of violet-600) — as text on `--splurger-soft` the original
+   * measured 4.12:1, under WCAG AA's 4.5:1 for normal text.
+   */
+  --splurger: #6d28d9;
   --splurger-soft: rgba(124, 58, 237, 0.14);
   --splurger-border: rgba(124, 58, 237, 0.55);
 
@@ -114,7 +143,13 @@
    * `--outpost`'s comment (Job 014) and `--splurger`'s (Job 024) already
    * established.
    */
-  --blueprint: #0d9488;
+  /*
+   * Job 029: darkened from the original #0d9488 — as text on
+   * `--blueprint-soft` the original measured only 2.84:1, well under WCAG
+   * AA's 4.5:1 (the worst light-theme contrast failure found in this job's
+   * audit).
+   */
+  --blueprint: #0a6b62;
   --blueprint-soft: rgba(13, 148, 136, 0.14);
   --blueprint-border: rgba(13, 148, 136, 0.55);
 
@@ -173,7 +208,10 @@
 
   --text-primary: #f4f4f5;
   --text-secondary: #a1a1aa;
-  --text-muted: #71717a;
+  /* Job 029: lightened from the original #71717a — measured only
+     3.81-4.10:1 against this theme's surface tokens, under WCAG AA's
+     4.5:1. This value clears 5.52-6.17:1 against all of them. */
+  --text-muted: #8f8f97;
   --text-inverted: #18181b;
 
   --accent: #818cf8;

@@ -116,6 +116,10 @@
   "node.limitInvalidTooltip": "This limit could not be resolved to a machine count.",
   "node.autoRoundEditTooltip": "Auto-round is on — editing this will turn it off.",
   "node.shardsInvalidTooltip": "This shard count exceeds the machine's cap.",
+  "node.clockStepDownLabel": "Decrease clock speed (snap machine count up)",
+  "node.clockStepUpLabel": "Increase clock speed (snap machine count down)",
+  "node.shardStepDownLabel": "Decrease somersloop count",
+  "node.shardStepUpLabel": "Increase somersloop count",
 
   "status.save.saved": "Saved",
   "status.save.saving": "Saving…",

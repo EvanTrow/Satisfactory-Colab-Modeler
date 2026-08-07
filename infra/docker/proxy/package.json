@@ -1,0 +1,10 @@
+{
+  "name": "scm-infra-proxy",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Job 029: minimal same-origin reverse proxy for the single-container production image — deliberately NOT a pnpm workspace member (see proxy.mjs's header comment), installed with its own isolated node_modules by infra/Dockerfile.",
+  "type": "module",
+  "dependencies": {
+    "http-proxy": "^1.18.1"
+  }
+}

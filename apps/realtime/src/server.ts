@@ -55,6 +55,7 @@ import * as Y from "yjs";
 
 import { getRealtimeConfig } from "./config.js";
 import { startInternalServer } from "./internalServer.js";
+import { captureIntegrityRepairSignal } from "./monitoring/sentry.js";
 import { startRevocationController } from "./revocation.js";
 import { TicketError, verifyRealtimeTicket } from "./ticket.js";
 
@@ -145,6 +146,13 @@ export async function createHocuspocusServer(): Promise<RealtimeServer> {
       const priorVector = Y.encodeStateVector(data.document);
       const repairSummary = runIntegrityReducer(sfmDoc);
       if (!isNoopRepair(repairSummary)) {
+        // Job 029: this specific branch means a document was ALREADY
+        // corrupt in Postgres before anyone even connected — a stronger
+        // signal than the onStoreDocument one below (that one can catch a
+        // transient client-side race that self-heals within one debounce
+        // window; this one means something persisted a bad state at some
+        // point in the past).
+        captureIntegrityRepairSignal({ phase: "afterLoadDocument", documentName: data.documentName, repairSummary });
         const repairUpdate = Y.encodeStateAsUpdate(data.document, priorVector);
         if (repairUpdate.length > 0) {
           // actorUserId: null — this is a system-generated repair, not
@@ -170,7 +178,17 @@ export async function createHocuspocusServer(): Promise<RealtimeServer> {
       // fixed here, in the same transaction-tagged pass, before a single
       // byte of it reaches `project_doc_updates`.
       const sfmDoc = createDocument({ doc: document });
-      runIntegrityReducer(sfmDoc);
+      const repairSummary = runIntegrityReducer(sfmDoc);
+      if (!isNoopRepair(repairSummary)) {
+        // Job 029: a live client's own edits produced something the
+        // reducer had to fix during this debounce window — see this
+        // file's header comment ("a buggy/malicious client wrote a
+        // dangling edge") and `monitoring/sentry.ts`'s
+        // `captureIntegrityRepairSignal` doc comment for why this is
+        // worth tracking even though the reducer's job is to make it
+        // non-fatal.
+        captureIntegrityRepairSignal({ phase: "onStoreDocument", documentName, repairSummary });
+      }
 
       const priorVector = lastStoredStateVectorByDocument.get(documentName);
       const update = priorVector

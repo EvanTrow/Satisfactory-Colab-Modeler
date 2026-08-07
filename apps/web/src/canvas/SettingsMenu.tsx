@@ -23,13 +23,14 @@
 // actually implements it (Job 023) and the worker host actually dispatches
 // it (Job 018/024's `solveScheduler.ts`/`useSolver.ts`) — see
 // `SOLVER_MODES` below.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { updateSettings, type NumberFormats, type Settings, type SolverMode } from "@scm/ydoc";
 
 import type { SfmDocument } from "@scm/ydoc";
 
+import { useFocusTrap } from "../a11y";
 import { LocaleSwitcher } from "../i18n";
 import { CONNECTION_STYLE_OPTIONS } from "./edges";
 
@@ -103,6 +104,12 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
   // `DIRECT`/`CURVES`/`HORIZONTAL`/`VERTICAL` keys.
   const { t: tRaw } = useTranslation();
   const [open, setOpen] = useState(false);
+  // Job 029: focus trap while the popover is open — see
+  // `a11y/useFocusTrap.ts`'s header comment; this panel is one of the three
+  // toolbar dropdowns sharing its exact shape (`SharingPanel`/`VersionPanel`
+  // are the other two).
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, open, { onClose: () => setOpen(false) });
 
   return (
     <div className="relative">
@@ -111,6 +118,8 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
         onClick={() => setOpen((v) => !v)}
         title={tRaw("SETTINGS")}
         aria-label={tRaw("SETTINGS")}
+        aria-haspopup="dialog"
+        aria-expanded={open}
         className="nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
       >
         <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden>
@@ -125,6 +134,10 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
         <>
           <div className="fixed inset-0 z-40" onMouseDown={() => setOpen(false)} />
           <div
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={tRaw("SETTINGS")}
             className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)] p-2 shadow-[var(--shadow-modal)]"
             // Same backdrop-vs-content mousedown-ordering fix
             // `RecipeChooser.tsx`/`NodeContextMenu.tsx` already apply: without

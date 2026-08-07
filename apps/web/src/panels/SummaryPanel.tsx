@@ -5,7 +5,7 @@
 // the scope-selector UI + presentation over it, reading Job 018's live
 // solver output via `SolverResultContext` (never calling `useSolver` itself
 // — see that context's own header comment for why).
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
@@ -13,6 +13,7 @@ import { defaultGameData } from "@scm/gamedata";
 import { formatRational, parseRational } from "@scm/rational";
 import { listNodes, type NodeRecord, type NumberFormats, type SfmDocument } from "@scm/ydoc";
 
+import { useFocusTrap } from "../a11y";
 import { useGameTerm } from "../i18n";
 import { useSolverResult } from "../canvas/SolverResultContext";
 import type { ThemeMode } from "../theme";
@@ -263,6 +264,16 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme 
   // Job 027: the pop-out window — see `usePopoutWindow.ts`'s own header for
   // why this is a portal, not a second React root.
   const popout = usePopoutWindow();
+  // Job 029: focus trap while the inline popover is open — same shape as
+  // `SettingsMenu`/`SharingPanel`/`VersionPanel`, and directly relevant to
+  // this job's own "screen-reader-reachable summary panel data" acceptance
+  // criterion: a keyboard/screen-reader user needs to be able to Tab into
+  // the scope tabs and the made/used/power/sink rows without focus leaking
+  // back out to the canvas behind it. Deliberately NOT applied to the
+  // pop-out window's own portal content below — that's a real separate
+  // browser window/tab, which already gets its own native focus handling.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, open && !popout.isOpen, { onClose: () => setOpen(false) });
 
   const nodeRecordById = new Map(allNodes.map((n) => [n.id, n] as const));
   const selectedNodeIds = new Set(
@@ -331,6 +342,10 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme 
           */}
           <div className="fixed inset-0 z-40" onMouseDown={() => setOpen(false)} />
           <div
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={tRaw("SUMMARY")}
             className="absolute right-0 top-full z-50 mt-1 max-h-[70vh] w-96 overflow-y-auto rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)] p-3 text-xs shadow-[var(--shadow-modal)]"
             onMouseDown={(event) => event.stopPropagation()}
           >

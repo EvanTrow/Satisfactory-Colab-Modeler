@@ -2,16 +2,20 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import { authRoutes, type AuthRoutesOptions } from "./auth/routes.js";
 import { sessionPlugin } from "./auth/session-plugin.js";
+import { captureException } from "./monitoring/sentry.js";
 import { projectDocRoutes } from "./projects/docRoutes.js";
 import { projectInviteRoutes } from "./projects/inviteRoutes.js";
 import { projectMemberRoutes } from "./projects/memberRoutes.js";
 import { projectRoutes } from "./projects/routes.js";
 import { realtimeRoutes } from "./routes/realtime.js";
+import { registerStaticSite } from "./staticSite.js";
 
 export interface BuildAppOptions {
   logger?: boolean;
   /** Passed through to `authRoutes` — tests use this to inject a mocked `DiscordClient`. */
   authRoutesOptions?: AuthRoutesOptions;
+  /** Job 029: absolute path to `apps/web`'s built `dist/` — see `staticSite.ts`'s header comment. Defaults to `process.env.WEB_DIST_DIR` (unset in every existing dev/test environment, so this is a no-op unless `infra/Dockerfile`'s production image sets it). */
+  webDistDir?: string;
 }
 
 /**
@@ -23,6 +27,21 @@ export interface BuildAppOptions {
 export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({
     logger: opts.logger ?? true,
+  });
+
+  // Job 029: reports every server-side error that reaches Fastify's own
+  // error pipeline to Sentry (a no-op call when `SENTRY_DSN` is unset —
+  // see `monitoring/sentry.ts`'s header comment), WITHOUT changing what
+  // gets sent back to the client — `onError` is a pure observer hook, not
+  // `setErrorHandler`, specifically so this can't alter any existing
+  // route's response shape or status code. Only genuine 5xx-or-unset
+  // errors are reported — an expected 401/403/404 (any handler that sets
+  // its own `statusCode` below 500, e.g. `roles.ts`'s auth checks) is not
+  // a bug worth paging anyone over.
+  app.addHook("onError", async (request, _reply, error) => {
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    if (statusCode !== undefined && statusCode < 500) return;
+    captureException(error, { url: request.url, method: request.method });
   });
 
   app.get("/health", async () => {
@@ -56,6 +75,14 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // Job 020: GET /api/realtime/ticket — mints the short-lived JWT
   // apps/realtime's Hocuspocus server verifies in onAuthenticate.
   await app.register(realtimeRoutes);
+
+  // Job 029: serves `apps/web`'s built static assets from this same
+  // origin/port in production — see `staticSite.ts`'s header comment.
+  // Registered last (see that function's own doc comment on why order
+  // doesn't affect correctness, only readability). A complete no-op when
+  // neither `opts.webDistDir` nor `WEB_DIST_DIR` is set, which is every
+  // existing dev/test environment.
+  await registerStaticSite(app, { webDistDir: opts.webDistDir ?? process.env.WEB_DIST_DIR });
 
   return app;
 }

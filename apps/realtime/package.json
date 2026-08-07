@@ -15,6 +15,7 @@
     "@scm/db": "workspace:*",
     "@scm/doc-storage": "workspace:*",
     "@scm/ydoc": "workspace:*",
+    "@sentry/node": "^10.69.0",
     "dotenv": "^17.4.2",
     "jsonwebtoken": "^9.0.3",
     "yjs": "13.6.32"

@@ -7,7 +7,11 @@
 // removes just that port's edges — a different gesture, on a different
 // target) — this one fires on `<ReactFlow onNodeContextMenu>`, i.e.
 // anywhere on a node that isn't a part row.
+import { useRef } from "react";
+
 import { type Container } from "@scm/ydoc";
+
+import { useFocusTrap } from "../../a11y";
 
 export interface NodeContextMenuState {
   nodeId: string;
@@ -49,10 +53,25 @@ export function NodeContextMenu({
   onConvertContainerKind,
   onClose,
 }: NodeContextMenuProps) {
+  // Job 029: this menu's *trigger* (right-click a node) has no keyboard
+  // equivalent in this app — a genuine, documented limitation (see
+  // jobs/029's Handoff notes) rather than an oversight, since a context
+  // menu is inherently a pointer-driven affordance and there's no separate
+  // discoverable keyboard entry point to it anywhere else in this app's UI.
+  // Once it IS open, though, it should behave like any other floating
+  // panel: Escape closes it, Tab doesn't leak focus out to the canvas
+  // behind it, and closing returns focus sensibly — the same focus trap
+  // `RecipeChooser`/`SettingsMenu`/`SharingPanel`/`VersionPanel` all use.
+  const menuRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(menuRef, true, { onClose });
+
   return (
     // Backdrop: click anywhere else closes the menu without acting — same pattern `RecipeChooser.tsx` uses.
     <div className="fixed inset-0 z-50" onMouseDown={onClose} onContextMenu={(event) => event.preventDefault()}>
       <div
+        ref={menuRef}
+        role="menu"
+        aria-label="Node actions"
         className="absolute min-w-[200px] rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)] p-1 text-[var(--text-primary)] shadow-[var(--shadow-modal)]"
         style={{ left: state.screenPosition.x, top: state.screenPosition.y }}
         onMouseDown={(event) => event.stopPropagation()}

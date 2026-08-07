@@ -651,6 +651,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               // authoring a new key that would just re-describe the same
               // thing less precisely.
               title={tRaw("CLOCKSPEED_HELP")}
+              aria-label={t("node.clockStepDownLabel")}
               onClick={() => handleClockStep("roundUp")}
             >
               −
@@ -679,6 +680,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               className={stepperButtonClass}
               disabled={!canSnapClock}
               title={tRaw("CLOCKSPEED_HELP")}
+              aria-label={t("node.clockStepUpLabel")}
               onClick={() => handleClockStep("roundDown")}
             >
               +
@@ -722,6 +724,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               type="button"
               className={stepperButtonClass}
               disabled={maxShards === 0 || node.shards <= 0}
+              aria-label={t("node.shardStepDownLabel")}
               onClick={() => handleShardStep(-1)}
               onFocus={() => localPresence.setEditingField({ nodeId: id, field: "shards" })}
               onBlur={() => localPresence.setEditingField(null)}
@@ -743,6 +746,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               type="button"
               className={stepperButtonClass}
               disabled={maxShards === 0 || node.shards >= maxShards}
+              aria-label={t("node.shardStepUpLabel")}
               onClick={() => handleShardStep(1)}
               onFocus={() => localPresence.setEditingField({ nodeId: id, field: "shards" })}
               onBlur={() => localPresence.setEditingField(null)}

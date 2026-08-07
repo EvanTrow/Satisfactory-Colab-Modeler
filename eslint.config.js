@@ -48,6 +48,15 @@ export default tseslint.config(
       globals: globals.node,
     },
   },
+  // Job 029: infra/docker/*.mjs — the container entrypoint and reverse
+  // proxy, plain Node scripts (not part of any pnpm workspace, see
+  // infra/docker/proxy/package.json's own header comment for why).
+  {
+    files: ["infra/**/*.mjs"],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
   // config files evaluated by Node directly
   {
     files: ["**/*.config.{js,ts}", "**/*.config.*.{js,ts}"],

@@ -3,7 +3,23 @@
 // and wires a clean shutdown, mirroring `apps/api/src/index.ts`'s own
 // signal-handling shape.
 import { getRealtimeConfig } from "./config.js";
+import { captureException, initSentry } from "./monitoring/sentry.js";
 import { createHocuspocusServer } from "./server.js";
+
+// Job 029: see apps/api/src/index.ts's own header comment for the full
+// reasoning — same no-op-when-unset contract, same "report then preserve
+// Node's existing crash-on-uncaught-error behavior" choice.
+initSentry();
+process.on("uncaughtException", (error) => {
+  captureException(error, { source: "uncaughtException" });
+  console.error(error);
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  captureException(reason, { source: "unhandledRejection" });
+  console.error(reason);
+  process.exit(1);
+});
 
 async function main(): Promise<void> {
   const { wsPort, internalPort } = getRealtimeConfig();
