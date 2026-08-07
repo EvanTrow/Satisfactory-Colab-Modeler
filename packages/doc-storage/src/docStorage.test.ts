@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import * as Y from "yjs";
 
-import { closeDb, db } from "../db.js";
+import { closeDb, db } from "./db.js";
 import {
   appendUpdate,
   compactProject,
@@ -15,10 +15,9 @@ import {
   loadProjectDocUpdate,
   restoreProjectVersion,
 } from "./docStorage.js";
-import { generateShortId } from "./short-id.js";
 
 // These tests hit a real Postgres connection (DATABASE_URL), same precedent
-// as projects/routes.test.ts and auth/*.test.ts.
+// as apps/api's projects/routes.test.ts and auth/*.test.ts.
 
 afterAll(async () => {
   await closeDb();
@@ -32,11 +31,19 @@ async function createTestUser(username: string) {
     .executeTakeFirstOrThrow();
 }
 
-/** Inserts a bare `projects` row directly — these tests exercise `docStorage.ts` in isolation, not the project-CRUD routes. */
+/**
+ * Inserts a bare `projects` row directly — these tests exercise
+ * `docStorage.ts` in isolation, not the project-CRUD routes, so this is a
+ * minimal inline stand-in for `apps/api/src/projects/short-id.ts`'s
+ * `generateShortId` (not imported: this package has no dependency on
+ * `apps/api`, by this repo's own "apps don't import each other's `src/`"
+ * convention — see this package's `index.ts`) rather than a real
+ * collision-retry-worthy id generator.
+ */
 async function createTestProject(ownerId: string) {
   return db
     .insertInto("projects")
-    .values({ short_id: generateShortId(), owner_id: ownerId, game_data_version: "test" })
+    .values({ short_id: crypto.randomUUID(), owner_id: ownerId, game_data_version: "test" })
     .returningAll()
     .executeTakeFirstOrThrow();
 }

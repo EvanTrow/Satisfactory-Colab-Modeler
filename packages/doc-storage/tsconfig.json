@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Job 020: deliberately `NodeNext`, not `Bundler` like every other
+    // `packages/*` workspace member. Every other package here is consumed
+    // by `apps/web` (Vite/esbuild, `Bundler` resolution) so its own internal
+    // relative imports are written without explicit `.js` extensions —
+    // which is exactly what breaks (`TS2835`) when a `NodeNext` consumer
+    // (`apps/api`, `apps/realtime`) tries to import one directly (see
+    // `apps/api/src/projects/store.ts`'s `GAME_DATA_VERSION` comment for a
+    // real instance of that exact break). `@scm/doc-storage` has no browser
+    // consumer at all — only `apps/api` and `apps/realtime` (both
+    // `NodeNext`) import it — so matching their resolution mode here avoids
+    // the mismatch entirely instead of working around it later.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

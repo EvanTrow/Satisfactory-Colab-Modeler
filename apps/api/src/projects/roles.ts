@@ -1,30 +1,16 @@
 import type { ProjectMemberRole } from "@scm/db";
 
-import { db } from "../db.js";
-
-/**
- * Resolves the caller's role on a project from `project_members` — the
- * single source of truth for "can this user see/act on this project."
- * Returns `null` if the user has no `project_members` row for this project
- * at all (never a member, or was removed), which callers treat as "acts
- * like the project doesn't exist" (404) rather than a 403 — this avoids
- * leaking whether a given project id exists to a non-member.
- *
- * Every project has exactly one `owner` row (created alongside the project
- * itself in `createProject`), so this same lookup covers both "am I the
- * owner" and "am I a shared collaborator" — there's no separate owner_id
- * check needed anywhere else in the routes.
- */
-export async function resolveRole(projectId: string, userId: string): Promise<ProjectMemberRole | null> {
-  const row = await db
-    .selectFrom("project_members")
-    .select("role")
-    .where("project_id", "=", projectId)
-    .where("user_id", "=", userId)
-    .executeTakeFirst();
-
-  return row?.role ?? null;
-}
+// Job 020: `resolveRole` itself moved to `@scm/doc-storage` (verbatim), since
+// `apps/realtime`'s Hocuspocus `onAuthenticate` hook needs the exact same
+// query to re-check a role at connect time (PLAN.md §6) — see that
+// package's `roles.ts` for the moved implementation and full rationale.
+// Re-exported here so every existing `apps/api` call site
+// (`import { resolveRole } from "./roles.js"`) is unaffected; every project
+// has exactly one `owner` row (created alongside the project itself in
+// `createProject`), so this same lookup covers both "am I the owner" and
+// "am I a shared collaborator" — there's no separate owner_id check needed
+// anywhere else in the routes.
+export { resolveRole } from "@scm/doc-storage";
 
 /** Roles allowed to rename/edit project metadata (PATCH). Viewers cannot. */
 export function canEdit(role: ProjectMemberRole | null): boolean {

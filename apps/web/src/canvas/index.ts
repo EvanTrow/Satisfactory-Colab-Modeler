@@ -66,8 +66,6 @@ export { isDoubleClick, DOUBLE_CLICK_MS, DOUBLE_CLICK_PX, type ClickPoint } from
 // project_versions restore) builds directly on top of this — see
 // jobs/015-doc-persistence.md's Handoff notes for the exact contract.
 export {
-  fetchProjectDoc,
-  pushProjectDocUpdate,
   listProjectVersions,
   saveProjectVersion,
   restoreProjectVersion,
@@ -75,12 +73,11 @@ export {
   type RestoreVersionResult,
 } from "./persistence/docApi";
 export { bytesToBase64, base64ToBytes } from "./persistence/base64";
-export {
-  createUpdateQueue,
-  type CreateUpdateQueueOptions,
-  type UpdateQueue,
-  type SaveStatus,
-} from "./persistence/updateQueue";
+// Job 020: fetchRealtimeTicket/getRealtimeWsUrl (the live-sync transport's
+// own helpers) and the SaveStatus type (queue implementation removed, type
+// kept — see updateQueue.ts's header comment).
+export { fetchRealtimeTicket, getRealtimeWsUrl } from "./persistence/realtimeTicket";
+export { type SaveStatus } from "./persistence/updateQueue";
 export {
   useProjectDocument,
   type ProjectDocumentState,

@@ -3,7 +3,9 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { authRoutes, type AuthRoutesOptions } from "./auth/routes.js";
 import { sessionPlugin } from "./auth/session-plugin.js";
 import { projectDocRoutes } from "./projects/docRoutes.js";
+import { projectMemberRoutes } from "./projects/memberRoutes.js";
 import { projectRoutes } from "./projects/routes.js";
+import { realtimeRoutes } from "./routes/realtime.js";
 
 export interface BuildAppOptions {
   logger?: boolean;
@@ -42,6 +44,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // meaningfully different concern (bytes, not JSON metadata) built on top
   // of the same auth/role-resolution primitives.
   await app.register(projectDocRoutes);
+  // Job 020: minimal owner-only member management (list/change-role/remove)
+  // — see memberRoutes.ts's header comment for why this exists now rather
+  // than waiting for Job 022's full sharing/invite flow.
+  await app.register(projectMemberRoutes);
+  // Job 020: GET /api/realtime/ticket — mints the short-lived JWT
+  // apps/realtime's Hocuspocus server verifies in onAuthenticate.
+  await app.register(realtimeRoutes);
 
   return app;
 }

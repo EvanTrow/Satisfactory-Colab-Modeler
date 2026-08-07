@@ -11,8 +11,6 @@
 // parser rather than special-casing one route.
 import type { FastifyPluginAsync } from "fastify";
 
-import { canEdit, resolveRole } from "./roles.js";
-import { findActiveProjectById } from "./store.js";
 import {
   appendUpdate,
   createProjectVersion,
@@ -20,7 +18,10 @@ import {
   loadProjectDocUpdate,
   restoreProjectVersion,
   type ProjectVersionSummary,
-} from "./docStorage.js";
+} from "@scm/doc-storage";
+
+import { canEdit, resolveRole } from "./roles.js";
+import { findActiveProjectById } from "./store.js";
 
 /**
  * Wire shape for `ProjectVersionSummary` — camelCase JSON, matching every

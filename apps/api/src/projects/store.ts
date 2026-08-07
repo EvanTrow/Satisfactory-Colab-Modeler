@@ -1,8 +1,8 @@
 import type { Project, ProjectMemberRole } from "@scm/db";
+import { duplicateDocState } from "@scm/doc-storage";
 import { sql } from "kysely";
 
 import { db } from "../db.js";
-import { duplicateDocState } from "./docStorage.js";
 import { generateShortId } from "./short-id.js";
 
 /**
@@ -185,6 +185,45 @@ export async function softDeleteProject(projectId: string): Promise<Project> {
  * behavior for every project) — the caller (`routes.ts`) lets that surface
  * as a 500 rather than silently swallowing a failed doc copy.
  */
+/** A `project_members` row joined with the member's `users.username`, for a minimal member-list view. */
+export interface ProjectMemberSummary {
+  userId: string;
+  username: string;
+  role: ProjectMemberRole;
+}
+
+/**
+ * Lists a project's members — Job 020's minimal enabling infrastructure for
+ * testing/using the revocation mechanism this job builds (see
+ * `memberRoutes.ts`'s header comment: full share-by-link/invite UI is Job
+ * 022's "sharing" scope, not this one's; this is deliberately just enough
+ * to change an *existing* membership row's role or remove it).
+ */
+export async function listMembers(projectId: string): Promise<ProjectMemberSummary[]> {
+  return db
+    .selectFrom("project_members")
+    .innerJoin("users", "users.id", "project_members.user_id")
+    .select(["project_members.user_id as userId", "users.username as username", "project_members.role as role"])
+    .where("project_members.project_id", "=", projectId)
+    .orderBy("users.username", "asc")
+    .execute();
+}
+
+/** Updates an existing member's role. Caller must already have verified owner-only access and that `userId` isn't the project's owner. */
+export async function updateMemberRole(projectId: string, userId: string, role: "editor" | "viewer"): Promise<void> {
+  await db
+    .updateTable("project_members")
+    .set({ role })
+    .where("project_id", "=", projectId)
+    .where("user_id", "=", userId)
+    .execute();
+}
+
+/** Removes a member's `project_members` row entirely. Caller must already have verified owner-only access and that `userId` isn't the project's owner. */
+export async function removeMember(projectId: string, userId: string): Promise<void> {
+  await db.deleteFrom("project_members").where("project_id", "=", projectId).where("user_id", "=", userId).execute();
+}
+
 export async function duplicateProject(source: Project, duplicatorId: string): Promise<ProjectWithRole> {
   const copyTitle = `${source.title} (copy)`;
 

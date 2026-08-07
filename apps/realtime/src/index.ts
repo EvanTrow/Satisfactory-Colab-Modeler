@@ -1,6 +1,26 @@
-// Placeholder workspace member.
-// TODO(Job 020): implement the Hocuspocus server here (auth, onLoadDocument/
-// onStoreDocument persistence, awareness, integrity reducer on the server side).
-// See PLAN.md §5 "Real-Time Sync Architecture" and jobs/020-hocuspocus-server.md.
+// Job 020: real entry point, replacing Job 001's placeholder. See
+// `server.ts` for the actual Hocuspocus wiring — this file just starts it
+// and wires a clean shutdown, mirroring `apps/api/src/index.ts`'s own
+// signal-handling shape.
+import { getRealtimeConfig } from "./config.js";
+import { createHocuspocusServer } from "./server.js";
 
-export {};
+async function main(): Promise<void> {
+  const { wsPort, internalPort } = getRealtimeConfig();
+  const realtime = await createHocuspocusServer();
+  console.log(`[realtime] Hocuspocus listening on ws://localhost:${wsPort} (internal webhook on :${internalPort})`);
+
+  const shutdown = async (signal: string) => {
+    console.log(`[realtime] received ${signal}, shutting down...`);
+    await realtime.stop();
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+}
+
+main().catch((err: unknown) => {
+  console.error("[realtime] failed to start", err);
+  process.exitCode = 1;
+});

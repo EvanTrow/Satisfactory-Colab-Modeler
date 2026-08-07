@@ -1,34 +1,64 @@
-// Job 015: replaces `CanvasView.tsx`'s old `createLocalCanvasDocument`
-// (Job 008) — "creates a brand-new, empty, in-memory `SfmDocument` on every
-// mount, no fetch, no persistence" — with the real thing: fetch the
-// project's persisted doc bytes, `Y.applyUpdate` them into a fresh `Y.Doc`
-// *before* `useYjsSync`'s observers ever attach (so the first paint already
-// reflects persisted state, not an empty-then-fill flash), then keep pushing
-// local edits back via a debounced queue.
+// Job 015 built this against a debounced-REST push/pull transport; Job 016
+// layered `y-indexeddb` local caching on top of that. Job 020 replaces the
+// *live-sync* transport with a real `@hocuspocus/provider` WebSocket
+// connection — the IndexedDB caching layer is untouched (still "render
+// instantly from local cache, then reconcile," per PLAN.md's "local
+// IndexedDB caching but online-to-edit" decision) since it's a genuinely
+// separate, complementary concern from how live edits travel over the
+// network.
 //
-// Job 016 layers two things on top, both scoped by PLAN.md's "local
-// IndexedDB caching but online-to-edit" decision:
-//   1. `y-indexeddb` (`IndexeddbPersistence`) attached to the same `Y.Doc`,
-//      so a *returning* visit to a project already cached on this device can
-//      render instantly from the local cache while the network fetch is
-//      still in flight, then reconciles once that fetch resolves — see
-//      `load()`'s "fast path" below. A brand-new project (or a device that's
-//      never cached this project before) has no cache to render from, so it
-//      falls through to exactly Job 015's original network-required
-//      behavior — the "online-to-edit" decision isn't relaxed, only the
-//      *read* path gets an instant-render shortcut for already-cached data.
-//   2. `SaveStatus` — the live "Saved" / "Saving…" / "Offline — reconnecting"
-//      indicator's state, sourced from `updateQueue.ts`'s own status
-//      tracking (see that file's `SaveStatus`/`onStatusChange`).
+// What changed and what didn't, precisely (see this job's Handoff notes
+// for the full reasoning):
+//   - GONE: `updateQueue.ts`'s debounced push queue, the `doc.on('update',
+//     ...)` listener that fed it, and the `RECONCILE_ORIGIN` sentinel that
+//     used to exist purely so that listener didn't mistake "bytes the
+//     server just sent us" for "a local edit worth pushing back." None of
+//     that hand-rolled origin bookkeeping is needed anymore:
+//     `HocuspocusProvider` is a real, well-tested Yjs provider — like
+//     `y-indexeddb`, it already tags its own applied updates with its own
+//     origin internally, so it and `y-indexeddb` coexist on the *same*
+//     `Y.Doc` correctly with no extra code here to keep them from
+//     re-broadcasting each other's writes in a loop.
+//   - GONE: the REST fetch-on-open / push-on-edit calls
+//     (`docApi.ts`'s old `fetchProjectDoc`/`pushProjectDocUpdate` — removed
+//     entirely, see that file's header comment). The provider's sync
+//     protocol replaces both: connecting performs the initial load,
+//     and any local `Y.Doc` mutation is synced automatically for as long as
+//     the provider stays connected.
+//   - UNCHANGED: the IndexedDB fast-path shape (`hasRootContainer` check,
+//     "only skip creating a root if the cache already has one"), and the
+//     hydration ordering this file has been careful about since Job
+//     015/016 — see `finishHydration`'s own comment below for why it still
+//     matters, in a slightly different but analogous form.
+//   - CHANGED: `SaveStatus` is now derived from the live WebSocket's own
+//     connection/sync state (`HocuspocusProvider`'s `onStatus`/
+//     `onUnsyncedChanges` callbacks) instead of the old push queue's
+//     pending/in-flight/failed bookkeeping — see `computeSaveStatus` below.
+//     The `SaveStatus` *type* itself (`"saved" | "saving" | "offline"`) and
+//     `SaveStatusIndicator.tsx`'s rendering of it are both unchanged; only
+//     what feeds it changed.
+//   - CHANGED: every role (including `"viewer"`) now gets a live provider
+//     connection, not just owner/editor. This is a deliberate improvement,
+//     not an oversight: a viewer should still *see* other collaborators'
+//     live edits even though their own can't persist — the previous
+//     REST-transport design never wired live sync for anyone, so this
+//     distinction didn't exist yet. What still can't happen for a viewer is
+//     writes actually taking effect, and that's now a genuine **server-side**
+//     guarantee (`apps/realtime/src/server.ts`'s `onAuthenticate` sets
+//     `connectionConfig.readOnly = true` for a re-verified `"viewer"` role,
+//     and Hocuspocus itself drops inbound update messages on a `readOnly`
+//     connection) — not a client-side "don't bother" convenience like
+//     before.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { HocuspocusProvider } from "@hocuspocus/provider";
 import { IndexeddbPersistence, clearDocument } from "y-indexeddb";
 import * as Y from "yjs";
 
 import { type SfmDocument, addContainer, createDocument, createUndoManager, listContainers } from "@scm/ydoc";
 
 import type { ProjectRole } from "../../api/projects";
-import { fetchProjectDoc, pushProjectDocUpdate } from "./docApi";
-import { createUpdateQueue, type SaveStatus, type UpdateQueue } from "./updateQueue";
+import { fetchRealtimeTicket, getRealtimeWsUrl } from "./realtimeTicket";
+import type { SaveStatus } from "./updateQueue";
 
 /** The pieces of a hydrated document a `CanvasView` mount needs, once loading has finished. */
 export interface StaticCanvasDoc {
@@ -42,43 +72,16 @@ export type ProjectDocumentState =
   | { status: "error"; message: string; retry: () => void }
   | ({ status: "ready" } & StaticCanvasDoc);
 
-const DEBOUNCE_MS = 1500;
-
 /**
- * Marks a `Y.applyUpdate` call as "bytes we already know the server/cache
- * has" (the initial cache load and the network-reconcile apply), so the
- * push-queue's `doc.on('update', ...)` listener can skip re-pushing them
- * back to the server as if they were a fresh local edit — see `finishHydration`'s
- * `updateHandler` below. A local user edit (or this hook's own
- * default-filling/root-creation mutations, which *should* be pushed) never
- * passes an origin, so its origin is `undefined` and is never mistaken for
- * this sentinel. A module-level `Symbol` (not a string) so it can never
- * collide with an origin some other part of the app might pass.
- */
-const RECONCILE_ORIGIN = Symbol("scm-doc-reconcile");
-
-/**
- * The local IndexedDB database name for a project's cached doc — one fixed
- * name per project, deliberately never suffixed/versioned. An earlier draft
- * of this file tried a "bump a generation counter on restore, so the next
- * load ignores the stale cache" scheme, keyed by an in-memory `useRef`. That
- * broke the very thing this job requires: a `useRef` resets to its initial
- * value on every remount, including a real browser reload — so the *next*
- * actual page reload after a restore would silently fall back to
- * generation 0's (long-stale, pre-restore) cache instead of the one the
- * restore had just moved to, defeating "reloading shows the cached local
- * state instantly" for exactly the project that just had a restore happen.
- * Fixed by keeping one name per project forever and, on restore,
- * deterministically closing then deleting that database's contents before
- * re-hydrating (see `reloadAfterRestore` below) — the cache is genuinely
- * emptied, not renamed, so a subsequent real reload's fast path is
- * comparing against the *current* (post-restore) name every time.
+ * The local IndexedDB database name for a project's cached doc — unchanged
+ * from Job 016, one fixed name per project forever (see that job's Handoff
+ * notes for why a generation-counter scheme was tried and rejected).
  */
 function indexedDbName(projectId: string): string {
   return `scm-project-${projectId}`;
 }
 
-/** Does this (already IndexedDB-synced) doc already have a root container? A pure, non-mutating read — safe to call before deciding whether to attach the push queue (see this file's header comment on why that ordering matters). */
+/** Does this (already IndexedDB-synced) doc already have a root container? A pure, non-mutating read — safe to call before deciding whether `finishHydration` needs to create one. */
 function hasRootContainer(doc: Y.Doc): boolean {
   const containers = doc.getMap<Y.Map<unknown>>("containers");
   for (const container of containers.values()) {
@@ -88,20 +91,27 @@ function hasRootContainer(doc: Y.Doc): boolean {
 }
 
 /**
- * Loads (and keeps saving) the CRDT document for `projectId`. One doc load
- * per `(projectId, role)` change — a project switch (or a role change, e.g.
- * a share invite accepted mid-session) tears down the old queue/listener/
- * IndexedDB provider and starts a fresh load, mirroring how `App.tsx`
- * already `key`s `<CanvasView>` by project id so a project switch remounts
- * it entirely.
- *
- * `role === "viewer"` skips wiring the push queue entirely (see the effect
- * body) — a judgement call flagged in Job 015's Handoff notes: `apps/api`
- * already rejects a viewer's push with 403, so this is purely to avoid
- * generating doomed requests and noisy console errors, not the actual
- * enforcement boundary. It does not stop a viewer from *locally* editing
- * the in-memory doc — building real read-only canvas UI is explicitly
- * deferred to Job 020 per that job's own notes.
+ * Derives the `SaveStatus` the `SaveStatusIndicator` already knows how to
+ * render from `HocuspocusProvider`'s own live connection state — replaces
+ * `updateQueue.ts`'s push-queue-based version (Job 015/016). `"offline"`
+ * whenever the underlying WebSocket isn't actually connected (covers both
+ * "still connecting" and "disconnected, will auto-retry" — the provider's
+ * own reconnect logic, with a fresh ticket fetched per attempt, is what
+ * makes "will auto-retry" true, mirroring `updateQueue.ts`'s old
+ * auto-retry-on-failure loop but now built into the library rather than
+ * hand-rolled). `"saving"` while connected with unacknowledged local
+ * changes still in flight; `"saved"` once the provider reports zero.
+ */
+function computeSaveStatus(wsStatus: "connecting" | "connected" | "disconnected", unsyncedChanges: number): SaveStatus {
+  if (wsStatus !== "connected") return "offline";
+  return unsyncedChanges > 0 ? "saving" : "saved";
+}
+
+/**
+ * Loads (and keeps live-syncing) the CRDT document for `projectId`. One doc
+ * load per `(projectId, role)` change — a project switch (or a role change)
+ * tears down the old provider/IndexedDB connection and starts fresh,
+ * mirroring how `App.tsx` already `key`s `<CanvasView>` by project id.
  */
 export function useProjectDocument(
   projectId: string,
@@ -113,62 +123,54 @@ export function useProjectDocument(
   // Lets `reloadAfterRestore` (called from outside this effect, by a
   // `VersionPanel` click) reach the *current* IndexedDB provider instance to
   // deterministically close it before deleting its data — see that
-  // function's doc comment.
+  // function's doc comment. Unchanged from Job 016.
   const idbRef = useRef<IndexeddbPersistence | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let doc: Y.Doc | null = null;
     let idb: IndexeddbPersistence | null = null;
-    let queue: UpdateQueue | null = null;
-    let updateHandler: ((update: Uint8Array, origin: unknown) => void) | null = null;
+    let provider: HocuspocusProvider | null = null;
     let hydrated = false;
+    let wsStatus: "connecting" | "connected" | "disconnected" = "connecting";
+    let unsyncedChanges = 0;
 
     setState({ status: "loading" });
     setSaveStatus("saved");
 
+    function refreshSaveStatus() {
+      setSaveStatus(computeSaveStatus(wsStatus, unsyncedChanges));
+    }
+
     /**
-     * Runs exactly once per effect run, the moment there's enough
-     * information to render — either right after the local IndexedDB cache
-     * sync (if it already contains a root container, the "fast path") or
-     * after the network fetch resolves (the only path for a project this
-     * device has never cached, including a genuinely brand-new project).
+     * Runs exactly once per effect run — either right after the local
+     * IndexedDB cache sync (the "fast path": the cache already has a root
+     * container, so this device has opened this project before) or after
+     * the provider's first successful sync with the server (the only path
+     * for a project this device has never cached, including a genuinely
+     * brand-new one). See `load()` below for exactly when each happens.
      *
-     * The push-queue listener is attached *before* this function's own
-     * `createDocument`/root-ensuring mutations, for exactly the reason Job
-     * 015's handoff notes spell out: without that ordering, a brand-new
-     * project would mint a new root-container id on every reload until the
-     * user's first real edit, since nothing would ever persist the very
-     * first `addContainer` call below. That invariant is unaffected by the
-     * IndexedDB fast path — the fast path is only ever taken when a root
-     * *already exists* (see `hasRootContainer` above), so a genuinely new
-     * project always falls through to the slow, network-required path,
-     * where this same ordering applies exactly as it did in Job 015.
+     * The ordering concern Job 015/016 both flagged prominently — "the
+     * listener that feeds pushes must attach *before* the
+     * root-container-creation mutation, or a brand-new project would mint a
+     * fresh root on every reload" — took a different, simpler shape once
+     * Hocuspocus owns sync: there's no separate listener to attach at all
+     * anymore. `HocuspocusProvider` watches *every* mutation to `doc` for as
+     * long as it exists (constructed in `load()`, below, before this
+     * function ever runs), and Yjs's sync protocol is a bidirectional
+     * state-vector diff, not "whatever happened after a listener was
+     * wired" — so a root container created here, whenever this runs
+     * relative to the provider's own connection lifecycle, is synced
+     * correctly regardless. The one invariant that *does* still matter,
+     * unchanged from before, is only creating a root when `hasRootContainer`
+     * says there isn't one already — that's what stops two clients (or one
+     * client across two reloads) from minting duplicate root containers,
+     * and it's enforced by `load()`'s fast-path check below, not by
+     * anything in this function.
      */
     function finishHydration() {
       if (hydrated || cancelled || !doc) return;
       hydrated = true;
-
-      const canPush = role === "owner" || role === "editor";
-      if (canPush) {
-        queue = createUpdateQueue({
-          push: (update) => pushProjectDocUpdate(projectId, update),
-          delayMs: DEBOUNCE_MS,
-          onStatusChange: setSaveStatus,
-          onError: (err) => {
-            // updateQueue.ts's own retry loop (and onStatusChange -> "offline")
-            // handles the user-visible side of this; still worth a console
-            // trace for anyone debugging a stuck sync.
-            console.error("[useProjectDocument] failed to push a doc update, will retry", err);
-          },
-        });
-        setSaveStatus(queue.getStatus());
-        updateHandler = (update: Uint8Array, origin: unknown) => {
-          if (origin === RECONCILE_ORIGIN) return;
-          queue!.enqueue(update);
-        };
-        doc.on("update", updateHandler);
-      }
 
       const sfmDoc = createDocument({ doc });
 
@@ -185,9 +187,10 @@ export function useProjectDocument(
         });
       }
 
-      // Created last, deliberately — see this function's header comment.
-      // None of the hydration/default-filling mutations above should show
-      // up as an undo step once the user starts pressing Ctrl/Cmd+Z.
+      // Created last, deliberately — see this function's header comment on
+      // why (unchanged reasoning from Job 015/016): none of the
+      // hydration/default-filling mutations above should show up as an
+      // undo step once the user starts pressing Ctrl/Cmd+Z.
       const undoManager = createUndoManager(sfmDoc);
 
       setState({ status: "ready", sfmDoc, rootContainerId: root.id, undoManager });
@@ -197,61 +200,74 @@ export function useProjectDocument(
       doc = new Y.Doc();
 
       // Attach the local cache first — cheap, local, no network round-trip.
-      // `whenSynced` resolves once whatever's already cached for this
-      // project (nothing, for a first-ever visit) has been `Y.applyUpdate`-d
-      // into `doc` by the library itself (with its own origin, so it's never
-      // mistaken for a local edit worth pushing back — see
-      // `finishHydration`'s `updateHandler`).
+      // Unchanged from Job 016.
       idb = new IndexeddbPersistence(indexedDbName(projectId), doc);
       idbRef.current = idb;
       try {
         await idb.whenSynced;
       } catch (err) {
-        // IndexedDB unavailable (private browsing in some browsers, quota
-        // errors, disabled storage) — degrade to exactly Job 015's
-        // network-only behavior rather than failing the whole load.
         console.warn("[useProjectDocument] IndexedDB cache unavailable, continuing network-only", err);
       }
       if (cancelled) return;
 
       // Fast path: this device already has a cached copy of this project
-      // with real content — render *now*, before the network fetch even
-      // resolves, then keep reconciling with the server in the background.
-      // A doc with no root container at all (never cached before, or a
-      // genuinely brand-new project) never takes this path — see
-      // `finishHydration`'s header comment on why that matters.
+      // with real content — render *now*, before the network connection
+      // even finishes its first sync, then keep reconciling live in the
+      // background. Unchanged in shape from Job 016; see `finishHydration`'s
+      // header comment on why it's still safe with a live provider attached.
       const cameFromCache = hasRootContainer(doc);
       if (cameFromCache) {
         finishHydration();
       }
 
-      let bytes: Uint8Array;
-      try {
-        bytes = await fetchProjectDoc(projectId);
-      } catch (err) {
-        if (cancelled) return;
-        if (!cameFromCache) {
-          // No cache to fall back on and the network fetch failed — this is
-          // exactly Job 015's original failure mode, surfaced the same way
-          // (the "error" state with a Retry button).
-          throw err;
-        }
-        // Already rendering from cache; the fetch failing here just means
-        // reconciliation hasn't happened yet. Not fatal — the canvas stays
-        // up, and the save-status indicator (once a push queue exists)
-        // already reflects "offline" via its own retry loop; there's
-        // nothing further to do here for a role that can't push anyway.
-        return;
+      let resolveFirstSync!: () => void;
+      let rejectFirstSync!: (err: Error) => void;
+      const firstSync = new Promise<void>((resolve, reject) => {
+        resolveFirstSync = resolve;
+        rejectFirstSync = reject;
+      });
+      // Always attach a handler so an auth failure that happens *after*
+      // the fast path already rendered (see below) doesn't surface as an
+      // unhandled promise rejection — it's genuinely non-fatal in that case,
+      // matching Job 015/016's "already rendering from cache; the network
+      // failing just means reconciliation hasn't happened yet" precedent.
+      firstSync.catch(() => {});
+
+      provider = new HocuspocusProvider({
+        url: getRealtimeWsUrl(),
+        name: projectId,
+        document: doc,
+        // Fetched fresh right before *every* connection attempt (initial
+        // connect and every reconnect) — never cached — since a ticket is
+        // deliberately only valid for 60 seconds
+        // (`apps/api/src/realtime/ticket.ts`). `HocuspocusProvider`'s
+        // function form of `token` is exactly what makes this possible: it
+        // calls this on each attempt, not once at construction time.
+        token: () => fetchRealtimeTicket(projectId),
+        onStatus: ({ status }) => {
+          wsStatus = status;
+          refreshSaveStatus();
+        },
+        onUnsyncedChanges: ({ number }) => {
+          unsyncedChanges = number;
+          refreshSaveStatus();
+        },
+        onSynced: ({ state: synced }) => {
+          if (synced) resolveFirstSync();
+        },
+        onAuthenticationFailed: ({ reason }) => {
+          console.error(`[useProjectDocument] realtime ticket rejected: ${reason}`);
+          rejectFirstSync(new Error(`realtime authentication failed: ${reason}`));
+        },
+      });
+
+      if (!cameFromCache) {
+        // No cache to fall back on — the same "surface the error state"
+        // failure mode Job 015 built for a failed REST fetch, now for a
+        // failed initial connection/sync instead.
+        await firstSync;
       }
       if (cancelled) return;
-
-      if (bytes.length > 0) {
-        // Tagged as a reconcile apply (not a local edit) — if the push
-        // queue is already attached (the fast path), this must not be
-        // queued back to the server, or every reload would re-push content
-        // the server just sent us.
-        Y.applyUpdate(doc, bytes, RECONCILE_ORIGIN);
-      }
 
       finishHydration(); // no-op if the fast path already ran
     }
@@ -267,27 +283,19 @@ export function useProjectDocument(
 
     return () => {
       cancelled = true;
-      if (doc && updateHandler) {
-        doc.off("update", updateHandler);
-      }
-      if (queue) {
-        // Best-effort final flush on unmount (navigating back to the
-        // project list, switching projects): a deliberate navigation
-        // shouldn't lose an edit still sitting in the debounce window just
-        // because nothing was going to flush it otherwise. This is
-        // fire-and-forget — React doesn't wait on an effect cleanup
-        // function's returned promise — but it's still strictly better than
-        // not trying. A genuine crash/tab-close skips this entirely, which
-        // is exactly the "loses at most one debounce window" acceptance
-        // criterion this job targets, not a gap to close here.
-        void queue.flushNow();
-        queue.dispose();
-      }
-      // Closes the IndexedDB connection (fire-and-forget, mirroring
-      // `queue.flushNow()` above) — does *not* delete the cached data, which
-      // is the whole point of a local cache surviving a remount/reload.
-      // Safe to call even if `reloadAfterRestore` already called `destroy()`
-      // on this same instance (idempotent — see that function's doc comment).
+      // Tears down the WebSocket connection cleanly. Unlike Job 015/016's
+      // push queue, there's no separate "flush before disposing" step to
+      // worry about here — every prior local mutation was already synced
+      // continuously while the provider was connected, not batched up for
+      // a final flush at teardown time. `reloadAfterRestore` doesn't need
+      // its own ref to this provider the way it does for `idb` below —
+      // bumping `retryToken` re-runs this whole effect, whose *own* cleanup
+      // (this function) tears down the provider it closed over before
+      // `load()` runs again.
+      provider?.destroy();
+      // Closes the IndexedDB connection (fire-and-forget) — does *not*
+      // delete the cached data, which is the whole point of a local cache
+      // surviving a remount/reload. Unchanged from Job 016.
       void idb?.destroy();
       if (idbRef.current === idb) {
         idbRef.current = null;
@@ -296,53 +304,34 @@ export function useProjectDocument(
   }, [projectId, role, retryToken]);
 
   /**
-   * Called after a successful restore (`docApi.ts`'s `restoreProjectVersion`)
-   * to make the live canvas reflect the newly-restored state. A restore is a
-   * *wholesale replace* server-side (see `docStorage.ts`'s own doc comment on
-   * why it can't be a `Y.applyUpdate` merge) — for the client to honor that
-   * same "unambiguous replace, not merge" semantics, it can't just
-   * `Y.applyUpdate` the restored bytes into the *current* live `doc` either:
-   * that doc may contain content (e.g. nodes) from the pre-restore state
-   * that the restored version never had, and a CRDT merge is fundamentally
-   * additive — it has no way to "un-add" them.
+   * Called after a successful restore (`docApi.ts`'s `restoreProjectVersion`,
+   * still a plain REST call — see that file's header comment on why
+   * versions stay REST-based) to make the live canvas reflect the newly-
+   * restored state. Unchanged in *mechanism* from Job 016 — still a full
+   * re-hydration (fresh `Y.Doc`, cleared IndexedDB cache, fresh network
+   * sync) rather than trying to reconcile the restored bytes into the
+   * live doc in place, for the same "a CRDT merge can't express a rollback"
+   * reason that job's own doc comment on `restoreProjectVersion` explains.
    *
-   * So this forces a full re-hydration in two steps:
-   *   1. Deterministically close the *current* IndexedDB connection
-   *      (`idbRef.current.destroy()`, awaited — not fire-and-forget, unlike
-   *      the effect cleanup's own best-effort `destroy()` call) and only
-   *      then delete that database's contents (`clearDocument`). Sequencing
-   *      matters: `indexedDB.deleteDatabase` on a database with an open
-   *      connection can block ("blocked" event) until every connection to it
-   *      closes, so closing first — rather than racing a delete against the
-   *      effect's own async cleanup — avoids that hang entirely.
-   *   2. Bump `retryToken`, re-running the effect above from scratch: a
-   *      brand-new `Y.Doc`, a fresh `IndexeddbPersistence` against the
-   *      *same* database name (now genuinely empty, not just orphaned under
-   *      a different name), and a fresh network fetch of the now-restored
-   *      server state. Because the name never changes, the *next* real page
-   *      reload after this one still finds — and instantly renders from —
-   *      the correct (post-restore) cached content, once step 2's network
-   *      fetch repopulates it (`IndexeddbPersistence` persists every `doc`
-   *      update regardless of origin, including the `RECONCILE_ORIGIN`-
-   *      tagged apply of the restored bytes).
+   * One genuine, documented gap this job did **not** close (out of scope —
+   * see this job's Handoff notes): if `apps/realtime`'s in-process
+   * `Document` for this project is still loaded (i.e. *any* connection,
+   * from any user, is currently open on it), the restore's Postgres-level
+   * replace has already happened, but Hocuspocus's `onLoadDocument` only
+   * runs once per document *load* — not once per *connection* — so a fresh
+   * connection from this same reload will sync against the server's
+   * still-in-memory (pre-restore) `Document`, not the just-restored
+   * Postgres state, until every connection to that document closes and it
+   * unloads naturally. In the common case (this is the only open
+   * connection, or restoring happens after everyone else has left), the
+   * `provider.destroy()` in this effect's cleanup drops the connection
+   * count to zero and the reconnect below correctly picks up the restored
+   * state.
    */
   const reloadAfterRestore = useCallback(() => {
     void (async () => {
       await idbRef.current?.destroy();
       await clearDocument(indexedDbName(projectId)).catch((err: unknown) => {
-        // Best-effort only. The connection is already closed by this point
-        // (the `await` above), so a `deleteDatabase` failure here would be a
-        // genuine IndexedDB-level error (quota/permissions/browser quirk),
-        // not the "blocked by an open connection" case this two-step
-        // sequencing is designed to avoid. If it does fail, the *next*
-        // effect run's fast path would briefly re-apply the stale
-        // pre-restore content from the untouched cache before the network
-        // fetch's `RECONCILE_ORIGIN` apply lands on top of it — a real,
-        // if narrow, gap in the "wholesale replace" guarantee for that one
-        // reload specifically (not for any reload after it, since the
-        // network apply still runs and gets cached going forward). Logged
-        // rather than silently swallowed so it's at least visible if it
-        // ever happens.
         console.warn("[useProjectDocument] failed to clear stale IndexedDB cache after restore", err);
       });
       setRetryToken((t) => t + 1);

@@ -15,15 +15,16 @@
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
     "@scm/db": "workspace:*",
+    "@scm/doc-storage": "workspace:*",
     "dotenv": "^17.4.2",
     "fastify": "^5.11.2",
     "fastify-plugin": "^6.0.0",
+    "jsonwebtoken": "^9.0.3",
     "kysely": "^0.29.4",
-    "kysely-postgres-js": "^3.0.0",
-    "postgres": "^3.4.9",
     "yjs": "13.6.32"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.13.3",
     "tsx": "^4.23.8",
     "typescript": "^5.6.0",

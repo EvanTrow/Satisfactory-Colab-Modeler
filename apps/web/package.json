@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@hocuspocus/provider": "^4.5.0",
     "@scm/gamedata": "workspace:*",
     "@scm/rational": "workspace:*",
     "@scm/solver": "workspace:*",

@@ -6,11 +6,23 @@
       "outputs": ["dist/**"]
     },
     "dev": {
+      "dependsOn": ["^build"],
       "cache": false,
       "persistent": true
     },
     "typecheck": {
-      "dependsOn": ["^typecheck"],
+      // Job 020: "^build" added alongside the pre-existing "^typecheck" —
+      // @scm/doc-storage's "types" now points at its built dist/index.d.ts
+      // (not its source, see that package's package.json comment), since
+      // it's consumed by apps/api/apps/realtime under NodeNext resolution
+      // where a JIT-style "main": "./src/index.ts" package with internal
+      // relative imports can't be run by plain `node dist/*.js` — see
+      // jobs/020-hocuspocus-server.md's Handoff notes. A downstream
+      // package's own "typecheck" script never emits a dist/ (it's
+      // `tsc --noEmit`), so depending on "^typecheck" alone isn't enough to
+      // guarantee the .d.ts file this package's typecheck resolves against
+      // actually exists yet — "^build" is.
+      "dependsOn": ["^build", "^typecheck"],
       "outputs": []
     },
     "test": {

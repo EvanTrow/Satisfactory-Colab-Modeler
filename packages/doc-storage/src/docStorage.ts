@@ -2,23 +2,22 @@
 // split described in PLAN.md §4 "Canvas state: snapshot + incremental log".
 //
 // Deliberately transport-agnostic: every function here takes/returns plain
-// bytes (`Uint8Array`/`Buffer`) and project ids, with no Fastify types
-// anywhere in this file. `apps/api/src/projects/docRoutes.ts` is the only
-// caller today, but Job 020 (Hocuspocus, `apps/realtime`) is expected to
-// reuse this exact module for its own `onLoadDocument`/`onStoreDocument`
-// hooks rather than re-implementing the same merge/compaction algorithm — see
-// this job's own Notes section ("Keep the persistence module's interface
-// transport-agnostic..."). If `apps/realtime` ends up in its own workspace
-// package with no dependency on `apps/api`, promoting this file (verbatim)
-// to a new `packages/doc-storage` (or similar) is the expected move — not
-// done here since only one caller exists so far and PLAN.md doesn't name a
-// package for it.
+// bytes (`Uint8Array`/`Buffer`) and project ids, with no Fastify/Hocuspocus
+// types anywhere in this file. Job 015 built this inside `apps/api` (as
+// `apps/api/src/projects/docStorage.ts`) with a note flagging that Job 020
+// would likely want it from `apps/realtime` too; Job 020 promoted it
+// verbatim into this package for exactly that reason — see this package's
+// `index.ts` header comment for the full architectural reasoning. Both
+// `apps/api/src/projects/docRoutes.ts` (REST load/push/versions) and
+// `apps/realtime/src/server.ts` (Hocuspocus `onLoadDocument`/
+// `onStoreDocument`) call these same functions now — neither reimplements
+// the merge/compaction algorithm.
 import { sql } from "kysely";
 import * as Y from "yjs";
 
 import type { ProjectVersion } from "@scm/db";
 
-import { db } from "../db.js";
+import { db } from "./db.js";
 
 /**
  * Fold the log into the snapshot once a project's `project_doc_updates` row
