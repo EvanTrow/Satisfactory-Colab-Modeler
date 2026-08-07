@@ -47,4 +47,5 @@
 // `apps/realtime` imports directly.
 export * from "./db.js";
 export * from "./docStorage.js";
+export * from "./projection.js";
 export * from "./roles.js";

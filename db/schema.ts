@@ -7,9 +7,8 @@
 // (`users`, `sessions`, `projects`, `project_members`, `project_invites` —
 // Job 004) plus "Canvas state: snapshot + incremental log" and the
 // version-history table (`project_doc_state`, `project_doc_updates`,
-// `project_versions` — Job 015). The read-only relational projection
-// (`proj_nodes`, `proj_edges` — Job 025) is still out of scope and
-// deliberately not declared yet.
+// `project_versions` — Job 015), plus the read-only relational projection
+// (`proj_nodes`, `proj_edges` — Job 025, migrations 0009/0010).
 import type { ColumnType, Generated, Insertable, Selectable, Updateable } from "kysely";
 
 /** Postgres `inet` values round-trip through `postgres.js`/Kysely as plain strings. */
@@ -154,6 +153,57 @@ export type ProjectVersion = Selectable<ProjectVersionsTable>;
 export type NewProjectVersion = Insertable<ProjectVersionsTable>;
 export type ProjectVersionUpdate = Updateable<ProjectVersionsTable>;
 
+// ---------------------------------------------------------------------------
+// Relational projection (read-only, PLAN.md §4, Job 025)
+// ---------------------------------------------------------------------------
+//
+// Materialized server-side from a project's Yjs doc state, never written by
+// the client and never a source of truth — see `packages/doc-storage/src/
+// projection.ts` for the materialization logic and the exact-vs-approx
+// rational-storage handling.
+
+export interface ProjNodesTable {
+  project_id: string;
+  node_id: string;
+  container_id: string;
+  /** 'recipe' | 'splurger' | 'storage' | 'outpost' | ... — matches @scm/ydoc's open `NodeKind`. */
+  kind: string;
+  recipe_name: string | null;
+  /** Resolved MultiMachine variant name, e.g. 'Miner Mk.2'. */
+  machine_name: string | null;
+  pos_x: number | null;
+  pos_y: number | null;
+  /** Canonical "n/d" string — the lossless source. */
+  limit_exact: string | null;
+  /** double precision, sorting/filtering only — derived FROM limit_exact, never independently. */
+  limit_approx: number | null;
+  clock_exact: string | null;
+  clock_approx: number | null;
+  shards: number | null;
+  purity: string | null;
+  belt_tier: string | null;
+  storage_mode: string | null;
+}
+
+export type ProjNode = Selectable<ProjNodesTable>;
+export type NewProjNode = Insertable<ProjNodesTable>;
+export type ProjNodeUpdate = Updateable<ProjNodesTable>;
+
+export interface ProjEdgesTable {
+  project_id: string;
+  edge_id: string;
+  part: string;
+  from_node: string;
+  from_port: string;
+  to_node: string;
+  to_port: string;
+  waypoints: Generated<unknown>;
+}
+
+export type ProjEdge = Selectable<ProjEdgesTable>;
+export type NewProjEdge = Insertable<ProjEdgesTable>;
+export type ProjEdgeUpdate = Updateable<ProjEdgesTable>;
+
 export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
@@ -163,4 +213,6 @@ export interface Database {
   project_doc_state: ProjectDocStateTable;
   project_doc_updates: ProjectDocUpdatesTable;
   project_versions: ProjectVersionsTable;
+  proj_nodes: ProjNodesTable;
+  proj_edges: ProjEdgesTable;
 }

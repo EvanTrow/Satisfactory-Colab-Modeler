@@ -18,6 +18,7 @@ import * as Y from "yjs";
 import type { ProjectVersion } from "@scm/db";
 
 import { db } from "./db.js";
+import { materializeProjection } from "./projection.js";
 
 /**
  * Fold the log into the snapshot once a project's `project_doc_updates` row
@@ -109,6 +110,18 @@ export async function loadProjectDocUpdate(projectId: string): Promise<Uint8Arra
  * missed compaction just means the log grows a little more before the next
  * append tries again).
  *
+ * Job 025: also (re-)materializes the read-only relational projection
+ * (`proj_nodes`/`proj_edges`, PLAN.md §4) for this project — see
+ * `projection.ts`'s header comment for the full reasoning behind hooking it
+ * here specifically (this is the one function every doc mutation flows
+ * through, regardless of transport, so this is "the same debounced-flush
+ * point Job 015/020 already use for persistence" the job's own guidance
+ * pointed at, not a new trigger mechanism). Best-effort: a failure here is
+ * logged, not thrown, same as the auto-version-snapshot call below — the
+ * update this call is wrapping has already durably succeeded by this point,
+ * and this projection is an explicitly read-only, never-a-source-of-truth
+ * cache of it.
+ *
  * Job 016: every time compaction actually runs (folds ≥1 log row), an
  * `'auto'` `project_versions` snapshot is also taken — "an 'auto' snapshot
  * on some reasonable cadence (e.g. every N minutes of activity, or every
@@ -138,6 +151,12 @@ export async function appendUpdate(
       actor_user_id: actorUserId,
     })
     .execute();
+
+  try {
+    await materializeProjection(projectId);
+  } catch (err) {
+    console.error(`[docStorage] failed to materialize relational projection for project ${projectId}`, err);
+  }
 
   const { count } = await db
     .selectFrom("project_doc_updates")
