@@ -19,6 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 
 import { updateContainer, type SfmDocument, type Settings } from "@scm/ydoc";
 import {
@@ -79,6 +80,7 @@ import { useSolver } from "../workers";
 import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
 import { SolveStatusIndicator } from "./SolveStatusIndicator";
 import { SplurgerNode } from "./nodes";
+import { LocaleSwitcher } from "../i18n";
 
 // Module-level constants (not created inside the component) so React Flow
 // never sees a new `nodeTypes`/`edgeTypes` object identity on every render
@@ -139,12 +141,13 @@ export function CanvasView({
   localUser,
   onBack,
 }: CanvasViewProps) {
+  const { t } = useTranslation("app");
   const docState = useProjectDocument(projectId, role);
 
   if (docState.status === "loading") {
     return (
       <CanvasStatusScreen projectTitle={projectTitle} onBack={onBack}>
-        Loading project…
+        {t("canvas.loadingProject")}
       </CanvasStatusScreen>
     );
   }
@@ -152,13 +155,15 @@ export function CanvasView({
   if (docState.status === "error") {
     return (
       <CanvasStatusScreen projectTitle={projectTitle} onBack={onBack}>
-        <p className="mb-3 text-[var(--danger)]">Couldn't load this project: {docState.message}</p>
+        <p className="mb-3 text-[var(--danger)]">
+          {t("canvas.loadProjectError", { message: docState.message })}
+        </p>
         <button
           type="button"
           onClick={docState.retry}
           className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]"
         >
-          Retry
+          {t("canvas.retry")}
         </button>
       </CanvasStatusScreen>
     );
@@ -191,6 +196,7 @@ interface CanvasStatusScreenProps {
 
 /** The loading/error shell — same back-button affordance as the real canvas header, so a stuck load never traps the user. */
 function CanvasStatusScreen({ projectTitle, onBack, children }: CanvasStatusScreenProps) {
+  const { t } = useTranslation("app");
   return (
     <div className="flex h-svh w-full flex-col bg-[var(--surface-app)] text-[var(--text-primary)]">
       <div className="flex items-center gap-3 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-2">
@@ -200,7 +206,7 @@ function CanvasStatusScreen({ projectTitle, onBack, children }: CanvasStatusScre
             onClick={onBack}
             className="text-xs text-[var(--text-muted)] underline hover:text-[var(--text-primary)]"
           >
-            ← Back to projects
+            ← {t("canvas.backToProjects")}
           </button>
           <h2 className="truncate text-sm font-medium text-[var(--text-primary)]">
             {projectTitle}
@@ -246,6 +252,11 @@ function CanvasViewReady({
   onRestored,
   onBack,
 }: CanvasViewReadyProps) {
+  const { t } = useTranslation("app");
+  // Job 028: `UNDO`/`REDO` reuse the original string table's own keys
+  // verbatim (exact 1:1 match) — only the parenthetical keybinding hint
+  // ("(Ctrl/Cmd+Z)") is new `app`-namespace text, composed around it below.
+  const { t: tRaw } = useTranslation();
   const { canUndo, canRedo } = useUndoRedoState(undoManager);
   // Job 021: publishes this client's own Awareness state once (identity
   // fields — see `useLocalPresence.ts`) and hands back the setters
@@ -359,7 +370,7 @@ function CanvasViewReady({
                 onClick={onBack}
                 className="text-xs text-[var(--text-muted)] underline hover:text-[var(--text-primary)]"
               >
-                ← Back to projects
+                ← {t("canvas.backToProjects")}
               </button>
               <h2 className="truncate text-sm font-medium text-[var(--text-primary)]">
                 {projectTitle}
@@ -394,19 +405,19 @@ function CanvasViewReady({
                   type="button"
                   onClick={() => undoManager.undo()}
                   disabled={!canUndo}
-                  title="Undo (Ctrl/Cmd+Z)"
+                  title={t("canvas.undo", { label: tRaw("UNDO") })}
                   className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  ↶ Undo
+                  ↶ {tRaw("UNDO")}
                 </button>
                 <button
                   type="button"
                   onClick={() => undoManager.redo()}
                   disabled={!canRedo}
-                  title="Redo (Ctrl/Cmd+Shift+Z)"
+                  title={t("canvas.redo", { label: tRaw("REDO") })}
                   className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  ↷ Redo
+                  ↷ {tRaw("REDO")}
                 </button>
               </div>
               {/* Job 024: "Solving… [STOP]" — visible only while a Full-mode solve is genuinely in flight. */}
@@ -423,7 +434,7 @@ function CanvasViewReady({
               <button
                 type="button"
                 onClick={() => setShowMinimap((v) => !v)}
-                title={showMinimap ? "Hide minimap" : "Show minimap"}
+                title={showMinimap ? t("canvas.hideMinimap") : t("canvas.showMinimap")}
                 aria-pressed={showMinimap}
                 className={`nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border text-xs transition-colors ${
                   showMinimap
@@ -435,6 +446,7 @@ function CanvasViewReady({
               </button>
               {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. Job 019 added the solver-mode/number-format sections. */}
               <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
+              <LocaleSwitcher />
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
               {/* Job 016: version history + restore, and the live autosave-status indicator (replaces Job 015's static "autosaves ~1.5s..." placeholder text). */}
               <VersionPanel projectId={projectId} role={role} onRestored={onRestored} />

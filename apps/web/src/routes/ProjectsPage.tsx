@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 
 import {
   ApiError,
@@ -30,6 +32,11 @@ type LoadState = { status: "loading" } | { status: "error"; message: string } | 
  * "why did that 403" experience.
  */
 export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
+  // `i18n.language` (not just `t`) is used directly for `toLocaleString` below —
+  // Job 028: a genuinely locale-aware date format (day/month order, calendar
+  // script) that has nothing to do with the `translation`/`app` string
+  // tables, but should still track the user's chosen display locale.
+  const { t, i18n } = useTranslation("app");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
   const [actionError, setActionError] = useState<string | null>(null);
@@ -49,7 +56,7 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setLoadState({ status: "error", message: describeError(err) });
+        setLoadState({ status: "error", message: describeError(err, t) });
       });
     return () => {
       cancelled = true;
@@ -63,7 +70,7 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
       const project = await createProject();
       setProjects((prev) => [project, ...prev]);
     } catch (err) {
-      setActionError(describeError(err));
+      setActionError(describeError(err, t));
     } finally {
       setCreating(false);
     }
@@ -93,7 +100,7 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
       setProjects((prev) => prev.map((p) => (p.id === project.id ? updated : p)));
       cancelRename();
     } catch (err) {
-      setActionError(describeError(err));
+      setActionError(describeError(err, t));
     } finally {
       setBusyId(null);
     }
@@ -109,16 +116,16 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
       // content too (apps/api/src/projects/store.ts's duplicateProject),
       // not just its title/settings — the "settings only" caveat this
       // notice used to carry (Job 006-014) no longer applies.
-      setNotice(`"${copy.title}" was created, including a copy of its current canvas content.`);
+      setNotice(t("projects.duplicateNotice", { title: copy.title }));
     } catch (err) {
-      setActionError(describeError(err));
+      setActionError(describeError(err, t));
     } finally {
       setBusyId(null);
     }
   }
 
   async function handleDelete(project: ProjectSummary) {
-    if (!window.confirm(`Delete "${project.title}"? This can't be undone from the UI yet.`)) {
+    if (!window.confirm(t("projects.confirmDelete", { title: project.title }))) {
       return;
     }
     setActionError(null);
@@ -127,7 +134,7 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
       await deleteProject(project.id);
       setProjects((prev) => prev.filter((p) => p.id !== project.id));
     } catch (err) {
-      setActionError(describeError(err));
+      setActionError(describeError(err, t));
     } finally {
       setBusyId(null);
     }
@@ -136,14 +143,14 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-10">
       <div className="mb-6 flex items-center justify-between">
-        <h2 className="text-xl font-semibold tracking-tight">Your projects</h2>
+        <h2 className="text-xl font-semibold tracking-tight">{t("projects.heading")}</h2>
         <button
           type="button"
           onClick={handleCreate}
           disabled={creating}
           className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
         >
-          {creating ? "Creating…" : "New project"}
+          {creating ? t("projects.creating") : t("projects.new")}
         </button>
       </div>
 
@@ -151,7 +158,7 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
         <div className="mb-4 rounded-md border border-[var(--outpost-border)] bg-[var(--outpost-soft)] px-3 py-2 text-sm text-[var(--outpost)]">
           {notice}
           <button type="button" onClick={() => setNotice(null)} className="ml-3 underline">
-            Dismiss
+            {t("projects.dismiss")}
           </button>
         </div>
       )}
@@ -161,14 +168,14 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
         </div>
       )}
 
-      {loadState.status === "loading" && <p className="text-[var(--text-muted)]">Loading projects…</p>}
+      {loadState.status === "loading" && <p className="text-[var(--text-muted)]">{t("projects.loading")}</p>}
       {loadState.status === "error" && (
-        <p className="text-[var(--danger)]">Couldn't load projects: {loadState.message}</p>
+        <p className="text-[var(--danger)]">{t("projects.loadError", { message: loadState.message })}</p>
       )}
 
       {loadState.status === "ready" && projects.length === 0 && (
         <div className="rounded-lg border border-dashed border-[var(--border-strong)] px-4 py-10 text-center text-[var(--text-muted)]">
-          <p>No projects yet — create one to get started.</p>
+          <p>{t("projects.empty")}</p>
         </div>
       )}
 
@@ -199,13 +206,16 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
                       type="button"
                       onClick={() => onOpenProject(project)}
                       className="truncate text-left font-medium text-[var(--text-primary)] hover:underline"
-                      title="Open project"
+                      title={t("projects.openTitle")}
                     >
                       {project.title}
                     </button>
                   )}
                   <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                    {project.role} · updated {new Date(project.updatedAt).toLocaleString()}
+                    {t("projects.updatedAt", {
+                      role: t(`projects.role.${project.role}`),
+                      date: new Date(project.updatedAt).toLocaleString(i18n.language),
+                    })}
                   </p>
                 </div>
 
@@ -218,14 +228,14 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
                         disabled={isBusy}
                         className="rounded-md bg-[var(--accent)] px-2 py-1 text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
                       >
-                        Save
+                        {t("projects.save")}
                       </button>
                       <button
                         type="button"
                         onClick={cancelRename}
                         className="rounded-md px-2 py-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                       >
-                        Cancel
+                        {t("projects.cancel")}
                       </button>
                     </>
                   ) : (
@@ -237,7 +247,7 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
                           disabled={isBusy}
                           className="rounded-md px-2 py-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
                         >
-                          Rename
+                          {t("projects.rename")}
                         </button>
                       )}
                       <button
@@ -246,7 +256,7 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
                         disabled={isBusy}
                         className="rounded-md px-2 py-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
                       >
-                        Duplicate
+                        {t("projects.duplicate")}
                       </button>
                       {canDelete && (
                         <button
@@ -255,7 +265,7 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
                           disabled={isBusy}
                           className="rounded-md px-2 py-1 text-[var(--danger)] hover:bg-[var(--danger-soft)] disabled:opacity-50"
                         >
-                          Delete
+                          {t("projects.delete")}
                         </button>
                       )}
                     </>
@@ -270,11 +280,14 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
   );
 }
 
-function describeError(err: unknown): string {
+// `t` is passed in rather than calling `useTranslation()` here — this is a
+// plain function, not a component/hook, called from event handlers rather
+// than render.
+function describeError(err: unknown, t: TFunction<"app">): string {
   if (err instanceof ApiError) {
-    if (err.status === 403) return "You don't have permission to do that.";
-    if (err.status === 404) return "That project doesn't exist (or you don't have access to it).";
-    return `Request failed (${err.status}).`;
+    if (err.status === 403) return t("projects.error.forbidden");
+    if (err.status === 404) return t("projects.error.notFound");
+    return t("projects.error.requestFailed", { status: err.status });
   }
-  return err instanceof Error ? err.message : "Something went wrong.";
+  return err instanceof Error ? err.message : t("projects.error.generic");
 }

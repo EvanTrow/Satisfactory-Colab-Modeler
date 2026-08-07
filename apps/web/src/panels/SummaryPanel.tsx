@@ -7,11 +7,13 @@
 // — see that context's own header comment for why).
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 
 import { defaultGameData } from "@scm/gamedata";
 import { formatRational, parseRational } from "@scm/rational";
 import { listNodes, type NodeRecord, type NumberFormats, type SfmDocument } from "@scm/ydoc";
 
+import { useGameTerm } from "../i18n";
 import { useSolverResult } from "../canvas/SolverResultContext";
 import type { ThemeMode } from "../theme";
 import type { CanvasNode } from "../canvas/useYjsSync";
@@ -61,10 +63,16 @@ export interface SummaryPanelProps {
 }
 
 const SCOPES: readonly SummaryScope[] = ["everything", "outpost", "selected"];
-const SCOPE_LABELS: Record<SummaryScope, string> = {
-  everything: "Everything",
-  outpost: "Current Outpost",
-  selected: "Selected",
+/**
+ * Job 028: all three reuse the original string table's own
+ * `EVERYTHING`/`CURRENT_OUTPOST`/`SELECTED` keys verbatim (PLAN.md §1's
+ * "scoped operations" list names this exact same trio) — a clean 1:1 reuse
+ * case, not a new key. Looked up in the default `translation` namespace.
+ */
+const SCOPE_LABEL_KEYS: Record<SummaryScope, string> = {
+  everything: "EVERYTHING",
+  outpost: "CURRENT_OUTPOST",
+  selected: "SELECTED",
 };
 
 const ZERO_STR = "0";
@@ -90,9 +98,11 @@ interface BalanceRowProps {
 }
 
 function BalanceRow({ part, balance, numberFormats }: BalanceRowProps) {
+  const { t } = useTranslation("app");
+  const gameTerm = useGameTerm();
   return (
     <tr className="border-t border-[var(--border-subtle)]">
-      <td className="py-1 pr-2 text-[var(--text-primary)]">{part}</td>
+      <td className="py-1 pr-2 text-[var(--text-primary)]">{gameTerm(part)}</td>
       <td className="py-1 text-right tabular-nums text-[var(--text-secondary)]">
         {fmt(balance.made, numberFormats)}
       </td>
@@ -101,13 +111,13 @@ function BalanceRow({ part, balance, numberFormats }: BalanceRowProps) {
       </td>
       <td
         className={`py-1 text-right tabular-nums ${balance.unmade !== ZERO_STR ? "font-medium text-[var(--danger)]" : "text-[var(--text-muted)]"}`}
-        title={balance.unmade !== ZERO_STR ? "Demand with no matching production" : undefined}
+        title={balance.unmade !== ZERO_STR ? t("summary.unmadeTooltip") : undefined}
       >
         {fmt(balance.unmade, numberFormats)}
       </td>
       <td
         className={`py-1 text-right tabular-nums ${balance.unused !== ZERO_STR ? "font-medium text-[var(--mismatch)]" : "text-[var(--text-muted)]"}`}
-        title={balance.unused !== ZERO_STR ? "Production with no matching consumption" : undefined}
+        title={balance.unused !== ZERO_STR ? t("summary.unusedTooltip") : undefined}
       >
         {fmt(balance.unused, numberFormats)}
       </td>
@@ -132,11 +142,14 @@ interface SummaryBodyProps {
  * whatever container makes sense for where it's rendered.
  */
 function SummaryBody({ scope, onScopeChange, summary, numberFormats, stale }: SummaryBodyProps) {
+  const { t } = useTranslation("app");
+  const { t: tRaw } = useTranslation();
+  const gameTerm = useGameTerm();
   const partNames = Object.keys(summary.perPart).sort();
 
   return (
     <>
-      <div className="mb-3 flex gap-1" role="tablist" aria-label="Summary scope">
+      <div className="mb-3 flex gap-1" role="tablist" aria-label={t("summary.scopeAriaLabel")}>
         {SCOPES.map((s) => (
           <button
             key={s}
@@ -150,31 +163,34 @@ function SummaryBody({ scope, onScopeChange, summary, numberFormats, stale }: Su
                 : "bg-[var(--surface-sunken)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
             }`}
           >
-            {SCOPE_LABELS[s]}
+            {tRaw(SCOPE_LABEL_KEYS[s])}
           </button>
         ))}
       </div>
 
       <div className={stale ? "opacity-50 transition-opacity" : "transition-opacity"}>
         <p className="mb-1 text-[var(--text-muted)]">
-          {summary.solvedNodeCount}/{summary.nodeCount} node(s) in scope solved
+          {t("summary.nodesSolved", { solved: summary.solvedNodeCount, total: summary.nodeCount })}
         </p>
 
         <table className="mb-3 w-full border-collapse">
           <thead>
             <tr className="text-left text-[var(--text-muted)]">
-              <th className="pb-1 font-normal">Part</th>
-              <th className="pb-1 text-right font-normal">Made</th>
-              <th className="pb-1 text-right font-normal">Used</th>
-              <th className="pb-1 text-right font-normal">Unmade</th>
-              <th className="pb-1 text-right font-normal">Unused</th>
+              {/* Job 028: `PART`/`MADE`/`USED`/`UNMADE`/`UNUSED` all reuse the
+                  original string table's own keys verbatim — exact 1:1
+                  concepts. */}
+              <th className="pb-1 font-normal">{tRaw("PART")}</th>
+              <th className="pb-1 text-right font-normal">{tRaw("MADE")}</th>
+              <th className="pb-1 text-right font-normal">{tRaw("USED")}</th>
+              <th className="pb-1 text-right font-normal">{tRaw("UNMADE")}</th>
+              <th className="pb-1 text-right font-normal">{tRaw("UNUSED")}</th>
             </tr>
           </thead>
           <tbody>
             {partNames.length === 0 ? (
               <tr>
                 <td colSpan={5} className="py-2 text-center text-[var(--text-muted)]">
-                  Nothing in scope.
+                  {t("summary.nothingInScope")}
                 </td>
               </tr>
             ) : (
@@ -187,15 +203,20 @@ function SummaryBody({ scope, onScopeChange, summary, numberFormats, stale }: Su
 
         <div className="mb-3 space-y-0.5">
           <p className="flex justify-between text-[var(--text-secondary)]">
-            <span>Power made</span>
+            <span>{tRaw("POWER_MADE")}</span>
             <span className="tabular-nums text-[var(--text-primary)]">{fmtPower(summary.powerMade)}</span>
           </p>
           <p className="flex justify-between text-[var(--text-secondary)]">
-            <span>Power used</span>
+            <span>{tRaw("POWER_USED")}</span>
             <span className="tabular-nums text-[var(--text-primary)]">{fmtPower(summary.powerUsed)}</span>
           </p>
           <p className="flex justify-between text-[var(--text-secondary)]">
-            <span>Power net</span>
+            {/* Job 028: reuses `AVERAGE_NET_POWER` ("Average Net Power") for
+                this "Power net" row — same underlying quantity (made minus
+                used), slightly different original wording, reused per this
+                job's "close enough" judgement call rather than forcing an
+                exact-phrase match. */}
+            <span>{tRaw("AVERAGE_NET_POWER")}</span>
             <span
               className={`tabular-nums ${summary.powerNet < 0 ? "text-[var(--danger)]" : "text-[var(--text-primary)]"}`}
             >
@@ -203,24 +224,23 @@ function SummaryBody({ scope, onScopeChange, summary, numberFormats, stale }: Su
             </span>
           </p>
           <p className="flex justify-between text-[var(--text-secondary)]">
-            <span>Sink points</span>
-            <span
-              className="tabular-nums text-[var(--text-primary)]"
-              title="No AWESOME Sink node type exists yet (Job 017's documented limitation) — always 0."
-            >
+            <span>{tRaw("SINK_POINTS")}</span>
+            <span className="tabular-nums text-[var(--text-primary)]" title={t("summary.sinkPointsTooltip")}>
               {fmt(summary.sinkPoints, numberFormats)}
             </span>
           </p>
         </div>
 
-        <p className="mb-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Cost to build</p>
+        <p className="mb-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+          {tRaw("COST_TO_BUILD")}
+        </p>
         {summary.cost.length === 0 ? (
-          <p className="text-[var(--text-muted)]">Nothing in scope.</p>
+          <p className="text-[var(--text-muted)]">{t("summary.nothingInScope")}</p>
         ) : (
           <ul className="space-y-0.5">
             {summary.cost.map((entry) => (
               <li key={entry.part} className="flex justify-between text-[var(--text-secondary)]">
-                <span>{entry.part}</span>
+                <span>{gameTerm(entry.part)}</span>
                 <span className="tabular-nums text-[var(--text-primary)]">
                   {fmt(entry.amount, numberFormats)}
                 </span>
@@ -234,6 +254,8 @@ function SummaryBody({ scope, onScopeChange, summary, numberFormats, stale }: Su
 }
 
 export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme }: SummaryPanelProps) {
+  const { t } = useTranslation("app");
+  const { t: tRaw } = useTranslation();
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<SummaryScope>("everything");
   const { result, staleness } = useSolverResult();
@@ -271,14 +293,14 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme 
 
   function handleSummaryButtonClick() {
     if (popout.isOpen) {
-      popout.open("Summary — Satisfactory Colab Modeler"); // already open — this just focuses it, see usePopoutWindow's own `open()`
+      popout.open(t("summary.windowTitle")); // already open — this just focuses it, see usePopoutWindow's own `open()`
       return;
     }
     setOpen((v) => !v);
   }
 
   function handlePopOut() {
-    popout.open("Summary — Satisfactory Colab Modeler");
+    popout.open(t("summary.windowTitle"));
     setOpen(false); // the inline popover and the pop-out window are never both visible at once
   }
 
@@ -291,12 +313,13 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme 
       <button
         type="button"
         onClick={handleSummaryButtonClick}
-        title="Summary panel"
-        aria-label="Summary panel"
+        title={tRaw("SUMMARY_PANEL")}
+        aria-label={tRaw("SUMMARY_PANEL")}
         aria-expanded={open}
         className="nodrag inline-flex h-7 items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 text-xs text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
       >
-        Summary{popout.isOpen ? " (popped out)" : ""}
+        {tRaw("SUMMARY")}
+        {popout.isOpen ? ` ${t("summary.poppedOutSuffix")}` : ""}
       </button>
       {open && !popout.isOpen && (
         <>
@@ -312,7 +335,7 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme 
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Summary</p>
+              <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">{tRaw("SUMMARY")}</p>
               <div className="flex items-center gap-2">
                 {/*
                   Job 018's staleness state, surfaced here per PLAN.md §5
@@ -322,7 +345,7 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme 
                   `opacity-50` wrapper), this is just the textual cue that a
                   recompute is in flight.
                 */}
-                {stale && <span className="text-[var(--text-muted)]">recalculating…</span>}
+                {stale && <span className="text-[var(--text-muted)]">{t("summary.stale")}</span>}
                 {/*
                   Job 027: "pop out" — PLAN.md §3's later-phase "pop-out
                   summary windows". See `usePopoutWindow.ts`'s header for the
@@ -332,10 +355,10 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme 
                 <button
                   type="button"
                   onClick={handlePopOut}
-                  title="Pop out into a separate window"
+                  title={t("summary.popOutTitle")}
                   className="rounded border border-[var(--border-default)] px-1.5 py-0.5 text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
                 >
-                  ⧉ Pop out
+                  {t("summary.popOutButton")}
                 </button>
               </div>
             </div>
@@ -357,16 +380,16 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme 
         createPortal(
           <div className="p-3 text-xs text-[var(--text-primary)]">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Summary</p>
+              <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">{tRaw("SUMMARY")}</p>
               <div className="flex items-center gap-2">
-                {stale && <span className="text-[var(--text-muted)]">recalculating…</span>}
+                {stale && <span className="text-[var(--text-muted)]">{t("summary.stale")}</span>}
                 <button
                   type="button"
                   onClick={popout.close}
-                  title="Close this window and return to the inline panel"
+                  title={t("summary.returnTitle")}
                   className="rounded border border-[var(--border-default)] px-1.5 py-0.5 text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
                 >
-                  ← Return
+                  {t("summary.returnButton")}
                 </button>
               </div>
             </div>

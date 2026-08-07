@@ -13,6 +13,7 @@
 // Flow's built-in "default" node type (see `useYjsSync.ts`'s
 // `nodeRecordToFlowNode`).
 import { useEffect, useMemo, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 
 import {
   defaultGameData,
@@ -24,6 +25,7 @@ import {
 import { addContainer, addNode } from "@scm/ydoc";
 
 import { useCanvasDoc } from "../canvas";
+import { useGameTerm } from "../i18n";
 import {
   EMPTY_RECIPE_FILTERS,
   buildNodeInputForRecipe,
@@ -61,6 +63,9 @@ function clampModalPosition(screenPosition: { x: number; y: number }): { left: n
 }
 
 export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeChooserProps) {
+  const { t } = useTranslation("app");
+  const { t: tRaw } = useTranslation();
+  const gameTerm = useGameTerm();
   const { sfmDoc, containerId } = useCanvasDoc();
   const gameData = defaultGameData;
 
@@ -75,7 +80,14 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
   // A third mutually-exclusive step, same shape as `pendingRecipe`'s
   // variant-picker step below.
   const [creatingOutpost, setCreatingOutpost] = useState(false);
-  const [outpostTitle, setOutpostTitle] = useState("New Outpost");
+  // Job 028: the default title text is translated at creation time (the
+  // active locale when the outpost/Splurger is placed) — it's ordinary,
+  // renamable document content afterward (`Container.title`/`NodeRecord
+  // .title`, a plain CRDT string), not a live-relocalized UI label, so it
+  // deliberately does NOT re-translate if the viewer later switches locale
+  // — same one-time-default behavior as e.g. a word processor's "Untitled
+  // Document" seed text.
+  const [outpostTitle, setOutpostTitle] = useState(() => t("canvas.defaultOutpostTitle"));
 
   const machines = useMemo(() => listChooserMachines(gameData), [gameData]);
   const tiers = useMemo(() => listChooserTiers(gameData), [gameData]);
@@ -112,7 +124,7 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
     addContainer(sfmDoc, {
       kind: "outpost",
       parentId: containerId,
-      title: outpostTitle.trim() || "New Outpost",
+      title: outpostTitle.trim() || t("canvas.defaultOutpostTitle"),
       color: "#d97706",
       x: flowPosition.x,
       y: flowPosition.y,
@@ -139,7 +151,7 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
       machine: null,
       x: flowPosition.x,
       y: flowPosition.y,
-      title: "Splurger",
+      title: gameTerm("Splurger"),
       color: "#7c3aed",
       limit: null,
       limitMode: "machines",
@@ -177,16 +189,18 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-4 py-2">
-          <h3 className="text-sm font-semibold">{creatingOutpost ? "New outpost" : "Add a machine"}</h3>
+          <h3 className="text-sm font-semibold">
+            {creatingOutpost ? t("canvas.newOutpostHeading") : t("canvas.addMachine")}
+          </h3>
           <div className="flex items-center gap-2">
             {!creatingOutpost && !pendingRecipe && (
               <button
                 type="button"
                 onClick={() => setCreatingOutpost(true)}
                 className="rounded-md border border-[var(--outpost-border)] bg-[var(--outpost-soft)] px-2 py-1 text-xs font-medium text-[var(--outpost)] hover:brightness-110"
-                title="Create a nested outpost container here — PLAN.md's 'like folders' framing"
+                title={t("canvas.newOutpostTitle")}
               >
-                + New Outpost
+                {t("canvas.newOutpost")}
               </button>
             )}
             {!creatingOutpost && !pendingRecipe && (
@@ -194,15 +208,15 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
                 type="button"
                 onClick={handleCreateSplurger}
                 className="rounded-md border border-[var(--splurger-border)] bg-[var(--splurger-soft)] px-2 py-1 text-xs font-medium text-[var(--splurger)] hover:brightness-110"
-                title="Create a Splurger — an explicit priority splitter/merger routing point (PLAN.md §3)"
+                title={t("canvas.newSplurgerTitle")}
               >
-                + New Splurger
+                {t("canvas.newSplurger")}
               </button>
             )}
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close"
+              aria-label={t("canvas.close")}
               className="rounded-md px-1.5 py-0.5 text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
             >
               ✕
@@ -213,7 +227,7 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
         {creatingOutpost ? (
           <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
             <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
-              Outpost name
+              {t("canvas.outpostName")}
               <input
                 type="text"
                 autoFocus
@@ -231,14 +245,14 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
                 onClick={() => setCreatingOutpost(false)}
                 className="rounded-md px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               >
-                ← Back
+                ← {t("canvas.back")}
               </button>
               <button
                 type="button"
                 onClick={handleCreateOutpost}
                 className="rounded-md bg-[var(--outpost)] px-3 py-1.5 text-sm font-medium text-[var(--accent-contrast)] hover:brightness-110"
               >
-                Create outpost
+                {t("canvas.createOutpost")}
               </button>
             </div>
           </div>
@@ -255,7 +269,10 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
           <div className="flex min-h-0 flex-1">
             {/* Left pane: the machines at least one recipe uses — clicking one sets/clears the "machine" filter on the right. */}
             <div className="w-48 shrink-0 overflow-y-auto border-r border-[var(--border-subtle)] p-2">
-              <p className="mb-1 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Machines</p>
+              {/* Job 028: reuses the original table's own `MACHINES` key verbatim. */}
+              <p className="mb-1 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+                {tRaw("MACHINES")}
+              </p>
               <button
                 type="button"
                 onClick={() => setFilters((f) => ({ ...f, machine: null }))}
@@ -265,7 +282,7 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
                     : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
                 }`}
               >
-                All machines
+                {t("canvas.allMachines")}
               </button>
               {machines.map((machine) => (
                 <button
@@ -278,7 +295,7 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
                       : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
                   }`}
                 >
-                  {machine}
+                  {gameTerm(machine)}
                 </button>
               ))}
             </div>
@@ -289,7 +306,7 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
                 <input
                   type="text"
                   autoFocus
-                  placeholder="Search recipes…"
+                  placeholder={t("canvas.searchRecipes")}
                   value={filters.search}
                   onChange={(event) => setFilters((f) => ({ ...f, search: event.target.value }))}
                   className="min-w-[140px] flex-1 rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none"
@@ -299,10 +316,10 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
                   onChange={(event) => setFilters((f) => ({ ...f, tier: event.target.value || null }))}
                   className="rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
                 >
-                  <option value="">All tiers</option>
+                  <option value="">{t("canvas.allTiers")}</option>
                   {tiers.map((tier) => (
                     <option key={tier.raw} value={tier.raw}>
-                      Tier {tier.raw}
+                      {t("canvas.tierN", { tier: tier.raw })}
                     </option>
                   ))}
                 </select>
@@ -313,13 +330,13 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
                     onChange={(event) => setFilters((f) => ({ ...f, alternatesOnly: event.target.checked }))}
                     className="accent-[var(--accent)]"
                   />
-                  Alternates only
+                  {t("canvas.alternatesOnly")}
                 </label>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto p-1">
                 {recipes.length === 0 && (
-                  <p className="p-3 text-sm text-[var(--text-muted)]">No recipes match these filters.</p>
+                  <p className="p-3 text-sm text-[var(--text-muted)]">{t("canvas.noRecipesMatch")}</p>
                 )}
                 {recipes.map((recipe) => (
                   <button
@@ -328,10 +345,10 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
                     onClick={() => handlePickRecipe(recipe)}
                     className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"
                   >
-                    <span className="truncate">{recipe.name}</span>
+                    <span className="truncate">{gameTerm(recipe.name)}</span>
                     <span className="shrink-0 text-xs text-[var(--text-muted)]">
-                      {recipe.machine} · {recipe.tier.raw}
-                      {recipe.alternate ? " · Alt" : ""}
+                      {gameTerm(recipe.machine)} · {recipe.tier.raw}
+                      {recipe.alternate ? ` · ${t("ALTERNATE_RECIPE", { ns: "translation" })}` : ""}
                     </span>
                   </button>
                 ))}
@@ -361,20 +378,30 @@ interface VariantPickerProps {
  * this renders.
  */
 function VariantPicker({ recipe, resolved, choice, onChange, onConfirm, onBack }: VariantPickerProps) {
+  const { t } = useTranslation("app");
+  const gameTerm = useGameTerm();
   const modelNames = resolved.multiMachine.models.map((model) => model.name);
   const capacityNames = resolved.multiMachine.capacities.map((capacity) => capacity.name);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
       <p className="text-sm text-[var(--text-secondary)]">
-        <span className="font-medium text-[var(--text-primary)]">{recipe.name}</span> runs on{" "}
-        <span className="font-medium text-[var(--text-primary)]">{resolved.name}</span>, which needs a model/purity
-        combination before it can be placed.
+        {/* `<Trans>` (not plain `t()`) so the recipe/machine names can stay
+            wrapped in a real `<span>` (bold) element rather than losing that
+            styling to string interpolation — see `app-en-US.json`'s
+            `canvas.variantPrompt` for the `<bold>` placeholder tag this
+            binds to `components`. */}
+        <Trans
+          t={t}
+          i18nKey="canvas.variantPrompt"
+          values={{ recipe: gameTerm(recipe.name), machine: gameTerm(resolved.name) }}
+          components={{ bold: <span className="font-medium text-[var(--text-primary)]" /> }}
+        />
       </p>
 
       {modelNames.length > 0 && (
         <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
-          Model
+          {t("canvas.model")}
           <select
             value={choice.model ?? ""}
             onChange={(event) => onChange({ ...choice, model: event.target.value })}
@@ -382,7 +409,7 @@ function VariantPicker({ recipe, resolved, choice, onChange, onConfirm, onBack }
           >
             {modelNames.map((name) => (
               <option key={name} value={name}>
-                {name}
+                {gameTerm(name)}
               </option>
             ))}
           </select>
@@ -391,7 +418,7 @@ function VariantPicker({ recipe, resolved, choice, onChange, onConfirm, onBack }
 
       {capacityNames.length > 0 && (
         <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
-          Purity / capacity
+          {t("canvas.purityCapacity")}
           <select
             value={choice.capacity ?? ""}
             onChange={(event) => onChange({ ...choice, capacity: event.target.value })}
@@ -399,7 +426,7 @@ function VariantPicker({ recipe, resolved, choice, onChange, onConfirm, onBack }
           >
             {capacityNames.map((name) => (
               <option key={name} value={name}>
-                {name}
+                {gameTerm(name)}
               </option>
             ))}
           </select>
@@ -412,14 +439,14 @@ function VariantPicker({ recipe, resolved, choice, onChange, onConfirm, onBack }
           onClick={onBack}
           className="rounded-md px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
         >
-          ← Back
+          ← {t("canvas.back")}
         </button>
         <button
           type="button"
           onClick={onConfirm}
           className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]"
         >
-          Add to canvas
+          {t("canvas.addToCanvas")}
         </button>
       </div>
     </div>

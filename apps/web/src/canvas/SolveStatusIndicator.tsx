@@ -10,7 +10,9 @@
 // as correctly as an in-flight worker request).
 import { getSettings, type SfmDocument, type SolverMode } from "@scm/ydoc";
 import type { FullProgressInfo } from "@scm/solver";
+import type { TFunction } from "i18next";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useSolverResult } from "./SolverResultContext";
 
@@ -31,20 +33,33 @@ function useSolverMode(sfmDoc: SfmDocument): SolverMode {
 }
 
 /** "resolving splitter groups: 12/47" style summary of `FullProgressInfo` — coarse-grained per the job's own wording, not a blow-by-blow of every water-fill round. */
-function describeProgress(info: FullProgressInfo): string {
-  const phaseLabel = info.phase === "finalize" ? "finalizing edge shares" : `pass ${info.pass}`;
-  const base = `${phaseLabel} — resolved ${info.resolvedCount}/${info.totalCount} nodes`;
+function describeProgress(info: FullProgressInfo, t: TFunction<"app">): string {
+  const phaseLabel =
+    info.phase === "finalize" ? t("status.solve.phaseFinalize") : t("status.solve.phasePass", { pass: info.pass });
+  const base = t("status.solve.progressBase", {
+    phase: phaseLabel,
+    resolved: info.resolvedCount,
+    total: info.totalCount,
+  });
   if (!info.waterFill) return base;
-  const tierLabel = info.waterFill.tier === "top" ? "top tier" : "bottom tier";
-  return `${base} (splitter/merger ${tierLabel}, round ${info.waterFill.round}, ${info.waterFill.activeCount} candidates)`;
+  const tierLabel = t(info.waterFill.tier === "top" ? "status.solve.waterFillTierTop" : "status.solve.waterFillTierBottom");
+  return t("status.solve.progressWithWaterFill", {
+    base,
+    tier: tierLabel,
+    round: info.waterFill.round,
+    count: info.waterFill.activeCount,
+  });
 }
 
 export function SolveStatusIndicator({ sfmDoc }: SolveStatusIndicatorProps) {
+  const { t } = useTranslation("app");
   const { staleness, fullProgress, stop } = useSolverResult();
   const mode = useSolverMode(sfmDoc);
 
   const solving = mode === "full" && staleness === "stale-recomputing";
   if (!solving) return null;
+
+  const progressText = fullProgress ? describeProgress(fullProgress, t) : t("status.solve.starting");
 
   return (
     <div
@@ -55,16 +70,16 @@ export function SolveStatusIndicator({ sfmDoc }: SolveStatusIndicatorProps) {
         aria-hidden
         className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[var(--splurger)]"
       />
-      <span className="max-w-[220px] truncate" title={fullProgress ? describeProgress(fullProgress) : undefined}>
-        Solving… {fullProgress ? describeProgress(fullProgress) : "starting"}
+      <span className="max-w-[220px] truncate" title={progressText}>
+        {t("status.solve.solving", { progress: progressText })}
       </span>
       <button
         type="button"
         onClick={stop}
-        title="Stop this Full-mode solve — the last computed result stays on screen"
+        title={t("status.solve.stopTooltip")}
         className="nodrag shrink-0 rounded-md border border-[var(--danger)] px-2 py-0.5 text-[11px] font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]"
       >
-        STOP
+        {t("status.solve.stopButton")}
       </button>
     </div>
   );

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { listProjects, type ProjectSummary } from "./api/projects";
 import { CanvasView } from "./canvas";
 import { discordAvatarUrl, type LocalUserIdentity } from "./collab";
+import { LocaleSwitcher } from "./i18n";
 import { ProjectsPage } from "./routes/ProjectsPage";
 import { InviteRedeemPage } from "./sharing";
 import { ThemeToggle, useTheme } from "./theme";
@@ -61,6 +63,7 @@ type AuthState = { status: "loading" } | { status: "anonymous" } | { status: "au
 type View = { name: "projects" } | { name: "canvas"; project: ProjectSummary };
 
 function App() {
+  const { t } = useTranslation("app");
   const [auth, setAuth] = useState<AuthState>({ status: "loading" });
   const [view, setView] = useState<View>({ name: "projects" });
   // Job 014: mounted once here (not just inside `CanvasView.tsx`) precisely
@@ -200,30 +203,36 @@ function App() {
   return (
     <main className="min-h-svh bg-[var(--surface-app)] text-[var(--text-primary)]">
       <header className="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-3">
-        <h1 className="text-lg font-semibold tracking-tight">Satisfactory Colab Modeler</h1>
+        {/* Job 028: `APP_NAME` ("Satisfactory Modeler") is the original
+            *desktop* tool's own name — reusing that key here would render
+            the wrong app name, since this reimplementation deliberately has
+            its own ("Satisfactory Colab Modeler", PLAN.md's title). New
+            `app` namespace key, not a reused/adjusted `APP_NAME`. */}
+        <h1 className="text-lg font-semibold tracking-tight">{t("app.title")}</h1>
 
         <div className="flex items-center gap-3">
           {auth.status === "loading" && (
-            <span className="text-sm text-[var(--text-muted)]">Checking login status…</span>
+            <span className="text-sm text-[var(--text-muted)]">{t("app.checkingLogin")}</span>
           )}
           {auth.status === "anonymous" && (
             <a
               href="/auth/discord/login"
               className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]"
             >
-              Log in with Discord
+              {t("app.logInWithDiscord")}
             </a>
           )}
           {auth.status === "authenticated" && (
             <div className="flex items-center gap-3 text-sm">
               <span>
-                Logged in as <strong>{auth.user.globalName ?? auth.user.username}</strong>
+                {t("app.loggedInAsPrefix")} <strong>{auth.user.globalName ?? auth.user.username}</strong>
               </span>
               <a href="/auth/logout" className="text-[var(--text-muted)] underline hover:text-[var(--text-primary)]">
-                Log out
+                {t("app.logOut")}
               </a>
             </div>
           )}
+          <LocaleSwitcher />
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </div>
       </header>
@@ -249,7 +258,7 @@ function App() {
           real router (see the View comment above). */}
       {!pendingInviteToken && auth.status !== "authenticated" && (
         <div className="mx-auto max-w-3xl px-4 py-16 text-center text-[var(--text-muted)]">
-          {auth.status === "loading" ? "Loading…" : "Log in with Discord to see your projects."}
+          {auth.status === "loading" ? t("app.loading") : t("app.logInPrompt")}
         </div>
       )}
 

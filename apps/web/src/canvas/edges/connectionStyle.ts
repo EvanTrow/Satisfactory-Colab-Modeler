@@ -70,11 +70,21 @@ import type { ConnectionStyle } from "@scm/ydoc";
 
 export type ConnectionStyleName = ConnectionStyle;
 
-export const CONNECTION_STYLE_OPTIONS: readonly { value: ConnectionStyleName; label: string }[] = [
-  { value: "straight", label: "Direct" },
-  { value: "bezier", label: "Curves" },
-  { value: "step", label: "Horizontal" },
-  { value: "smoothstep", label: "Vertical" },
+/**
+ * Job 028: `labelKey` is the ORIGINAL tool's own string-table key
+ * (`resources/languages/translations/*.json`'s `DIRECT`/`CURVES`/
+ * `HORIZONTAL`/`VERTICAL`) — a clean reuse case, not a new key: PLAN.md's
+ * own "Direct/Curves/Horizontal/Vertical" UI copy this module's header
+ * comment already cites turns out to be verbatim what the original
+ * string table calls these same four options, and `SettingsMenu.tsx`'s
+ * labels were already using that exact English wording before this job.
+ * Looked up in the default `translation` namespace (not `app`).
+ */
+export const CONNECTION_STYLE_OPTIONS: readonly { value: ConnectionStyleName; labelKey: string }[] = [
+  { value: "straight", labelKey: "DIRECT" },
+  { value: "bezier", labelKey: "CURVES" },
+  { value: "step", labelKey: "HORIZONTAL" },
+  { value: "smoothstep", labelKey: "VERTICAL" },
 ];
 
 const KNOWN_STYLES: ReadonlySet<string> = new Set(["straight", "step", "smoothstep", "bezier"]);

@@ -24,11 +24,13 @@
 // it (Job 018/024's `solveScheduler.ts`/`useSolver.ts`) — see
 // `SOLVER_MODES` below.
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { updateSettings, type NumberFormats, type Settings, type SolverMode } from "@scm/ydoc";
 
 import type { SfmDocument } from "@scm/ydoc";
 
+import { LocaleSwitcher } from "../i18n";
 import { CONNECTION_STYLE_OPTIONS } from "./edges";
 
 export interface SettingsMenuProps {
@@ -46,28 +48,60 @@ const selectClass =
  * real end to end — `@scm/solver`'s `solveFull` (Job 023), dispatched by
  * `solveScheduler.ts`'s widened `SUPPORTED_MODES` and `useSolver.ts`'s
  * resync (Job 024) — so it's offered here alongside the other three.
+ *
+ * Job 028: the original tool's own `*_SOLVER`/`*_SOLVER_HELP` keys
+ * (`en-US.json`) are just the bare mode name ("Basic") plus a paragraph
+ * help text — neither matches this dropdown's own longer inline
+ * descriptions ("Basic (entered values are limits)"), so these labels are
+ * new `app` namespace keys rather than a forced reuse of `BASIC_SOLVER`
+ * etc. (see jobs/028-i18n.md Handoff notes).
  */
-const SOLVER_MODES: readonly { value: SolverMode; label: string }[] = [
-  { value: "none", label: "None (nothing computed)" },
-  { value: "manual", label: "Manual (entered values are final)" },
-  { value: "basic", label: "Basic (entered values are limits)" },
-  { value: "full", label: "Full (limits + even-split & priority routing)" },
+const SOLVER_MODES: readonly { value: SolverMode; labelKey: string }[] = [
+  { value: "none", labelKey: "settings.solverMode.none" },
+  { value: "manual", labelKey: "settings.solverMode.manual" },
+  { value: "basic", labelKey: "settings.solverMode.basic" },
+  { value: "full", labelKey: "settings.solverMode.full" },
 ];
 
-const NUMBER_FORMAT_STYLES: readonly { value: NumberFormats["style"]; label: string }[] = [
-  { value: "fraction", label: "Fraction (22/7)" },
-  { value: "mixed", label: "Mixed number (3 1/7)" },
-  { value: "decimal", label: "Decimal" },
+const NUMBER_FORMAT_STYLES: readonly { value: NumberFormats["style"]; labelKey: string }[] = [
+  { value: "fraction", labelKey: "settings.numberFormatStyle.fraction" },
+  { value: "mixed", labelKey: "settings.numberFormatStyle.mixed" },
+  { value: "decimal", labelKey: "settings.numberFormatStyle.decimal" },
 ];
 
-const ROUNDING_MODES: readonly { value: NumberFormats["rounding"]; label: string }[] = [
-  { value: "round", label: "Round" },
-  { value: "floor", label: "Floor" },
-  { value: "ceil", label: "Ceil" },
-  { value: "truncate", label: "Truncate" },
+/**
+ * Job 028: the original's own rounding-mode vocabulary (per
+ * `NUMBER_SETTINGS_HELP`'s exact wording) is a 3-way "Nearest"/"Up"/"Down"
+ * choice, not this schema's 4-way `round`/`floor`/`ceil`/`truncate` — two of
+ * the four have a clean, precise reuse:
+ *   - `round` -> `NEAREST` ("Nearest") — `NUMBER_SETTINGS_HELP` literally
+ *     defines it as "standard rounding, round the last digit up if the next
+ *     digit is 5 or more," which is exactly `toDecimalString`'s `"round"`
+ *     mode (round half away from zero).
+ *   - `truncate` -> `DOWN` ("Down") — same help text: "'Down' truncates to
+ *     the last digit," exactly matching `"truncate"`'s own doc comment
+ *     (round toward zero).
+ * `floor`/`ceil` are directional (toward -/+ infinity) where the original's
+ * one remaining option, "Up" ("rounds the last digit up if there are any
+ * more digits after it"), is magnitude-based (away from zero regardless of
+ * sign) — genuinely a different concept from either, so reusing "Up" for
+ * just one of them would misrepresent the other. Both stay new `app` keys.
+ */
+const ROUNDING_MODES: readonly { value: NumberFormats["rounding"]; labelKey: string; ns?: "translation" }[] = [
+  { value: "round", labelKey: "NEAREST", ns: "translation" },
+  { value: "floor", labelKey: "settings.roundingMode.floor" },
+  { value: "ceil", labelKey: "settings.roundingMode.ceil" },
+  { value: "truncate", labelKey: "DOWN", ns: "translation" },
 ];
 
 export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
+  const { t } = useTranslation("app");
+  // Job 028: `tRaw` reaches into the default `translation` namespace for
+  // every label below that reuses one of the original string table's own
+  // keys verbatim — `SETTINGS`/`LANGUAGE`/`DIGITS`/`ROUND`/`MACHINES`/
+  // `STYLE`/`NUMBER_SETTINGS`, plus `CONNECTION_STYLE_OPTIONS`'s own
+  // `DIRECT`/`CURVES`/`HORIZONTAL`/`VERTICAL` keys.
+  const { t: tRaw } = useTranslation();
   const [open, setOpen] = useState(false);
 
   return (
@@ -75,8 +109,8 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title="Settings"
-        aria-label="Settings"
+        title={tRaw("SETTINGS")}
+        aria-label={tRaw("SETTINGS")}
         className="nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
       >
         <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden>
@@ -103,12 +137,28 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
             // without this line.
             onMouseDown={(event) => event.stopPropagation()}
           >
+            {/*
+              Job 028: locale preference — a browser/UI-level choice (like
+              `theme/useTheme.ts`'s dark/light toggle), not a per-document
+              CRDT `Settings` field, so `<LocaleSwitcher>` writes straight to
+              its own localStorage key rather than through `updateSettings`.
+              Placed first since it's the setting most likely to matter to a
+              non-English-reading user opening this menu for the first time.
+            */}
             <p className="mb-1 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-              Snap to grid
+              {tRaw("LANGUAGE")}
+            </p>
+            <label className={rowClass}>
+              <span>{tRaw("LANGUAGE")}</span>
+              <LocaleSwitcher className={selectClass} />
+            </label>
+
+            <p className="mb-1 mt-3 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+              {t("settings.snapToGrid")}
             </p>
             <label className={rowClass}>
               <span>
-                Machines
+                {tRaw("MACHINES")}
                 <span className="ml-1 text-[var(--text-muted)]">
                   ({settings.gridMachine.x}×{settings.gridMachine.y}px)
                 </span>
@@ -122,7 +172,7 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
             </label>
             <label className={rowClass}>
               <span>
-                Waypoints
+                {t("settings.waypoints")}
                 <span className="ml-1 text-[var(--text-muted)]">
                   ({settings.gridWaypoint.x}×{settings.gridWaypoint.y}px)
                 </span>
@@ -146,10 +196,10 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
               above.
             */}
             <p className="mb-1 mt-3 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-              Calculator
+              {t("settings.calculator")}
             </p>
             <label className={rowClass}>
-              <span>Mode</span>
+              <span>{t("settings.mode")}</span>
               <select
                 className={selectClass}
                 value={settings.solverMode}
@@ -159,7 +209,7 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
               >
                 {SOLVER_MODES.map((mode) => (
                   <option key={mode.value} value={mode.value}>
-                    {mode.label}
+                    {t(mode.labelKey)}
                   </option>
                 ))}
               </select>
@@ -180,10 +230,10 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
               own yet — see this job's Handoff notes.
             */}
             <p className="mb-1 mt-3 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-              Connections
+              {t("settings.connections")}
             </p>
             <label className={rowClass}>
-              <span>Style</span>
+              <span>{tRaw("STYLE")}</span>
               <select
                 className={selectClass}
                 value={settings.connectionStyle}
@@ -195,7 +245,7 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
               >
                 {CONNECTION_STYLE_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
-                    {option.label}
+                    {tRaw(option.labelKey)}
                   </option>
                 ))}
               </select>
@@ -210,11 +260,17 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
               back a full copy with just its own field changed, rather than
               patching a single key.
             */}
+            {/* Job 028: reuses `NUMBER_SETTINGS` ("Number Settings") for
+                this section heading — the original's own section title for
+                exactly this fraction/decimal/digits/rounding control
+                cluster (see `NUMBER_SETTINGS_HELP`'s description), just
+                slightly different wording than this card's prior "Number
+                format" heading. */}
             <p className="mb-1 mt-3 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-              Number format
+              {tRaw("NUMBER_SETTINGS")}
             </p>
             <label className={rowClass}>
-              <span>Style</span>
+              <span>{tRaw("STYLE")}</span>
               <select
                 className={selectClass}
                 value={settings.numberFormats.style}
@@ -229,14 +285,14 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
               >
                 {NUMBER_FORMAT_STYLES.map((style) => (
                   <option key={style.value} value={style.value}>
-                    {style.label}
+                    {t(style.labelKey)}
                   </option>
                 ))}
               </select>
             </label>
             {/* Digits/rounding/trim only affect the "decimal" style (`@scm/rational`'s `formatRational` ignores them for "fraction"/"mixed") — disabled rather than hidden, so the setting is still visible and its last value isn't lost when switching styles back and forth. */}
             <label className={rowClass}>
-              <span>Digits</span>
+              <span>{tRaw("DIGITS")}</span>
               <input
                 type="number"
                 min={0}
@@ -255,7 +311,7 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
               />
             </label>
             <label className={rowClass}>
-              <span>Rounding</span>
+              <span>{t("settings.rounding")}</span>
               <select
                 className={selectClass}
                 disabled={settings.numberFormats.style !== "decimal"}
@@ -271,13 +327,13 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
               >
                 {ROUNDING_MODES.map((mode) => (
                   <option key={mode.value} value={mode.value}>
-                    {mode.label}
+                    {mode.ns ? tRaw(mode.labelKey) : t(mode.labelKey)}
                   </option>
                 ))}
               </select>
             </label>
             <label className={rowClass}>
-              <span>Trim trailing zeros</span>
+              <span>{t("settings.trimTrailingZeros")}</span>
               <input
                 type="checkbox"
                 disabled={settings.numberFormats.style !== "decimal"}

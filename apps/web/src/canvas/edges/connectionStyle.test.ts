@@ -33,8 +33,11 @@ describe("CONNECTION_STYLE_OPTIONS", () => {
     expect(CONNECTION_STYLE_OPTIONS).toHaveLength(4);
     const values = CONNECTION_STYLE_OPTIONS.map((o) => o.value);
     expect(new Set(values)).toEqual(new Set(["straight", "bezier", "step", "smoothstep"]));
-    const labels = CONNECTION_STYLE_OPTIONS.map((o) => o.label);
-    expect(new Set(labels)).toEqual(new Set(["Direct", "Curves", "Horizontal", "Vertical"]));
+    // Job 028: labels are now i18n keys (looked up in the original string
+    // table's `translation` namespace — see `connectionStyle.ts`'s header
+    // comment on `labelKey`) rather than literal English strings.
+    const labelKeys = CONNECTION_STYLE_OPTIONS.map((o) => o.labelKey);
+    expect(new Set(labelKeys)).toEqual(new Set(["DIRECT", "CURVES", "HORIZONTAL", "VERTICAL"]));
   });
 });
 

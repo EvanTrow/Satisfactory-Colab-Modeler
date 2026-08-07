@@ -17,6 +17,7 @@
 // locally here from `SolverResultContext` rather than threaded through
 // `CanvasNodeData.validityState` via `useYjsSync.ts`.
 import { memo, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import { useTranslation } from "react-i18next";
 
 import { defaultGameData, type Recipe, type RecipePart } from "@scm/gamedata";
 import {
@@ -35,6 +36,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 
 import { getIconUrl } from "../../assets/icons";
 import { FieldPresenceRing, useRemotePresence, type RemotePresence } from "../../collab";
+import { useGameTerm } from "../../i18n";
 import { useCanvasDoc } from "../CanvasDocContext";
 import { useSolverResult } from "../SolverResultContext";
 import { useSettings } from "../useSettings";
@@ -172,6 +174,9 @@ interface PartRowProps {
 }
 
 function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }: PartRowProps) {
+  const { t } = useTranslation("app");
+  const { t: tRaw } = useTranslation();
+  const gameTerm = useGameTerm();
   const input = isNegative(part.amount);
   // Port handle id contract for Job 011 (connections & waypoints) — see
   // this job's Handoff notes for the full writeup. Format:
@@ -182,10 +187,10 @@ function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }:
   const handleHighlight = highlightRingClass(portValidity);
   const rowTitle =
     portValidity === "invalid"
-      ? "This connection could not be resolved — see the node/edge for details."
+      ? t("node.portTooltip.invalid")
       : portValidity === "mismatched"
-        ? "Rate mismatch: this part's in/out rate doesn't reconcile with a connected neighbor."
-        : `${input ? "Input" : "Output"}: right-click to disconnect`;
+        ? t("node.portTooltip.mismatched")
+        : t("node.portTooltip.default", { direction: tRaw(input ? "INPUT" : "OUTPUT") });
 
   return (
     <div
@@ -227,7 +232,7 @@ function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }:
               : "text-[var(--text-primary)]"
         }`}
       >
-        {part.part}
+        {gameTerm(part.part)}
       </span>
       <span
         className="shrink-0 tabular-nums text-[var(--text-secondary)]"
@@ -248,6 +253,9 @@ function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }:
 }
 
 export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeProps<CanvasNode>) {
+  const { t } = useTranslation("app");
+  const { t: tRaw } = useTranslation();
+  const gameTerm = useGameTerm();
   const { sfmDoc, awareness, localPresence } = useCanvasDoc();
   // Job 021: every *other* connected user's live Awareness state — drives
   // this node's remote-selection halo and the limit/clock/shards
@@ -455,7 +463,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
     // canvas.
     return (
       <div className="w-56 rounded-lg border border-[var(--danger)] bg-[var(--surface-card)] px-2 py-1.5 text-xs text-[var(--danger)] shadow-[var(--shadow-card)]">
-        Unknown recipe: {node.recipe ?? "(none)"}
+        {t("node.unknownRecipe", { name: node.recipe ?? "(none)" })}
       </div>
     );
   }
@@ -512,7 +520,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
       }
       title={
         validityState?.overall === "invalid"
-          ? "Invalid: " + (nodeResult?.issues.join("; ") || "see fields below")
+          ? t("node.invalid", { issues: nodeResult?.issues.join("; ") || t("node.invalidFallback") })
           : undefined
       }
     >
@@ -521,7 +529,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
           {remoteSelectors.map((peer) => (
             <span
               key={peer.clientId}
-              title={`${peer.state.displayName} has this selected`}
+              title={t("node.hasSelection", { name: peer.state.displayName })}
               className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-[var(--surface-app)]"
               style={{ backgroundColor: peer.state.color }}
             />
@@ -540,20 +548,18 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
         )}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-[var(--node-header-text)]">
-            {recipe.name}
+            {gameTerm(recipe.name)}
           </p>
           <p className="truncate text-[10px] text-[var(--node-header-text)]/70">
-            {node.machine ?? "Unknown machine"}
-            {recipe.isGenerator ? " · Generator" : ""}
+            {node.machine ? gameTerm(node.machine) : t("node.unknownMachine")}
+            {recipe.isGenerator ? ` · ${t("node.generatorSuffix")}` : ""}
           </p>
         </div>
       </div>
 
       <div className="divide-y divide-[var(--border-subtle)] py-0.5">
         {recipe.parts.length === 0 ? (
-          <p className="px-2 py-1.5 text-[11px] text-[var(--text-muted)]">
-            This recipe has no parts (power-only).
-          </p>
+          <p className="px-2 py-1.5 text-[11px] text-[var(--text-muted)]">{t("node.noParts")}</p>
         ) : (
           [...recipe.parts]
             .sort((a, b) => Number(isNegative(b.amount)) - Number(isNegative(a.amount)))
@@ -584,8 +590,14 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
 
       <div className="space-y-1.5 border-t border-[var(--border-subtle)] px-2 py-1.5 text-[11px]">
         <label className="flex items-center justify-between gap-2">
+          {/* Job 028: "Limit" reuses the original string table's own `LIMIT`
+              key verbatim; the "(ppm)"/"(machines)" unit suffix is left as a
+              literal, untranslated abbreviation (same call as most technical
+              tools — an SI/PPM-style unit code doesn't read as "English
+              text" the way the rest of the label does; see this job's
+              Handoff notes). */}
           <span className="text-[var(--text-secondary)]">
-            Limit ({node.limitMode === "ppm" ? "ppm" : "machines"})
+            {tRaw("LIMIT")} ({node.limitMode === "ppm" ? "ppm" : "machines"})
           </span>
           {/* Job 021: `relative` wrapper scoped to just the input (not the whole row) so `FieldPresenceRing`'s ring hugs the field itself, matching "colored ring... on the field" (PLAN.md §5). */}
           <span className="relative inline-block">
@@ -595,9 +607,9 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               className={`${fieldInputClass} ${node.autoRound ? autoRoundFieldClass : ""} ${highlightRingClass(validityState?.fields?.limit) ?? ""}`}
               title={
                 validityState?.fields?.limit === "invalid"
-                  ? "This limit could not be resolved to a machine count."
+                  ? t("node.limitInvalidTooltip")
                   : node.autoRound
-                    ? "Auto-round is on — editing this will turn it off."
+                    ? t("node.autoRoundEditTooltip")
                     : undefined
               }
               {...limitField}
@@ -620,13 +632,25 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
         </label>
 
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[var(--text-secondary)]">Clock</span>
+          {/* Job 028: reuses `CLOCKSPEED` ("Clock Speed") — close enough to
+              this card's own shorter "Clock" label to count as the same
+              concept, per this job's reuse-vs-new-key judgement call. */}
+          <span className="text-[var(--text-secondary)]">{tRaw("CLOCKSPEED")}</span>
           <div className="flex items-center gap-1">
             <button
               type="button"
               className={stepperButtonClass}
               disabled={!canSnapClock}
-              title="Snap clock down so machine count rounds up (fewer machines needed goes away)"
+              // Job 028: both ± buttons share ONE tooltip, reusing the
+              // original string table's `CLOCKSPEED_HELP` verbatim — that
+              // help text already documents both buttons' behavior in one
+              // paragraph (minus lowers/rounds up, plus raises/rounds down,
+              // capped at 250%), so this job consolidates what used to be
+              // two separate hand-written per-button tooltips into that one
+              // shared, more complete original description rather than
+              // authoring a new key that would just re-describe the same
+              // thing less precisely.
+              title={tRaw("CLOCKSPEED_HELP")}
               onClick={() => handleClockStep("roundUp")}
             >
               −
@@ -636,7 +660,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
                 type="text"
                 inputMode="decimal"
                 className={`${fieldInputClass} ${node.autoRound ? autoRoundFieldClass : ""} ${highlightRingClass(validityState?.fields?.clock) ?? ""}`}
-                title={node.autoRound ? "Auto-round is on — editing this will turn it off." : undefined}
+                title={node.autoRound ? t("node.autoRoundEditTooltip") : undefined}
                 {...clockField}
                 onFocus={() => {
                   clockField.onFocus();
@@ -654,7 +678,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               type="button"
               className={stepperButtonClass}
               disabled={!canSnapClock}
-              title="Snap clock up so machine count rounds down"
+              title={tRaw("CLOCKSPEED_HELP")}
               onClick={() => handleClockStep("roundDown")}
             >
               +
@@ -672,11 +696,16 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
           than needing this handler to duplicate that math locally.
         */}
         <label className="flex items-center justify-between gap-2">
-          <span
-            className="text-[var(--text-secondary)]"
-            title="Continuously adjusts clock so this node's machine count stays a whole number. Editing clock or limit turns it off."
-          >
-            Auto-round
+          {/* Job 028: reuses the original `AUTO_ROUND` ("Auto Round") label
+              and, for the tooltip, `AUTO_ROUND_HELP`'s full original
+              paragraph verbatim in place of this card's previous
+              hand-written one-liner — the original text is a *better*,
+              more complete description of this exact feature (it even
+              documents the black-background treatment `autoRoundFieldClass`
+              above implements), so this is a clean value-level reuse, not
+              just a key-name coincidence. */}
+          <span className="text-[var(--text-secondary)]" title={tRaw("AUTO_ROUND_HELP")}>
+            {tRaw("AUTO_ROUND")}
           </span>
           <input
             type="checkbox"
@@ -687,7 +716,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
         </label>
 
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[var(--text-secondary)]">Somersloops</span>
+          <span className="text-[var(--text-secondary)]">{t("node.somersloops")}</span>
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -703,9 +732,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               <span
                 className={`w-8 rounded text-center tabular-nums text-[var(--text-primary)] ${highlightRingClass(validityState?.fields?.shards) ?? ""}`}
                 title={
-                  validityState?.fields?.shards === "invalid"
-                    ? "This shard count exceeds the machine's cap."
-                    : undefined
+                  validityState?.fields?.shards === "invalid" ? t("node.shardsInvalidTooltip") : undefined
                 }
               >
                 {node.shards}/{maxShards}
@@ -730,9 +757,20 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
             className="text-right text-[var(--text-muted)]"
             title={toFractionString(displayMachineCount)}
           >
-            ≈ {formatRational(displayMachineCount, numberFormats)} machine
-            {equals(displayMachineCount, of(1)) ? "" : "s"}
-            {nodeResult && !nodeResult.resolved ? " (unresolved — defaulted)" : ""}
+            {/* Job 028: `n`, not i18next's magic `count` option key — this
+                app's machine counts are exact `Rational`s formatted to
+                arbitrary strings (fractions, mixed numbers), not the plain
+                JS numbers i18next's own CLDR plural-rule resolver expects,
+                so the singular/plural KEY is still chosen manually here
+                (identical `equals(..., of(1))` logic the pre-i18n code
+                used) rather than delegated to i18next's `count`-driven
+                automatic suffix selection. */}
+            ≈{" "}
+            {t(
+              equals(displayMachineCount, of(1)) ? "node.machineCountSingular" : "node.machineCountPlural",
+              { n: formatRational(displayMachineCount, numberFormats) },
+            )}
+            {nodeResult && !nodeResult.resolved ? ` ${t("node.unresolvedDefaulted")}` : ""}
           </p>
         )}
       </div>

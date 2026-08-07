@@ -7,6 +7,8 @@
 // intentionally *not* touched) — this is a permanent piece of chrome, not a
 // placeholder, and it needs to render crisply at a fixed small size in both
 // themes.
+import { useTranslation } from "react-i18next";
+
 import type { ThemeMode } from "./useTheme";
 
 export interface ThemeToggleProps {
@@ -20,14 +22,20 @@ const baseClass =
   "nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]";
 
 export function ThemeToggle({ theme, onToggle, className }: ThemeToggleProps) {
+  // Job 028: "Switch to light/dark theme" has no analogue in the original
+  // tool's string table (`DARK_MODE`/`LIGHT_MODE` there are just the toggle
+  // *labels*, "Dark Mode"/"Light Mode" — this is a hover/aria description of
+  // the *action*, a genuinely different string) — new `app` namespace key.
+  const { t } = useTranslation("app");
   const isDark = theme === "dark";
+  const label = t(isDark ? "theme.switchToLight" : "theme.switchToDark");
   return (
     <button
       type="button"
       onClick={onToggle}
       className={className ?? baseClass}
-      title={isDark ? "Switch to light theme" : "Switch to dark theme"}
-      aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
+      title={label}
+      aria-label={label}
     >
       {isDark ? (
         // Moon glyph — shown while dark is active, click to go light.
