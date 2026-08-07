@@ -179,9 +179,21 @@ function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }:
         ? t("node.portTooltip.mismatched")
         : t("node.portTooltip.default", { direction: tRaw(input ? "INPUT" : "OUTPUT") });
 
+  const icon = iconUrl ? (
+    <img
+      src={iconUrl}
+      alt=""
+      className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)] object-contain p-0.5"
+    />
+  ) : (
+    <span className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)]" aria-hidden />
+  );
+
   return (
     <div
-      className="group relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)]"
+      className={`group relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)] ${
+        input ? "justify-start" : "justify-end"
+      }`}
       onContextMenu={(event) => {
         event.preventDefault();
         // Stop this from bubbling up to `<ReactFlow onPaneContextMenu>`,
@@ -201,17 +213,9 @@ function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }:
           className={`!h-2.5 !w-2.5 !border-2 !border-[var(--surface-card)] !bg-[var(--text-secondary)] ${handleHighlight ?? ""}`}
         />
       )}
-      {iconUrl ? (
-        <img
-          src={iconUrl}
-          alt=""
-          className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)] object-contain p-0.5"
-        />
-      ) : (
-        <span className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)]" aria-hidden />
-      )}
+      {input && icon}
       <span
-        className={`min-w-0 flex-1 truncate ${
+        className={`min-w-0 truncate ${
           portValidity === "invalid"
             ? "text-[var(--danger)]"
             : portValidity === "mismatched"
@@ -225,8 +229,9 @@ function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }:
         className="shrink-0 tabular-nums text-[var(--text-secondary)]"
         title={toFractionString(rate)}
       >
-        {formatRate(rate, numberFormats)}/min
+        ({formatRate(rate, numberFormats)}/min)
       </span>
+      {!input && icon}
       {!input && (
         <Handle
           type="source"
