@@ -32,6 +32,14 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import type { ProjectRole } from "../api/projects";
+import {
+  PresenceAvatarList,
+  PresenceCursors,
+  useCursorPublisher,
+  useLocalPresence,
+  useSelectionPublisher,
+  type LocalUserIdentity,
+} from "../collab";
 import { SummaryPanel } from "../panels";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
@@ -102,6 +110,8 @@ interface CanvasViewProps {
   projectShortId: string;
   /** The caller's role on this project — gates whether local edits get pushed to the server at all (see `useProjectDocument`'s header comment). */
   role: ProjectRole;
+  /** Job 021: this logged-in user's own identity, for publishing this client's local Awareness state (`collab/useLocalPresence.ts`) — `App.tsx` derives it from `GET /auth/me`'s response once and passes it straight through. */
+  localUser: LocalUserIdentity;
   onBack: () => void;
 }
 
@@ -119,6 +129,7 @@ export function CanvasView({
   projectTitle,
   projectShortId,
   role,
+  localUser,
   onBack,
 }: CanvasViewProps) {
   const docState = useProjectDocument(projectId, role);
@@ -151,10 +162,12 @@ export function CanvasView({
       sfmDoc={docState.sfmDoc}
       rootContainerId={docState.rootContainerId}
       undoManager={docState.undoManager}
+      awareness={docState.awareness}
       projectId={projectId}
       projectTitle={projectTitle}
       projectShortId={projectShortId}
       role={role}
+      localUser={localUser}
       saveStatus={docState.saveStatus}
       onRestored={docState.reloadAfterRestore}
       onBack={onBack}
@@ -199,6 +212,7 @@ interface CanvasViewReadyProps extends StaticCanvasDoc {
   projectTitle: string;
   projectShortId: string;
   role: ProjectRole;
+  localUser: LocalUserIdentity;
   /** Live autosave state from `useProjectDocument`'s push queue — see `SaveStatusIndicator.tsx`. */
   saveStatus: SaveStatus;
   /** Called once a `VersionPanel` restore has succeeded server-side — forces `useProjectDocument` to fully re-hydrate from the (now-restored) server state. See that function's own doc comment for why a restore can't just be merged into the live doc. */
@@ -206,20 +220,28 @@ interface CanvasViewReadyProps extends StaticCanvasDoc {
   onBack: () => void;
 }
 
-/** Everything Jobs 008-014 built, unchanged in substance — now fed a hydrated `sfmDoc`/`rootContainerId`/`undoManager` from `useProjectDocument` instead of creating a fresh empty one itself. */
+/** Everything Jobs 008-014 built, unchanged in substance — now fed a hydrated `sfmDoc`/`rootContainerId`/`undoManager`/`awareness` from `useProjectDocument` instead of creating a fresh empty one itself. */
 function CanvasViewReady({
   sfmDoc,
   rootContainerId,
   undoManager,
+  awareness,
   projectId,
   projectTitle,
   projectShortId,
   role,
+  localUser,
   saveStatus,
   onRestored,
   onBack,
 }: CanvasViewReadyProps) {
   const { canUndo, canRedo } = useUndoRedoState(undoManager);
+  // Job 021: publishes this client's own Awareness state once (identity
+  // fields — see `useLocalPresence.ts`) and hands back the setters
+  // `CanvasFlow` (cursor/selection) and `RecipeNode.tsx` (editingField) call
+  // — threaded through `CanvasDocContext` below rather than passed as props
+  // through every intermediate component.
+  const localPresence = useLocalPresence(awareness, localUser);
   // Job 014: theme toggle (app-level mechanism, see `theme/useTheme.ts`) and
   // the live `Settings` read needed for the background grid's dot spacing
   // (`useSettings.ts`) — everything else this job's snap-to-grid touches
@@ -248,8 +270,10 @@ function CanvasViewReady({
       rootContainerId,
       navigateToContainer,
       undoManager,
+      awareness,
+      localPresence,
     }),
-    [sfmDoc, containerId, rootContainerId, navigateToContainer, undoManager],
+    [sfmDoc, containerId, rootContainerId, navigateToContainer, undoManager, awareness, localPresence],
   );
 
   // Job 019: Job 018's live solver output, called exactly ONCE here (not
@@ -358,6 +382,8 @@ function CanvasViewReady({
               {/* Job 016: version history + restore, and the live autosave-status indicator (replaces Job 015's static "autosaves ~1.5s..." placeholder text). */}
               <VersionPanel projectId={projectId} role={role} onRestored={onRestored} />
               <span className="text-xs text-[var(--text-muted)]">{projectShortId}</span>
+              {/* Job 021: "who's currently connected" — every role (owner/editor/viewer, Job 020) gets a live provider connection, so a viewer shows up here too. */}
+              <PresenceAvatarList awareness={awareness} localUser={localUser} />
               <SaveStatusIndicator status={saveStatus} role={role} />
             </div>
           </div>
@@ -420,9 +446,18 @@ interface ChooserState {
  */
 function CanvasFlow({ sync, settings, theme }: CanvasFlowProps) {
   const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = sync;
-  const { sfmDoc, containerId, undoManager, navigateToContainer } = useCanvasDoc();
+  const { sfmDoc, containerId, undoManager, navigateToContainer, awareness, localPresence } = useCanvasDoc();
   const { screenToFlowPosition } = useReactFlow();
   const [chooser, setChooser] = useState<ChooserState | null>(null);
+
+  // Job 021: local cursor publishing (throttled mousemove → Awareness) and
+  // local selection publishing (React Flow's own `node.selected`, Job 012 —
+  // a separate mechanism from Awareness, see `RecipeNode.tsx`'s halo
+  // comment) — see `useCursorPublisher.ts`/`useSelectionPublisher.ts` for
+  // why each is its own small hook rather than inline effects here.
+  const cursorHandlers = useCursorPublisher(localPresence.setCursor, containerId, screenToFlowPosition);
+  const selectedNodeIds = useMemo(() => nodes.filter((node) => node.selected).map((node) => node.id), [nodes]);
+  useSelectionPublisher(localPresence.setSelection, selectedNodeIds);
   // Job 013: right-click-on-a-node menu state — "move to container" for a
   // real node, "open"/"delete (reparent, don't destroy)" for an outpost
   // boundary node. See `outposts/NodeContextMenu.tsx`.
@@ -530,7 +565,12 @@ function CanvasFlow({ sync, settings, theme }: CanvasFlowProps) {
     // just the empty pane — is caught, and so the overlay rect below can
     // sit as a plain sibling of `<ReactFlow>` without reaching into its
     // internals.
-    <div className="relative h-full w-full" {...pointerHandlers}>
+    <div
+      className="relative h-full w-full"
+      {...pointerHandlers}
+      onMouseMove={cursorHandlers.onMouseMove}
+      onMouseLeave={cursorHandlers.onMouseLeave}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -575,6 +615,8 @@ function CanvasFlow({ sync, settings, theme }: CanvasFlowProps) {
         <Controls />
         <DevNodeTools />
       </ReactFlow>
+      {/* Job 021: other collaborators' live cursors, container-scoped to `containerId` — see `PresenceCursors.tsx`'s header comment for the coordinate-space handling. A plain sibling of `<ReactFlow>` (not a child), same layering approach as `MarqueeOverlay`/`RecipeChooser` below. */}
+      <PresenceCursors awareness={awareness} containerId={containerId} />
       {chooser && (
         <RecipeChooser
           flowPosition={chooser.flowPosition}

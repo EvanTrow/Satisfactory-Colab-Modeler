@@ -15,6 +15,8 @@ import { createContext, useContext } from "react";
 import type { SfmDocument } from "@scm/ydoc";
 import type * as Y from "yjs";
 
+import type { AwarenessHandle, LocalPresenceControls } from "../collab";
+
 export interface CanvasDocContextValue {
   /** The single local, in-memory `SfmDocument` this canvas mount owns. */
   sfmDoc: SfmDocument;
@@ -61,6 +63,32 @@ export interface CanvasDocContextValue {
    * same manager and stack.
    */
   undoManager: Y.UndoManager;
+  /**
+   * Job 021: the live `Awareness` instance for this project (see
+   * `persistence/useProjectDocument.ts`'s `StaticCanvasDoc.awareness`) —
+   * genuinely ephemeral presence state, never `sfmDoc`/Postgres. Handed out
+   * raw (not pre-wrapped in React state) the same way `sfmDoc` is: a
+   * descendant that wants to *read* remote peers' live state calls
+   * `useRemotePresence(awareness)` itself (`collab/useRemotePresence.ts`) —
+   * deliberately not a single shared subscription baked into this context's
+   * own value, so a high-frequency change (a peer's cursor moving) only
+   * re-renders the specific components that actually read presence, not
+   * every consumer of this whole context on every mouse move anywhere on
+   * anyone's screen. See `collab/useLocalPresence.ts`'s header comment for
+   * why the *local* side (`localPresence` below) is different: publishing
+   * needs to happen exactly once per document mount, so that hook is called
+   * once in `CanvasView.tsx`'s `CanvasViewReady` and its returned setters
+   * are threaded through here instead.
+   */
+  awareness: AwarenessHandle;
+  /**
+   * Job 021: this client's own presence setters (`setCursor`/`setSelection`/
+   * `setEditingField`), from `collab/useLocalPresence.ts` — called from
+   * `CanvasView.tsx`'s `CanvasFlow` (mousemove → cursor, React Flow
+   * selection → selection) and `nodes/RecipeNode.tsx` (limit/clock/shards
+   * focus/blur → editingField).
+   */
+  localPresence: LocalPresenceControls;
 }
 
 export const CanvasDocContext = createContext<CanvasDocContextValue | null>(null);

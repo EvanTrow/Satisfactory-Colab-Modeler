@@ -34,6 +34,7 @@ import { listEdges, removeEdge, updateNode, type NodeRecord, type NumberFormats 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 
 import { getIconUrl } from "../../assets/icons";
+import { FieldPresenceRing, useRemotePresence, type RemotePresence } from "../../collab";
 import { useCanvasDoc } from "../CanvasDocContext";
 import { useSolverResult } from "../SolverResultContext";
 import { useSettings } from "../useSettings";
@@ -234,7 +235,14 @@ function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }:
 }
 
 export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeProps<CanvasNode>) {
-  const { sfmDoc } = useCanvasDoc();
+  const { sfmDoc, awareness, localPresence } = useCanvasDoc();
+  // Job 021: every *other* connected user's live Awareness state — drives
+  // this node's remote-selection halo and the limit/clock/shards
+  // field-editing indicators below. A completely separate mechanism from
+  // `selected` (React Flow's own prop, Job 012's Zustand-store-driven local
+  // selection) — deliberately not unified with it, see this file's own
+  // `remoteSelectors` comment.
+  const remotePresence = useRemotePresence(awareness);
   // Job 019: Job 018's live solver output, read from context rather than
   // calling `useSolver(sfmDoc)` directly (that would spin up one
   // scheduler/worker pair PER rendered node — see `SolverResultContext.ts`'s
@@ -264,6 +272,21 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
   const maybeNode = data.record;
   if (!maybeNode) return null;
   const node: NodeRecord = maybeNode;
+
+  // Job 021: which remote peers currently have *this* node selected
+  // (rendered as a colored halo below) and which are editing which of this
+  // node's fields (rendered by `FieldPresenceRing` per field). Deliberately
+  // NOT unified with `selected` (React Flow's own prop) into one code path —
+  // `selected` is this client's own local selection, driven by Job 012's
+  // Zustand store; `remoteSelectors` is every *other* client's own
+  // independent selection, arriving over Awareness. They render as visually
+  // distinct things (an accent border vs. a colored halo) on purpose.
+  const remoteSelectors = remotePresence.filter((peer) => peer.state.selection.includes(id));
+  function remoteEditorsFor(field: string): RemotePresence[] {
+    return remotePresence.filter(
+      (peer) => peer.state.editingField?.nodeId === id && peer.state.editingField?.field === field,
+    );
+  }
 
   const recipe: Recipe | undefined = node.recipe
     ? gameData.recipesByName.get(node.recipe)
@@ -433,16 +456,40 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
       // PLAN.md §5 point 3 ("show the last result greyed/stale while
       // recomputing rather than blanking values") — the last-known values
       // stay exactly as they were underneath, this only dims them.
-      className={`w-64 rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors ${
+      className={`relative w-64 rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors ${
         highlightBorderClass(validityState?.overall) ??
         (selected ? "border-[var(--accent)]" : "border-[var(--border-strong)]")
       } ${staleness === "stale-recomputing" ? "opacity-60" : ""}`}
+      // Job 021: remote-selection halo — one or more *other* users currently
+      // have this node selected (their own client's Awareness `selection`,
+      // not this client's `selected` prop above). A `boxShadow` (not a
+      // Tailwind `ring-*` utility, which can't take an arbitrary per-user
+      // color) using the first remote selector's color; if more than one
+      // peer has this node selected, the small avatar row below the card
+      // lists every one of them, not just the first.
+      style={
+        remoteSelectors.length > 0
+          ? { boxShadow: `0 0 0 3px ${remoteSelectors[0]!.state.color}` }
+          : undefined
+      }
       title={
         validityState?.overall === "invalid"
           ? "Invalid: " + (nodeResult?.issues.join("; ") || "see fields below")
           : undefined
       }
     >
+      {remoteSelectors.length > 0 && (
+        <div className="absolute -top-3 left-2 flex -space-x-1.5" aria-hidden>
+          {remoteSelectors.map((peer) => (
+            <span
+              key={peer.clientId}
+              title={`${peer.state.displayName} has this selected`}
+              className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-[var(--surface-app)]"
+              style={{ backgroundColor: peer.state.color }}
+            />
+          ))}
+        </div>
+      )}
       <div className="flex cursor-grab items-center gap-2 rounded-t-[7px] bg-[var(--node-header)] px-2 py-1.5 active:cursor-grabbing">
         {machineIconUrl ? (
           <img
@@ -502,17 +549,34 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
           <span className="text-[var(--text-secondary)]">
             Limit ({node.limitMode === "ppm" ? "ppm" : "machines"})
           </span>
-          <input
-            type="text"
-            inputMode="decimal"
-            className={`${fieldInputClass} ${highlightRingClass(validityState?.fields?.limit) ?? ""}`}
-            title={
-              validityState?.fields?.limit === "invalid"
-                ? "This limit could not be resolved to a machine count."
-                : undefined
-            }
-            {...limitField}
-          />
+          {/* Job 021: `relative` wrapper scoped to just the input (not the whole row) so `FieldPresenceRing`'s ring hugs the field itself, matching "colored ring... on the field" (PLAN.md §5). */}
+          <span className="relative inline-block">
+            <input
+              type="text"
+              inputMode="decimal"
+              className={`${fieldInputClass} ${highlightRingClass(validityState?.fields?.limit) ?? ""}`}
+              title={
+                validityState?.fields?.limit === "invalid"
+                  ? "This limit could not be resolved to a machine count."
+                  : undefined
+              }
+              {...limitField}
+              onFocus={() => {
+                limitField.onFocus();
+                // Job 021: soft indicator only — never disables/blocks this
+                // input. The local user can keep typing here regardless of
+                // who else is also focused on it; concurrent edits reconcile
+                // via the CRDT's own last-write-wins semantics on blur/Enter
+                // commit (PLAN.md §5's explicit "soft, never a hard lock").
+                localPresence.setEditingField({ nodeId: id, field: "limit" });
+              }}
+              onBlur={() => {
+                limitField.onBlur();
+                localPresence.setEditingField(null);
+              }}
+            />
+            <FieldPresenceRing editors={remoteEditorsFor("limit")} />
+          </span>
         </label>
 
         <div className="flex items-center justify-between gap-2">
@@ -527,12 +591,23 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
             >
               −
             </button>
-            <input
-              type="text"
-              inputMode="decimal"
-              className={`${fieldInputClass} ${highlightRingClass(validityState?.fields?.clock) ?? ""}`}
-              {...clockField}
-            />
+            <span className="relative inline-block">
+              <input
+                type="text"
+                inputMode="decimal"
+                className={`${fieldInputClass} ${highlightRingClass(validityState?.fields?.clock) ?? ""}`}
+                {...clockField}
+                onFocus={() => {
+                  clockField.onFocus();
+                  localPresence.setEditingField({ nodeId: id, field: "clock" });
+                }}
+                onBlur={() => {
+                  clockField.onBlur();
+                  localPresence.setEditingField(null);
+                }}
+              />
+              <FieldPresenceRing editors={remoteEditorsFor("clock")} />
+            </span>
             <span className="text-[var(--text-muted)]">%</span>
             <button
               type="button"
@@ -554,24 +629,31 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               className={stepperButtonClass}
               disabled={maxShards === 0 || node.shards <= 0}
               onClick={() => handleShardStep(-1)}
+              onFocus={() => localPresence.setEditingField({ nodeId: id, field: "shards" })}
+              onBlur={() => localPresence.setEditingField(null)}
             >
               −
             </button>
-            <span
-              className={`w-8 rounded text-center tabular-nums text-[var(--text-primary)] ${highlightRingClass(validityState?.fields?.shards) ?? ""}`}
-              title={
-                validityState?.fields?.shards === "invalid"
-                  ? "This shard count exceeds the machine's cap."
-                  : undefined
-              }
-            >
-              {node.shards}/{maxShards}
+            <span className="relative inline-block">
+              <span
+                className={`w-8 rounded text-center tabular-nums text-[var(--text-primary)] ${highlightRingClass(validityState?.fields?.shards) ?? ""}`}
+                title={
+                  validityState?.fields?.shards === "invalid"
+                    ? "This shard count exceeds the machine's cap."
+                    : undefined
+                }
+              >
+                {node.shards}/{maxShards}
+              </span>
+              <FieldPresenceRing editors={remoteEditorsFor("shards")} />
             </span>
             <button
               type="button"
               className={stepperButtonClass}
               disabled={maxShards === 0 || node.shards >= maxShards}
               onClick={() => handleShardStep(1)}
+              onFocus={() => localPresence.setEditingField({ nodeId: id, field: "shards" })}
+              onBlur={() => localPresence.setEditingField(null)}
             >
               +
             </button>

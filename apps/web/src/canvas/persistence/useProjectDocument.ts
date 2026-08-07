@@ -49,6 +49,17 @@
 //     and Hocuspocus itself drops inbound update messages on a `readOnly`
 //     connection) — not a client-side "don't bother" convenience like
 //     before.
+//
+// Job 021 adds one more field to `StaticCanvasDoc` (`awareness`) and one
+// small reordering inside `load()`: `provider = new HocuspocusProvider(...)`
+// now happens *before* the `cameFromCache` fast-path check instead of after
+// it, purely so `provider.awareness` already exists by the time
+// `finishHydration()` runs on the fast path too (it used to only be
+// constructed in the slow, "no cache" branch's lead-up to `await
+// firstSync`). See `finishHydration`'s own comment for the full reasoning —
+// nothing about *when the connection itself opens* changed, only when this
+// effect starts holding a reference to the (synchronously-constructed)
+// `Awareness` instance living inside it.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import { IndexeddbPersistence, clearDocument } from "y-indexeddb";
@@ -57,6 +68,7 @@ import * as Y from "yjs";
 import { type SfmDocument, addContainer, createDocument, createUndoManager, listContainers } from "@scm/ydoc";
 
 import type { ProjectRole } from "../../api/projects";
+import type { AwarenessHandle } from "../../collab/awareness";
 import { fetchRealtimeTicket, getRealtimeWsUrl } from "./realtimeTicket";
 import type { SaveStatus } from "./updateQueue";
 
@@ -65,6 +77,15 @@ export interface StaticCanvasDoc {
   sfmDoc: SfmDocument;
   rootContainerId: string;
   undoManager: Y.UndoManager;
+  /**
+   * Job 021: the live `HocuspocusProvider`'s `Awareness` instance — genuinely
+   * ephemeral presence state (cursors, selection, field-editing indicators),
+   * never routed through `sfmDoc`/Postgres. Threaded through
+   * `CanvasDocContext` the same way `sfmDoc`/`undoManager` already are (see
+   * `CanvasView.tsx`) — see this file's `finishHydration` for exactly when
+   * and how it's captured off the provider.
+   */
+  awareness: AwarenessHandle;
 }
 
 export type ProjectDocumentState =
@@ -169,7 +190,23 @@ export function useProjectDocument(
      * anything in this function.
      */
     function finishHydration() {
-      if (hydrated || cancelled || !doc) return;
+      if (hydrated || cancelled || !doc || !provider) return;
+
+      // Job 021: captured before `hydrated` is latched `true` — see this
+      // function's call sites in `load()` below for why `provider` is
+      // guaranteed non-null by the time this runs on *either* path (fast
+      // cache path or first-network-sync path). `HocuspocusProvider`
+      // constructs its own `Awareness` synchronously in its own constructor
+      // (independent of the WebSocket's connect/auth lifecycle) unless
+      // explicitly configured with `awareness: null`, which nothing in this
+      // app does — so this should be unreachable in practice; failing loudly
+      // here beats silently handing every `CanvasDocContext` consumer a
+      // context value with no real awareness handle.
+      const awareness = provider.awareness;
+      if (!awareness) {
+        throw new Error("[useProjectDocument] HocuspocusProvider unexpectedly has no awareness instance");
+      }
+
       hydrated = true;
 
       const sfmDoc = createDocument({ doc });
@@ -193,7 +230,7 @@ export function useProjectDocument(
       // undo step once the user starts pressing Ctrl/Cmd+Z.
       const undoManager = createUndoManager(sfmDoc);
 
-      setState({ status: "ready", sfmDoc, rootContainerId: root.id, undoManager });
+      setState({ status: "ready", sfmDoc, rootContainerId: root.id, undoManager, awareness });
     }
 
     async function load() {
@@ -210,16 +247,6 @@ export function useProjectDocument(
       }
       if (cancelled) return;
 
-      // Fast path: this device already has a cached copy of this project
-      // with real content — render *now*, before the network connection
-      // even finishes its first sync, then keep reconciling live in the
-      // background. Unchanged in shape from Job 016; see `finishHydration`'s
-      // header comment on why it's still safe with a live provider attached.
-      const cameFromCache = hasRootContainer(doc);
-      if (cameFromCache) {
-        finishHydration();
-      }
-
       let resolveFirstSync!: () => void;
       let rejectFirstSync!: (err: Error) => void;
       const firstSync = new Promise<void>((resolve, reject) => {
@@ -233,6 +260,18 @@ export function useProjectDocument(
       // failing just means reconciliation hasn't happened yet" precedent.
       firstSync.catch(() => {});
 
+      // Job 021: constructed *before* the `cameFromCache` fast-path check
+      // below — Job 020 originally built it right after that check (and only
+      // reachable from the non-cached branch's `await firstSync`), which
+      // meant the fast path used to call `finishHydration()` while `provider`
+      // was still `null`. Moved up so `provider.awareness` already exists by
+      // the time `finishHydration` runs on *either* path. This doesn't change
+      // when the WebSocket itself actually connects/authenticates (that's
+      // driven by the provider's own internal timers, not by when this
+      // reference is captured) — it only changes when this effect starts
+      // *holding* the reference, which costs nothing on the fast path (the
+      // cache read above already finished) and nothing on the slow path
+      // (the provider was constructed at this exact point before too).
       provider = new HocuspocusProvider({
         url: getRealtimeWsUrl(),
         name: projectId,
@@ -260,6 +299,16 @@ export function useProjectDocument(
           rejectFirstSync(new Error(`realtime authentication failed: ${reason}`));
         },
       });
+
+      // Fast path: this device already has a cached copy of this project
+      // with real content — render *now*, before the network connection
+      // even finishes its first sync, then keep reconciling live in the
+      // background. Unchanged in shape from Job 016; see `finishHydration`'s
+      // header comment on why it's still safe with a live provider attached.
+      const cameFromCache = hasRootContainer(doc);
+      if (cameFromCache) {
+        finishHydration();
+      }
 
       if (!cameFromCache) {
         // No cache to fall back on — the same "surface the error state"

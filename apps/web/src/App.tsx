@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { ProjectSummary } from "./api/projects";
 import { CanvasView } from "./canvas";
+import { discordAvatarUrl, type LocalUserIdentity } from "./collab";
 import { ProjectsPage } from "./routes/ProjectsPage";
 import { ThemeToggle, useTheme } from "./theme";
 
@@ -47,6 +48,24 @@ function App() {
   // localStorage-backed state; only one of the two views is ever on screen
   // at once, so there's no risk of them fighting each other.
   const { theme, toggleTheme } = useTheme();
+
+  // Job 021: this client's own identity, for publishing local Awareness
+  // presence (`collab/useLocalPresence.ts`) — derived once per authenticated
+  // user (not recomputed every render) so `CanvasView`'s `localUser` prop
+  // stays referentially stable across unrelated `App` re-renders.
+  // `discordAvatarUrl` turns `avatarHash` (a raw Discord CDN hash, not a
+  // usable URL on its own) into the real image URL — see that module's
+  // header comment for the exact CDN convention, including the "no custom
+  // avatar set" fallback.
+  const localUser: LocalUserIdentity | null = useMemo(() => {
+    if (auth.status !== "authenticated") return null;
+    const { user } = auth;
+    return {
+      id: user.id,
+      displayName: user.globalName ?? user.username,
+      avatarUrl: discordAvatarUrl(user.discordId, user.avatarHash),
+    };
+  }, [auth]);
 
   const enterCanvas = useCallback((project: ProjectSummary) => {
     setView({ name: "canvas", project });
@@ -95,7 +114,12 @@ function App() {
   // direction is going for. `CanvasView` mounts its own `<ThemeToggle>`
   // (Job 014) rather than one being passed down from here, precisely
   // because there's no shared chrome to put it in.
-  if (auth.status === "authenticated" && view.name === "canvas") {
+  // `localUser` is only ever `null` when `auth.status !== "authenticated"`
+  // (see its own `useMemo` above) — this branch already requires
+  // `auth.status === "authenticated"`, so the two are always in sync in
+  // practice; the explicit `localUser &&` guard here is just what lets
+  // TypeScript see that too, without a non-null assertion.
+  if (auth.status === "authenticated" && view.name === "canvas" && localUser) {
     return (
       <main className="bg-[var(--surface-app)] text-[var(--text-primary)]">
         <CanvasView
@@ -104,6 +128,7 @@ function App() {
           projectTitle={view.project.title}
           projectShortId={view.project.shortId}
           role={view.project.role}
+          localUser={localUser}
           onBack={leaveCanvas}
         />
       </main>

@@ -18,6 +18,7 @@ import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 
 import { getOutpostIconUrl } from "../../assets/icons";
+import { useRemotePresence } from "../../collab";
 import { useCanvasDoc } from "../CanvasDocContext";
 import type { CanvasNode } from "../useYjsSync";
 
@@ -26,8 +27,14 @@ const outpostIconUrl = getOutpostIconUrl();
 const inHandleClass = "!h-2.5 !w-2.5 !border-2 !border-[var(--surface-card)] !bg-[var(--outpost)]";
 const outHandleClass = "!h-2.5 !w-2.5 !border-2 !border-[var(--surface-card)] !bg-[var(--outpost)]";
 
-export const OutpostNode = memo(function OutpostNode({ data, selected }: NodeProps<CanvasNode>) {
-  const { navigateToContainer } = useCanvasDoc();
+export const OutpostNode = memo(function OutpostNode({ id, data, selected }: NodeProps<CanvasNode>) {
+  const { navigateToContainer, awareness } = useCanvasDoc();
+  // Job 021: same remote-selection halo `RecipeNode.tsx` renders — an
+  // outpost boundary node's id IS the container's id, and `selection: []`
+  // (Awareness) is a flat list of node/container ids either kind can appear
+  // in, so this needs no special-casing beyond reading `id` the normal way.
+  const remotePresence = useRemotePresence(awareness);
+  const remoteSelectors = remotePresence.filter((peer) => peer.state.selection.includes(id));
   const container = data.container;
   // Defensive only — `containerToOutpostFlowNode` always sets `data.container` for a `type: "outpost"` node.
   if (!container) return null;
@@ -46,6 +53,11 @@ export const OutpostNode = memo(function OutpostNode({ data, selected }: NodePro
       className={`w-56 cursor-grab rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors active:cursor-grabbing ${
         selected ? "border-[var(--accent)]" : "border-[var(--outpost-border)]"
       }`}
+      style={
+        remoteSelectors.length > 0
+          ? { boxShadow: `0 0 0 3px ${remoteSelectors[0]!.state.color}` }
+          : undefined
+      }
       onDoubleClick={open}
     >
       <div className="flex items-center gap-2 rounded-t-[7px] bg-[var(--node-header)] px-2 py-1.5">
