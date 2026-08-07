@@ -20,7 +20,7 @@ import {
   useState,
 } from "react";
 
-import type { SfmDocument, Settings } from "@scm/ydoc";
+import { updateContainer, type SfmDocument, type Settings } from "@scm/ydoc";
 import {
   Background,
   BackgroundVariant,
@@ -50,6 +50,7 @@ import { type ClickPoint, isDoubleClick } from "./doubleClick";
 import { ConnectionEdge, useConnectionHandlers } from "./edges";
 import { RecipeNode } from "./nodes";
 import {
+  BlueprintNode,
   BoundaryEdge,
   NodeContextMenu,
   OutpostNode,
@@ -89,7 +90,7 @@ import { SplurgerNode } from "./nodes";
 // what `useYjsSync.ts` assigns to a normal direct edge (Job 011's
 // `ConnectionEdge`); `"boundary"` (Job 013) matches a boundary-crossing
 // projected edge (`outposts/BoundaryEdge.tsx`).
-const nodeTypes = { recipe: RecipeNode, outpost: OutpostNode, splurger: SplurgerNode };
+const nodeTypes = { recipe: RecipeNode, outpost: OutpostNode, blueprint: BlueprintNode, splurger: SplurgerNode };
 const edgeTypes = { part: ConnectionEdge, boundary: BoundaryEdge };
 
 /**
@@ -574,7 +575,11 @@ function CanvasFlow({ sync, settings, theme }: CanvasFlowProps) {
     event.preventDefault();
     setNodeMenu({
       nodeId: node.id,
-      isOutpost: Boolean(node.data.container),
+      // Job 026: a blueprint boundary node's `data.container.kind` is
+      // `"blueprint"`; a plain outpost's is `"outpost"` — both are
+      // `type: "outpost" | "blueprint"` flow nodes (`useYjsSync.ts`), never
+      // a real recipe node's own container menu.
+      containerKind: node.data.container ? (node.data.container.kind === "blueprint" ? "blueprint" : "outpost") : null,
       screenPosition: { x: event.clientX, y: event.clientY },
     });
   };
@@ -664,6 +669,7 @@ function CanvasFlow({ sync, settings, theme }: CanvasFlowProps) {
           }
           onOpenOutpost={(id) => navigateToContainer(id)}
           onDeleteOutpost={(id) => deleteOutpost(sfmDoc, id)}
+          onConvertContainerKind={(id, kind) => updateContainer(sfmDoc, id, { kind })}
           onClose={() => setNodeMenu(null)}
         />
       )}

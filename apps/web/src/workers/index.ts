@@ -4,7 +4,19 @@
 // from `solverWorker.ts` itself — that file is a Worker entry point,
 // instantiated via `new Worker(new URL(...))`, never imported as a normal
 // module (see `useSolver.ts`'s `createBrowserWorker`).
-export { buildSolverSnapshot } from "./buildSnapshot";
+export { buildSolverSnapshot, buildSolverSnapshotWithBlueprints } from "./buildSnapshot";
+// Job 026: Blueprints (duplicable outposts) — the container-aware compound-
+// node collapse/expand pipeline, shared by `buildSnapshot.ts`/`useSolver.ts`
+// and `canvas/outposts/BlueprintNode.tsx` (which needs `blueprintCompoundNodeId`
+// to look up the copy count by id).
+export {
+  blueprintCompoundNodeId,
+  collapseBlueprints,
+  expandBlueprintResults,
+  type BlueprintCollapseResult,
+  type BlueprintDisplayInfo,
+  type MergeComponentResults,
+} from "./blueprintCollapse";
 export { computeConnectedComponents, type ComponentEdgeLike, type GraphComponent } from "./connectedComponents";
 export {
   mergeComponentResults,

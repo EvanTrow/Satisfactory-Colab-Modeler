@@ -17,9 +17,11 @@
 // would make `partition.ts`'s components (and therefore the dirty-subgraph
 // cache) wrong in exactly the way this job's spec calls out as the single
 // biggest risk.
-import { listEdges, listNodes, type SfmDocument } from "@scm/ydoc";
-import type { SolverEdge, SolverNode, SolverSnapshot } from "@scm/solver";
+import { defaultGameData, type GameData } from "@scm/gamedata";
+import { listContainers, listEdges, listNodes, type SfmDocument } from "@scm/ydoc";
+import type { SolverEdge, SolverMode, SolverNode, SolverSnapshot } from "@scm/solver";
 
+import { collapseBlueprints, type BlueprintDisplayInfo } from "./blueprintCollapse";
 import { computeSplurgerPassthroughEdges } from "./splurgerPassthrough";
 
 /**
@@ -102,4 +104,33 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   const edges: SolverEdge[] = [...directEdges, ...splurgerEdges];
 
   return { nodes, edges };
+}
+
+/**
+ * Job 026 (Blueprints, PLAN.md §10.3): `buildSolverSnapshot`'s raw,
+ * container-agnostic flattening, THEN — Basic/Full mode only, and only when
+ * the document actually has a `kind: "blueprint"` container — collapsing
+ * each top-level blueprint's internal recipe subgraph into one compound
+ * `SolverNode` via `blueprintCollapse.ts`'s `collapseBlueprints`. See that
+ * module's header for the full "how §10.3 was resolved" writeup; this
+ * function is just the one new call site in the existing snapshot-building
+ * pipeline. Returns the (possibly collapsed) snapshot plus the metadata
+ * `useSolver.ts` needs to expand the compound's solved result back into
+ * real, correctly-scaled per-internal-node/edge entries for display —
+ * `blueprints` is `[]` (and `snapshot` identical to `buildSolverSnapshot`'s
+ * own output) for every document with no blueprint container at all, i.e.
+ * zero behavior change for every project that predates this job.
+ */
+export function buildSolverSnapshotWithBlueprints(
+  sfmDoc: SfmDocument,
+  mode: SolverMode,
+  gameData: GameData = defaultGameData,
+): { snapshot: SolverSnapshot; blueprints: readonly BlueprintDisplayInfo[]; skippedNestedBlueprintIds: readonly string[] } {
+  const rawSnapshot = buildSolverSnapshot(sfmDoc);
+  const containers = listContainers(sfmDoc);
+  if (!containers.some((c) => c.kind === "blueprint")) {
+    return { snapshot: rawSnapshot, blueprints: [], skippedNestedBlueprintIds: [] };
+  }
+  const nodes = listNodes(sfmDoc);
+  return collapseBlueprints(containers, nodes, rawSnapshot, mode, gameData);
 }

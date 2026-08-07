@@ -11,21 +11,29 @@ import { type Container } from "@scm/ydoc";
 
 export interface NodeContextMenuState {
   nodeId: string;
-  /** True when the right-clicked node is a Job 013 outpost boundary node (`data.container` set), not a real recipe node. */
-  isOutpost: boolean;
+  /**
+   * `"outpost"`/`"blueprint"` when the right-clicked node is a Job
+   * 013/026 container boundary node (`data.container` set), `null` for a
+   * real recipe node. Job 026 widened this from a plain `isOutpost:
+   * boolean` so the menu can offer the right "Convert to..." action for
+   * whichever kind it currently is.
+   */
+  containerKind: "outpost" | "blueprint" | null;
   /** Viewport/screen coordinates to anchor the menu at — same convention `RecipeChooser.tsx` (Job 009) uses. */
   screenPosition: { x: number; y: number };
 }
 
 export interface NodeContextMenuProps {
   state: NodeContextMenuState;
-  /** Outposts visible in the *current* view (i.e. `data.container` nodes other than `state.nodeId` itself) — candidate "move into" targets for a real node. */
+  /** Outposts/blueprints visible in the *current* view (i.e. `data.container` nodes other than `state.nodeId` itself) — candidate "move into" targets for a real node. */
   siblingOutposts: Container[];
   /** The current view's own parent container, or `null` at root (root has nothing to move "up" into). */
   parentContainer: Container | null;
   onMoveToContainer: (nodeId: string, containerId: string) => void;
   onOpenOutpost: (containerId: string) => void;
   onDeleteOutpost: (containerId: string) => void;
+  /** Job 026: flips `Container.kind` between `"outpost"` and `"blueprint"` — the blueprint creation/conversion UI this job's own scope asks for ("an outpost can be marked/converted to `kind: 'blueprint'`"). */
+  onConvertContainerKind: (containerId: string, kind: "outpost" | "blueprint") => void;
   onClose: () => void;
 }
 
@@ -38,6 +46,7 @@ export function NodeContextMenu({
   onMoveToContainer,
   onOpenOutpost,
   onDeleteOutpost,
+  onConvertContainerKind,
   onClose,
 }: NodeContextMenuProps) {
   return (
@@ -48,7 +57,7 @@ export function NodeContextMenu({
         style={{ left: state.screenPosition.x, top: state.screenPosition.y }}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        {state.isOutpost ? (
+        {state.containerKind ? (
           <>
             <button
               type="button"
@@ -58,7 +67,23 @@ export function NodeContextMenu({
                 onClose();
               }}
             >
-              Open outpost
+              Open {state.containerKind}
+            </button>
+            {/* Job 026: blueprint creation/conversion — "an outpost can be marked/converted to kind: 'blueprint'" (jobs/026-blueprints.md's own scope wording), and reversible the same way. */}
+            <button
+              type="button"
+              className={itemClass}
+              onClick={() => {
+                onConvertContainerKind(state.nodeId, state.containerKind === "outpost" ? "blueprint" : "outpost");
+                onClose();
+              }}
+              title={
+                state.containerKind === "outpost"
+                  ? "Makes this outpost duplicable — put a limit on something inside to define one copy; the copy count is then computed from external demand."
+                  : "Converts back to a plain (non-duplicable) outpost."
+              }
+            >
+              Convert to {state.containerKind === "outpost" ? "blueprint" : "outpost"}
             </button>
             <button
               type="button"
@@ -67,9 +92,9 @@ export function NodeContextMenu({
                 onDeleteOutpost(state.nodeId);
                 onClose();
               }}
-              title="Deletes the outpost container itself; everything inside it is kept, reparented to this container."
+              title={`Deletes the ${state.containerKind} container itself; everything inside it is kept, reparented to this container.`}
             >
-              Delete outpost (keep contents)
+              Delete {state.containerKind} (keep contents)
             </button>
           </>
         ) : (

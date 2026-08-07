@@ -74,3 +74,8 @@ const customIconUrlByFileName = new Map<string, string>(
 export function getOutpostIconUrl(): string | undefined {
   return customIconUrlByFileName.get("Outpost.png");
 }
+
+/** Job 026: the blueprint card icon (`BlueprintNode.tsx`) — same real-game-art convention as `getOutpostIconUrl` above, PLAN.md §1's other "abstract node type" custom icon. */
+export function getBlueprintIconUrl(): string | undefined {
+  return customIconUrlByFileName.get("Blueprint.png");
+}

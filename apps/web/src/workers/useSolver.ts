@@ -34,12 +34,26 @@ import { getSettings, type SfmDocument } from "@scm/ydoc";
 import type { EdgeSolveResult, NodeSolveResult, SolveResult, SolverMode } from "@scm/solver";
 import { create } from "zustand";
 
-import { buildSolverSnapshot } from "./buildSnapshot";
+import { buildSolverSnapshotWithBlueprints } from "./buildSnapshot";
+import { expandBlueprintResults, type BlueprintDisplayInfo } from "./blueprintCollapse";
+import { mergeComponentResults } from "./mergeResults";
 import type { HostToWorkerMessage, WorkerToHostMessage } from "./protocol";
 import { createSolveScheduler, type SolveHostState, type SolveStaleness } from "./solveScheduler";
 
 interface SolveStoreState extends SolveHostState {
+  /**
+   * Job 026: the current document's blueprint collapse metadata — updated
+   * SYNCHRONOUSLY on every `resync()` (independent of the async
+   * debounce/worker round trip `result` goes through), so it always
+   * reflects the LATEST doc state even while `result` is still catching up.
+   * See `blueprintCollapse.ts`'s `expandBlueprintResults` for how the two
+   * are combined; briefly pairing a fresh `blueprints` with a stale `result`
+   * during the debounce window is the same, already-tolerated kind of
+   * staleness `staleness: "stale-recomputing"` already signals elsewhere.
+   */
+  blueprints: readonly BlueprintDisplayInfo[];
   setState: (state: SolveHostState) => void;
+  setBlueprints: (blueprints: readonly BlueprintDisplayInfo[]) => void;
 }
 
 function createSolveStore() {
@@ -47,7 +61,9 @@ function createSolveStore() {
     result: null,
     staleness: "fresh",
     fullProgress: null,
+    blueprints: [],
     setState: (state) => set(state),
+    setBlueprints: (blueprints) => set({ blueprints }),
   }));
 }
 
@@ -156,7 +172,6 @@ export function useSolver(sfmDoc: SfmDocument, diagnostics?: UseSolverDiagnostic
     schedulerRef.current = scheduler;
 
     const resync = () => {
-      const snapshot = buildSolverSnapshot(sfmDoc);
       // `@scm/ydoc`'s `Settings.solverMode` (Job 007's schema) already
       // allowed `"full"` since before `@scm/solver` implemented it — Job
       // 024 is what finally widens this mapping to pass it straight
@@ -167,6 +182,17 @@ export function useSolver(sfmDoc: SfmDocument, diagnostics?: UseSolverDiagnostic
         settingsMode === "manual" || settingsMode === "basic" || settingsMode === "full"
           ? settingsMode
           : "none";
+      // Job 026: the blueprint collapse step is synchronous (a plain
+      // `solve()` call per blueprint, bounded by that blueprint's own size —
+      // see `blueprintCollapse.ts`) and, for the overwhelmingly common case
+      // of a document with NO blueprint container at all, an exact no-op
+      // (`snapshot`/`blueprints` are `buildSolverSnapshot`'s own untouched
+      // output) — zero behavior change for every project that predates this
+      // job. `blueprints` updates the store SYNCHRONOUSLY, ahead of the
+      // scheduler's own async debounce/worker round trip for `result` — see
+      // `SolveStoreState.blueprints`'s own doc comment for why that's safe.
+      const { snapshot, blueprints } = buildSolverSnapshotWithBlueprints(sfmDoc, mode);
+      useStore.getState().setBlueprints(blueprints);
       scheduler.submit(snapshot, mode);
     };
 
@@ -176,25 +202,40 @@ export function useSolver(sfmDoc: SfmDocument, diagnostics?: UseSolverDiagnostic
     // `containerId` — see this module's header. `sfmDoc.settings.observe`
     // (shallow, matching `useSettings.ts`'s own reasoning) is enough since
     // `updateSettings` always replaces `solverMode` as a whole top-level
-    // key, never mutates in place.
+    // key, never mutates in place. `sfmDoc.containers.observeDeep` (Job 026)
+    // is new — a blueprint's `kind`/`copiesLimit`, or a node moving into/out
+    // of one, must re-trigger the collapse step, and neither lives under
+    // `sfmDoc.nodes`/`.edges`.
     sfmDoc.nodes.observeDeep(resync);
     sfmDoc.edges.observeDeep(resync);
+    sfmDoc.containers.observeDeep(resync);
     sfmDoc.settings.observe(resync);
 
     return () => {
       sfmDoc.nodes.unobserveDeep(resync);
       sfmDoc.edges.unobserveDeep(resync);
+      sfmDoc.containers.unobserveDeep(resync);
       sfmDoc.settings.unobserve(resync);
       scheduler.dispose();
       if (schedulerRef.current === scheduler) schedulerRef.current = null;
     };
   }, [sfmDoc, useStore]);
 
-  const nodeResultById = useMemo(() => indexNodes(result), [result]);
-  const edgeResultById = useMemo(() => indexEdges(result), [result]);
+  const blueprints = useStore((s) => s.blueprints);
+  const expandedResult = useMemo(
+    () => (result ? expandBlueprintResults(result, blueprints, mergeComponentResults) : result),
+    [result, blueprints],
+  );
+  const nodeResultById = useMemo(() => indexNodes(expandedResult), [expandedResult]);
+  const edgeResultById = useMemo(() => indexEdges(expandedResult), [expandedResult]);
   const fullProgress = useStore((s) => s.fullProgress);
 
-  return { result, staleness, fullProgress, nodeResultById, edgeResultById, stop };
+  // Job 026: `result` itself is the EXPANDED result (blueprint compound
+  // nodes' summary contribution excluded in favor of their real, scaled
+  // internal members — see `expandBlueprintResults`'s own doc comment) so
+  // Job 019's summary panel reads correct made/used/power/sink totals for a
+  // document with blueprints, not just the per-node/per-edge lookup maps.
+  return { result: expandedResult, staleness, fullProgress, nodeResultById, edgeResultById, stop };
 }
 
 export type { SolveHostState, SolveStaleness };

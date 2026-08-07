@@ -138,6 +138,17 @@ export interface NodeProfile {
   readonly primaryPart?: RecipePart;
   /** Non-empty only when the node's recipe/machine/shards couldn't be resolved — see the module header. */
   readonly issues: readonly string[];
+  /**
+   * Job 026 (Blueprints): present ONLY for a synthetic blueprint-compound
+   * profile (`buildBlueprintCompoundProfile`) — signed MW at exactly 1 of
+   * this node's "machine count" (i.e. 1 copy). When set, `nodePower` uses
+   * this directly (`syntheticPowerAtOneUnit * machineCount`) instead of
+   * the real-machine `effectivePower`/`overclockExponent`/`powerAtClock`
+   * formula, since a compound node's power is already the (float) sum of
+   * its whole internal subgraph's power at one copy, not a single
+   * machine's overclock curve.
+   */
+  readonly syntheticPowerAtOneUnit?: number;
 }
 
 function emptyProfile(node: SolverNode, issues: string[], recipe?: Recipe): NodeProfile {
@@ -154,8 +165,80 @@ function emptyProfile(node: SolverNode, issues: string[], recipe?: Recipe): Node
   };
 }
 
+// ---------------------------------------------------------------------------
+// Job 026 (Blueprints): a synthetic "compound" profile for a node whose
+// rates come directly from `SolverNode.blueprintCopyBasis` instead of a
+// `@scm/gamedata` recipe/machine lookup. Builds a fully-valid, if synthetic,
+// `Recipe` object (every field `basic.ts`/`full.ts`/`summary.ts`/
+// `nodeResult.ts`/`edgeValidation.ts` might read — just `.parts`, in
+// practice, since none of those modules gate on anything else) so this
+// compound node behaves EXACTLY like a real recipe node to every one of
+// those modules, with zero changes needed to any of them: propagation,
+// even-split/water-fill sibling grouping, edge validation, node-result/
+// summary building all treat it as an ordinary (if unusually-shaped) recipe.
+// See jobs/026-blueprints.md's Handoff notes ("How PLAN.md §10.3 was
+// resolved") for why this is the chosen mechanism.
+// ---------------------------------------------------------------------------
+
+function buildBlueprintCompoundProfile(
+  node: SolverNode,
+  basis: NonNullable<SolverNode["blueprintCopyBasis"]>,
+): NodeProfile {
+  const issues: string[] = [];
+  const parts: RecipePart[] = [];
+  const refRatePerPart = new Map<string, Rational>();
+  for (const [part, rateString] of Object.entries(basis.perCopyRates)) {
+    try {
+      const amount = parseRational(rateString);
+      parts.push({ part, amount });
+      refRatePerPart.set(part, amount);
+    } catch {
+      issues.push(`blueprint compound node "${node.id}": invalid per-copy rate "${rateString}" for part "${part}"`);
+    }
+  }
+
+  const recipe: Recipe = {
+    name: `blueprint:${node.id}`,
+    // Not a real machine family — nothing reads `Recipe.machine` for a
+    // compound profile (resolution is short-circuited before
+    // `resolveNodeMachine` ever runs), this just satisfies the type.
+    machine: "",
+    batchTime: ONE,
+    tier: { tier: 0, milestone: 0, raw: "0-0" },
+    parts,
+    alternate: false,
+    ficsmas: false,
+    ignoreInputMultiplier: true,
+    spaceElevatorMultiplier: false,
+    isGenerator: parts.every((p) => !isPositive(p.amount)),
+  };
+
+  return {
+    node,
+    recipe,
+    machine: undefined,
+    // A compound node's "clock" is meaningless (its per-copy rates already
+    // bake in whatever the internal subgraph's own clocks/shards were) —
+    // fixed at 100% so `partRateAtMachineCount`/`machineCountForTargetRate`
+    // (which multiply by `clockFraction`) are simple `refRate * machineCount`.
+    clockPercent: of(100),
+    clockFraction: ONE,
+    outputMultiplier: ONE,
+    powerMultiplier: ONE,
+    overclockExponent: 1,
+    refRatePerPart,
+    primaryPart: primaryPart(parts),
+    issues,
+    syntheticPowerAtOneUnit: basis.perCopyPowerMW,
+  };
+}
+
 /** Resolves `node` against `gameData` into a `NodeProfile`. Never throws — see the module header. */
 export function buildNodeProfile(node: SolverNode, gameData: GameData): NodeProfile {
+  if (node.blueprintCopyBasis) {
+    return buildBlueprintCompoundProfile(node, node.blueprintCopyBasis);
+  }
+
   const recipe = gameData.recipesByName.get(node.recipe);
   if (!recipe) {
     return emptyProfile(node, [`unknown recipe "${node.recipe}"`]);
@@ -256,6 +339,9 @@ export function machineCountForTargetRate(
  * none).
  */
 export function nodePower(profile: NodeProfile, machineCount: Rational): number {
+  if (profile.syntheticPowerAtOneUnit !== undefined) {
+    return profile.syntheticPowerAtOneUnit * toApproximateNumber(machineCount);
+  }
   if (!profile.effectivePower) return 0;
   const perMachine = powerAtClock(profile.effectivePower, profile.clockFraction, profile.overclockExponent);
   return perMachine * toApproximateNumber(profile.powerMultiplier) * toApproximateNumber(machineCount);

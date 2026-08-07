@@ -162,10 +162,15 @@ function nodeRecordToFlowNode(record: NodeRecord, selected = false): CanvasNode 
 function containerToOutpostFlowNode(container: Container, ports: DerivedOutpostPort[], selected = false): CanvasNode {
   return {
     id: container.id,
-    type: "outpost",
+    // Job 026: a `kind: "blueprint"` container renders as `type: "blueprint"`
+    // (`BlueprintNode.tsx`) instead of `type: "outpost"` — everything else
+    // about this synthetic node (its ports, its `Container.x`/`.y`-driven
+    // position, the drag-stop write-back via `updateContainer` below) is
+    // identical between the two kinds; only the rendered card differs.
+    type: container.kind === "blueprint" ? "blueprint" : "outpost",
     position: { x: container.x, y: container.y },
     selected,
-    data: { container, ports, label: container.title || "Outpost" },
+    data: { container, ports, label: container.title || (container.kind === "blueprint" ? "Blueprint" : "Outpost") },
   };
 }
 
