@@ -39,7 +39,7 @@ export {
   type Settings,
   type SolverMode,
   type Waypoint,
-} from "./schema";
+} from "./schema.js";
 
 export {
   createDocument,
@@ -60,7 +60,7 @@ export {
   type CreateDocumentOptions,
   type DocumentSnapshot,
   type SfmDocument,
-} from "./document";
+} from "./document.js";
 
 export {
   addContainer,
@@ -86,16 +86,16 @@ export {
   type NewNodeInput,
   type NodePatch,
   type SettingsPatch,
-} from "./mutations";
+} from "./mutations.js";
 
-export { computeEdgeId } from "./edgeId";
+export { computeEdgeId } from "./edgeId.js";
 
 export {
   INTEGRITY_ORIGIN,
   createUndoManager,
   runAsIntegrity,
   type UndoManagerOptions,
-} from "./undo";
+} from "./undo.js";
 
 export {
   validateContainer,
@@ -106,4 +106,11 @@ export {
   validateSettings,
   type DocumentIssue,
   type DocumentValidationResult,
-} from "./validate";
+} from "./validate.js";
+
+export {
+  isNoopRepair,
+  repairDocument,
+  runIntegrityReducer,
+  type IntegrityRepairSummary,
+} from "./integrity.js";

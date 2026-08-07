@@ -1,4 +1,4 @@
-import { add, fromBigInt, makeRational, negate, type Rational } from "./rational";
+import { add, fromBigInt, makeRational, negate, type Rational } from "./rational.js";
 
 /** Thrown by `parseRational` when the input string doesn't match any supported format. */
 export class RationalParseError extends Error {

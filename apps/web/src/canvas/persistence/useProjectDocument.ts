@@ -65,10 +65,12 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import { IndexeddbPersistence, clearDocument } from "y-indexeddb";
 import * as Y from "yjs";
 
-import { type SfmDocument, addContainer, createDocument, createUndoManager, listContainers } from "@scm/ydoc";
+import { type SfmDocument, addContainer, createDocument, createUndoManager, listContainers, runIntegrityReducer } from "@scm/ydoc";
 
 import type { ProjectRole } from "../../api/projects";
 import type { AwarenessHandle } from "../../collab/awareness";
+import { attachClientIntegrityReducer } from "./clientIntegrity";
+import { computeConnectionStatus, type ConnectionStatus } from "./connectionStatus";
 import { fetchRealtimeTicket, getRealtimeWsUrl } from "./realtimeTicket";
 import type { SaveStatus } from "./updateQueue";
 
@@ -137,9 +139,17 @@ function computeSaveStatus(wsStatus: "connecting" | "connected" | "disconnected"
 export function useProjectDocument(
   projectId: string,
   role: ProjectRole,
-): ProjectDocumentState & { saveStatus: SaveStatus; reloadAfterRestore: () => void } {
+): ProjectDocumentState & {
+  saveStatus: SaveStatus;
+  /** Job 022: the transport-level connection indicator — see `connectionStatus.ts`'s header comment for how this differs from `saveStatus`. */
+  connectionStatus: ConnectionStatus;
+  reloadAfterRestore: () => void;
+} {
   const [state, setState] = useState<ProjectDocumentState>({ status: "loading" });
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(
+    computeConnectionStatus("connecting", navigator.onLine),
+  );
   const [retryToken, setRetryToken] = useState(0);
   // Lets `reloadAfterRestore` (called from outside this effect, by a
   // `VersionPanel` click) reach the *current* IndexedDB provider instance to
@@ -155,13 +165,44 @@ export function useProjectDocument(
     let hydrated = false;
     let wsStatus: "connecting" | "connected" | "disconnected" = "connecting";
     let unsyncedChanges = 0;
+    // Job 022: mirrors `navigator.onLine`, kept in a closure variable (not
+    // read fresh each time) so `refreshConnectionStatus` has a value even
+    // when called from a handler that isn't the 'online'/'offline' listener
+    // itself — see the listeners attached below.
+    let browserOnline = navigator.onLine;
+    // Job 022: detaches the ongoing `afterTransaction` integrity-repair
+    // listener (see `clientIntegrity.ts`) — set once `finishHydration` runs,
+    // called from this effect's own cleanup below alongside tearing down
+    // the provider/IndexedDB connections.
+    let detachIntegrityReducer: (() => void) | null = null;
 
     setState({ status: "loading" });
     setSaveStatus("saved");
+    setConnectionStatus(computeConnectionStatus("connecting", browserOnline));
 
     function refreshSaveStatus() {
       setSaveStatus(computeSaveStatus(wsStatus, unsyncedChanges));
     }
+
+    // Job 022: the connection-status indicator — updated alongside
+    // `refreshSaveStatus` (same `onStatus` callback below) AND by the
+    // browser's own 'online'/'offline' events, since a genuine network
+    // outage doesn't necessarily fire `HocuspocusProvider`'s own `onStatus`
+    // callback promptly on its own (the socket may not even notice it's
+    // dead until a ping times out).
+    function refreshConnectionStatus() {
+      setConnectionStatus(computeConnectionStatus(wsStatus, browserOnline));
+    }
+    function handleBrowserOnline() {
+      browserOnline = true;
+      refreshConnectionStatus();
+    }
+    function handleBrowserOffline() {
+      browserOnline = false;
+      refreshConnectionStatus();
+    }
+    window.addEventListener("online", handleBrowserOnline);
+    window.addEventListener("offline", handleBrowserOffline);
 
     /**
      * Runs exactly once per effect run — either right after the local
@@ -210,6 +251,23 @@ export function useProjectDocument(
       hydrated = true;
 
       const sfmDoc = createDocument({ doc });
+
+      // Job 022: repair-on-load, mirroring `apps/realtime/src/server.ts`'s
+      // own "already corrupt when loaded" pass — a document hydrated from
+      // this device's IndexedDB cache (or freshly merged from the server on
+      // first sync) might already carry a dangling reference from a prior
+      // session/tab that never got a chance to repair it (e.g. a crash
+      // mid-edit). Runs *before* the root-container-creation check below and
+      // *before* `createUndoManager`, so nothing here can ever show up as an
+      // undo step regardless of ordering — `INTEGRITY_ORIGIN` is excluded
+      // unconditionally either way (see `undo.ts`), this is just the
+      // tidiest place for it. `attachClientIntegrityReducer` (right below)
+      // then keeps repairing after every subsequent transaction — local
+      // edits, remote peers' merged-in edits, and this reducer's own
+      // integrity-tagged passes alike (see that module's header comment for
+      // why "every transaction" is the correct scope, not just local ones).
+      runIntegrityReducer(sfmDoc);
+      detachIntegrityReducer = attachClientIntegrityReducer(sfmDoc);
 
       let root = listContainers(sfmDoc).find((container) => container.kind === "root");
       if (!root) {
@@ -286,6 +344,7 @@ export function useProjectDocument(
         onStatus: ({ status }) => {
           wsStatus = status;
           refreshSaveStatus();
+          refreshConnectionStatus();
         },
         onUnsyncedChanges: ({ number }) => {
           unsyncedChanges = number;
@@ -332,6 +391,14 @@ export function useProjectDocument(
 
     return () => {
       cancelled = true;
+      window.removeEventListener("online", handleBrowserOnline);
+      window.removeEventListener("offline", handleBrowserOffline);
+      // Job 022: detach the integrity-reducer listener before tearing down
+      // the doc's other connections — harmless either order in practice
+      // (the doc itself is about to be abandoned), but this keeps the
+      // cleanup list in the same order things were set up.
+      detachIntegrityReducer?.();
+      detachIntegrityReducer = null;
       // Tears down the WebSocket connection cleanly. Unlike Job 015/016's
       // push queue, there's no separate "flush before disposing" step to
       // worry about here — every prior local mutation was already synced
@@ -387,5 +454,5 @@ export function useProjectDocument(
     })();
   }, [projectId]);
 
-  return { ...state, saveStatus, reloadAfterRestore };
+  return { ...state, saveStatus, connectionStatus, reloadAfterRestore };
 }

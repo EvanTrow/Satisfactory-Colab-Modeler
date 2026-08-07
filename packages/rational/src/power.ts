@@ -1,4 +1,4 @@
-import type { Rational } from "./rational";
+import type { Rational } from "./rational.js";
 
 /**
  * The ONE deliberate floating-point boundary in this codebase.

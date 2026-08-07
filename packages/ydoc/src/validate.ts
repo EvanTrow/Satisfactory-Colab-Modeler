@@ -7,14 +7,14 @@
 // repair logic, including the `origin: 'integrity'`-tagged transaction, is
 // Job 022's scope).
 import { z } from "zod";
-import type { DocumentSnapshot } from "./document";
+import type { DocumentSnapshot } from "./document.js";
 import {
   ContainerSchema,
   EdgeRecordSchema,
   MetaSchema,
   NodeRecordSchema,
   SettingsSchema,
-} from "./schema";
+} from "./schema.js";
 
 export function validateMeta(value: unknown) {
   return MetaSchema.safeParse(value);

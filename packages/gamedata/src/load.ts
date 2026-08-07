@@ -11,7 +11,7 @@ import {
   type RawMultiMachine,
   type RawPart,
   type RawRecipe,
-} from "./schema";
+} from "./schema.js";
 import type {
   CostEntry,
   GameData,
@@ -23,8 +23,8 @@ import type {
   Part,
   Recipe,
   RecipePart,
-} from "./types";
-import { buildRecipeIndices, parseTier } from "./indices";
+} from "./types.js";
+import { buildRecipeIndices, parseTier } from "./indices.js";
 
 /**
  * `game_data.json` carries no version field of its own (verified: the file's

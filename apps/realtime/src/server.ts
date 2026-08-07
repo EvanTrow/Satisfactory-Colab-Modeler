@@ -19,6 +19,28 @@
 //     reimplementing the merge/compaction algorithm. See that package's
 //     `index.ts` for the full architectural reasoning behind promoting it
 //     there instead of duplicating it.
+//   - Job 022: the integrity reducer's server-side half — PLAN.md §5's "run
+//     after every transaction... on both client and server" and "running it
+//     on the server too means a malicious or buggy client can't persist a
+//     corrupt document." Two call sites, per Job 020's own Handoff notes
+//     flagging exactly this slot:
+//       * `afterLoadDocument`: repairs the just-loaded `Document` in place
+//         and, if that repair changed anything, persists the repair-only
+//         diff immediately (bypassing Hocuspocus's own debounce) — so a
+//         document that was ALREADY corrupt in Postgres before this load
+//         never gets re-served to a second connection, and never sits
+//         durably corrupt for longer than it takes to load it once.
+//       * `onStoreDocument`: repairs the live `Document` immediately before
+//         computing the diff `appendUpdate` persists — this is the actual
+//         enforcement boundary for "a buggy/malicious client wrote a
+//         dangling edge": whatever came in during the debounce window is
+//         fixed here, before a single byte of it reaches
+//         `project_doc_updates`.
+//     Both call sites build a `SfmDocument` wrapper via `createDocument({
+//     doc })` over the same live `Y.Doc` Hocuspocus already holds — this is
+//     safe to call repeatedly (it only ever fills in `meta`/`settings`
+//     defaults on a genuinely empty map, per `document.ts`'s own doc
+//     comment) and never allocates a second, divergent document.
 import {
   Server,
   type Connection,
@@ -28,6 +50,7 @@ import {
 } from "@hocuspocus/server";
 import type { ProjectMemberRole } from "@scm/db";
 import { appendUpdate, loadProjectDocUpdate, resolveRole } from "@scm/doc-storage";
+import { createDocument, isNoopRepair, runIntegrityReducer } from "@scm/ydoc";
 import * as Y from "yjs";
 
 import { getRealtimeConfig } from "./config.js";
@@ -112,16 +135,43 @@ export async function createHocuspocusServer(): Promise<RealtimeServer> {
       return loadProjectDocUpdate(data.documentName);
     },
 
-    afterLoadDocument(data) {
+    async afterLoadDocument(data) {
+      // Job 022: repair-on-load, BEFORE seeding the diff base below — see
+      // this file's header comment. `priorVector` is captured pre-repair so
+      // the repair's own edits (if any) are exactly what gets persisted
+      // immediately here; the "seed the diff base after load" comment below
+      // still holds, just now "after load *and* after repair."
+      const sfmDoc = createDocument({ doc: data.document });
+      const priorVector = Y.encodeStateVector(data.document);
+      const repairSummary = runIntegrityReducer(sfmDoc);
+      if (!isNoopRepair(repairSummary)) {
+        const repairUpdate = Y.encodeStateAsUpdate(data.document, priorVector);
+        if (repairUpdate.length > 0) {
+          // actorUserId: null — this is a system-generated repair, not
+          // attributable to whichever user's edit originally caused (or
+          // merely exposed) the corruption.
+          await appendUpdate(data.documentName, repairUpdate, null);
+        }
+      }
+
       // Seed the diff base *after* load (persisted content merged in, no
       // edits yet) rather than before — see `lastStoredStateVectorByDocument`'s
       // doc comment for why this keeps onStoreDocument's writes small.
       lastStoredStateVectorByDocument.set(data.documentName, Y.encodeStateVector(data.document));
-      return Promise.resolve();
     },
 
     async onStoreDocument(data: onStoreDocumentPayload<HocuspocusContext>) {
       const { document, documentName, lastContext } = data;
+
+      // Job 022: repair immediately before computing/persisting the diff —
+      // this is the actual "a malicious or buggy client can't persist a
+      // corrupt document" enforcement point (see this file's header
+      // comment). Whatever a client wrote during this debounce window is
+      // fixed here, in the same transaction-tagged pass, before a single
+      // byte of it reaches `project_doc_updates`.
+      const sfmDoc = createDocument({ doc: document });
+      runIntegrityReducer(sfmDoc);
+
       const priorVector = lastStoredStateVectorByDocument.get(documentName);
       const update = priorVector
         ? Y.encodeStateAsUpdate(document, priorVector)

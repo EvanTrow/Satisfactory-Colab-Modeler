@@ -12,7 +12,7 @@ export type {
   Recipe,
   RecipePart,
   Tier,
-} from "./types";
+} from "./types.js";
 
 export {
   type RawGameData,
@@ -25,11 +25,11 @@ export {
   RawMultiMachineSchema,
   RawPartSchema,
   RawRecipeSchema,
-} from "./schema";
+} from "./schema.js";
 
-export { GAME_DATA_VERSION, loadGameData } from "./load";
+export { GAME_DATA_VERSION, loadGameData } from "./load.js";
 
-export { type RecipeIndices, buildRecipeIndices, compareTiers, parseTier } from "./indices";
+export { type RecipeIndices, buildRecipeIndices, compareTiers, parseTier } from "./indices.js";
 
 export {
   MULTI_MACHINE_RECIPE_NAMES,
@@ -42,15 +42,15 @@ export {
   findVariant,
   multiMachineRecipeRatePerMinute,
   resolveMachine,
-} from "./machines";
+} from "./machines.js";
 
-export { type SomersloopBoost, somersloopBoost } from "./somersloop";
+export { type SomersloopBoost, somersloopBoost } from "./somersloop.js";
 
 export {
   KNOWN_NON_ENTITY_ICON_FILES,
   type IconCoverageResult,
   iconFileName,
   verifyIconCoverage,
-} from "./icons";
+} from "./icons.js";
 
-export { defaultGameData } from "./data";
+export { defaultGameData } from "./data.js";

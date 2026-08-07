@@ -12,7 +12,7 @@ import {
   type NodeRecord,
   type Settings,
   CURRENT_SCHEMA_VERSION,
-} from "./schema";
+} from "./schema.js";
 
 /**
  * A `Y.Doc` with the five top-level maps from PLAN.md §4 already created,

@@ -3,7 +3,7 @@
 // every other package builds numeric correctness on, since game_data.json
 // encodes every game rate as an exact rational string.
 
-export type { Rational } from "./rational";
+export type { Rational } from "./rational.js";
 export {
   ZERO,
   ONE,
@@ -22,12 +22,12 @@ export {
   isZero,
   isNegative,
   isPositive,
-} from "./rational";
+} from "./rational.js";
 
-export { parseRational, RationalParseError } from "./parse";
+export { parseRational, RationalParseError } from "./parse.js";
 
-export type { RoundingMode, FormatStyle, FormatOptions, DecimalFormatOptions } from "./format";
-export { formatRational, toFractionString, toMixedNumberString, toDecimalString } from "./format";
+export type { RoundingMode, FormatStyle, FormatOptions, DecimalFormatOptions } from "./format.js";
+export { formatRational, toFractionString, toMixedNumberString, toDecimalString } from "./format.js";
 
 // The one deliberate float boundary — see power.ts for why this exists.
-export { powerAtClock, toApproximateNumber } from "./power";
+export { powerAtClock, toApproximateNumber } from "./power.js";

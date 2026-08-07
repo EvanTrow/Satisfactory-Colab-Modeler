@@ -2,7 +2,7 @@
 // utilities. `buildRecipeIndices` is called once by `load.ts` per
 // `loadGameData` call; `parseTier`/`compareTiers` are also used directly by
 // `load.ts` to parse every `Tier` field on machines/parts/recipes.
-import type { Recipe, Tier } from "./types";
+import type { Recipe, Tier } from "./types.js";
 
 const TIER_PATTERN = /^(\d+)-(\d+)$/;
 

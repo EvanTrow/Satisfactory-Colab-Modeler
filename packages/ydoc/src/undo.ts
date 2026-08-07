@@ -6,7 +6,7 @@
 // nothing to configure — it just needs to call `doc.transact(fn,
 // INTEGRITY_ORIGIN)` (or the `runAsIntegrity` helper below).
 import * as Y from "yjs";
-import type { SfmDocument } from "./document";
+import type { SfmDocument } from "./document.js";
 
 /**
  * The reserved transaction origin for the integrity reducer (Job 022).

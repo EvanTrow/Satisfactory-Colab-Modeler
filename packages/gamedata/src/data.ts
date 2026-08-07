@@ -18,9 +18,18 @@
 //
 // `loadGameData` itself stays pure/synchronous and JSON-import-free (see
 // `load.ts`) — this module is the only place that touches `resources/`.
-import gameDataJson from "../../../resources/game_data/game_data.json";
-import { loadGameData } from "./load";
-import type { GameData } from "./types";
+// Job 022: `with { type: "json" }` added alongside the pre-existing
+// `resolveJsonModule: true` — needed once this file entered a `NodeNext`
+// consumer's program graph for the first time (`apps/realtime`, via
+// `@scm/ydoc`'s integrity reducer): NodeNext requires an explicit import
+// attribute on a JSON import (TS1543), where `Bundler` resolution (this
+// package's own primary consumer, `apps/web`, plus this package's own
+// `tsconfig.json`) never required one. Modern TypeScript/Vite both support
+// the attribute either way, so this satisfies both resolution modes at
+// once rather than forking the import per consumer.
+import gameDataJson from "../../../resources/game_data/game_data.json" with { type: "json" };
+import { loadGameData } from "./load.js";
+import type { GameData } from "./types.js";
 
 /** The real game data, parsed once at module load time. */
 export const defaultGameData: GameData = loadGameData(gameDataJson);

@@ -9,10 +9,10 @@
 // unset produces Yjs's default local-transaction origin (`null`), which is
 // what `createUndoManager` tracks by default.
 import * as Y from "yjs";
-import type { SfmDocument } from "./document";
-import { containerToPlain, edgeToPlain, getSettings, nodeToPlain } from "./document";
-import { computeEdgeId } from "./edgeId";
-import type { Container, EdgeRecord, NodeRecord, Settings, Waypoint } from "./schema";
+import type { SfmDocument } from "./document.js";
+import { containerToPlain, edgeToPlain, getSettings, nodeToPlain } from "./document.js";
+import { computeEdgeId } from "./edgeId.js";
+import type { Container, EdgeRecord, NodeRecord, Settings, Waypoint } from "./schema.js";
 
 function generateId(prefix: string): string {
   const globalCrypto = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;

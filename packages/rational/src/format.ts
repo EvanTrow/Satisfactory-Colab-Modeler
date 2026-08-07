@@ -1,4 +1,4 @@
-import type { Rational } from "./rational";
+import type { Rational } from "./rational.js";
 
 /**
  * How to round a `Rational` down to a fixed number of decimal digits when a

@@ -57,11 +57,14 @@ import {
   moveNodeToContainer,
   type NodeContextMenuState,
 } from "./outposts";
+import { ConnectionStatusIndicator } from "./persistence/ConnectionStatusIndicator";
+import type { ConnectionStatus } from "./persistence/connectionStatus";
 import { SaveStatusIndicator } from "./persistence/SaveStatusIndicator";
 import { type SaveStatus } from "./persistence/updateQueue";
 import { useProjectDocument, type StaticCanvasDoc } from "./persistence/useProjectDocument";
 import { VersionPanel } from "./persistence/VersionPanel";
 import { RecipeChooser } from "../panels";
+import { SharingPanel } from "../sharing";
 import {
   MarqueeOverlay,
   useMarqueeSelection,
@@ -169,6 +172,7 @@ export function CanvasView({
       role={role}
       localUser={localUser}
       saveStatus={docState.saveStatus}
+      connectionStatus={docState.connectionStatus}
       onRestored={docState.reloadAfterRestore}
       onBack={onBack}
     />
@@ -215,6 +219,8 @@ interface CanvasViewReadyProps extends StaticCanvasDoc {
   localUser: LocalUserIdentity;
   /** Live autosave state from `useProjectDocument`'s push queue — see `SaveStatusIndicator.tsx`. */
   saveStatus: SaveStatus;
+  /** Job 022: the live WebSocket's own transport-level state — see `connectionStatus.ts`'s header comment for how this differs from `saveStatus`. */
+  connectionStatus: ConnectionStatus;
   /** Called once a `VersionPanel` restore has succeeded server-side — forces `useProjectDocument` to fully re-hydrate from the (now-restored) server state. See that function's own doc comment for why a restore can't just be merged into the live doc. */
   onRestored: () => void;
   onBack: () => void;
@@ -232,6 +238,7 @@ function CanvasViewReady({
   role,
   localUser,
   saveStatus,
+  connectionStatus,
   onRestored,
   onBack,
 }: CanvasViewReadyProps) {
@@ -381,9 +388,13 @@ function CanvasViewReady({
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
               {/* Job 016: version history + restore, and the live autosave-status indicator (replaces Job 015's static "autosaves ~1.5s..." placeholder text). */}
               <VersionPanel projectId={projectId} role={role} onRestored={onRestored} />
+              {/* Job 022: real sharing UI — invite links + member management, extending Job 020's owner-only routes. */}
+              <SharingPanel projectId={projectId} role={role} currentUserId={localUser.id} />
               <span className="text-xs text-[var(--text-muted)]">{projectShortId}</span>
               {/* Job 021: "who's currently connected" — every role (owner/editor/viewer, Job 020) gets a live provider connection, so a viewer shows up here too. */}
               <PresenceAvatarList awareness={awareness} localUser={localUser} />
+              {/* Job 022: transport-level connection state, distinct from `SaveStatusIndicator`'s save-durability signal — see `connectionStatus.ts`'s header comment. */}
+              <ConnectionStatusIndicator status={connectionStatus} />
               <SaveStatusIndicator status={saveStatus} role={role} />
             </div>
           </div>

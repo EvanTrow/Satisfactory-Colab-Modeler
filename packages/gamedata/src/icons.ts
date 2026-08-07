@@ -7,7 +7,7 @@
 // filenames as a plain argument instead of reading `resources/images/icons/`
 // itself. The package's own test suite (`icons.test.ts`) is what actually
 // reads that directory via `node:fs` and calls this function against it.
-import type { GameData } from "./types";
+import type { GameData } from "./types.js";
 
 /**
  * The two icon files documented in PLAN.md §1 that exist for logistics

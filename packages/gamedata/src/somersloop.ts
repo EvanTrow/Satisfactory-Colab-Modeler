@@ -14,7 +14,7 @@
 // `ProductionShardPowerExponent`, `somersloopBoost` throws rather than
 // silently truncating — see `integerPow` below.
 import { ONE, ZERO, add, multiply, of, type Rational } from "@scm/rational";
-import type { Machine } from "./types";
+import type { Machine } from "./types.js";
 
 export interface SomersloopBoost {
   readonly shards: number;

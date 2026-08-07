@@ -1,10 +1,31 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { ProjectSummary } from "./api/projects";
+import { listProjects, type ProjectSummary } from "./api/projects";
 import { CanvasView } from "./canvas";
 import { discordAvatarUrl, type LocalUserIdentity } from "./collab";
 import { ProjectsPage } from "./routes/ProjectsPage";
+import { InviteRedeemPage } from "./sharing";
 import { ThemeToggle, useTheme } from "./theme";
+
+/**
+ * Job 022: share-by-link. This app has no router (see the `View` comment
+ * below), so a `/i/:token` link is handled by plain `pathname` parsing on
+ * mount, same spirit as `enterCanvas`'s own manual History API push.
+ * `sessionStorage` carries the token across the one hop this flow
+ * genuinely needs a redirect for: an anonymous visitor has to leave for
+ * `/auth/discord/login` (which always lands back on `/`, per
+ * `authRoutes.ts`'s fixed `postLoginRedirect` — there's no redirect-target
+ * plumbing to preserve `/i/:token` through that round trip server-side), so
+ * the token is stashed client-side immediately and picked back up once
+ * `auth.status === "authenticated"` on the next mount, regardless of
+ * whether that's this same page load or the one after login.
+ */
+const PENDING_INVITE_STORAGE_KEY = "scm_pending_invite_token";
+
+function extractInviteTokenFromPath(pathname: string): string | null {
+  const match = /^\/i\/([^/]+)\/?$/.exec(pathname);
+  return match ? decodeURIComponent(match[1]!) : null;
+}
 
 // Minimal shape of GET /auth/me's response body (apps/api/src/auth/routes.ts).
 interface CurrentUser {
@@ -106,6 +127,47 @@ function App() {
     };
   }, []);
 
+  // Job 022: `/i/:token` detection — see this file's header comment. Runs
+  // once on mount: if the URL itself carries a token, stash it and replace
+  // the URL with `/` (so the rest of `App`'s pathname-free view logic is
+  // undisturbed); either way, pick up whatever's in `sessionStorage` (set
+  // either just now, or by a *previous* mount right before the Discord
+  // login redirect).
+  const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(null);
+  useEffect(() => {
+    const fromUrl = extractInviteTokenFromPath(window.location.pathname);
+    if (fromUrl) {
+      sessionStorage.setItem(PENDING_INVITE_STORAGE_KEY, fromUrl);
+      window.history.replaceState({}, "", "/");
+    }
+    const stored = sessionStorage.getItem(PENDING_INVITE_STORAGE_KEY);
+    if (stored) setPendingInviteToken(stored);
+  }, []);
+
+  const dismissPendingInvite = useCallback(() => {
+    sessionStorage.removeItem(PENDING_INVITE_STORAGE_KEY);
+    setPendingInviteToken(null);
+  }, []);
+
+  const handleInviteRedeemed = useCallback(
+    (projectId: string) => {
+      sessionStorage.removeItem(PENDING_INVITE_STORAGE_KEY);
+      setPendingInviteToken(null);
+      listProjects()
+        .then((projects) => {
+          const joined = projects.find((p) => p.id === projectId);
+          if (joined) enterCanvas(joined);
+        })
+        .catch(() => {
+          // The membership row was created successfully either way (the
+          // redeem call itself already succeeded) — a failure here just
+          // means staying on the project list instead of jumping straight
+          // in, which the user can still do manually.
+        });
+    },
+    [enterCanvas],
+  );
+
   // The canvas gets the whole viewport with no shared chrome above it
   // (it renders its own compact title/back bar, see CanvasView.tsx) — partly
   // because React Flow wants to own its full container's height for
@@ -166,18 +228,32 @@ function App() {
         </div>
       </header>
 
+      {/* Job 022: a pending `/i/:token` share link takes priority over both
+          the login prompt and the project list — see this file's header
+          comment for the full detection/carry-over flow. Renders its own
+          "log in with Discord" prompt when anonymous, so the generic route
+          guard below is skipped while a token is pending. */}
+      {auth.status !== "loading" && pendingInviteToken && (
+        <InviteRedeemPage
+          token={pendingInviteToken}
+          isAuthenticated={auth.status === "authenticated"}
+          onRedeemed={handleInviteRedeemed}
+          onDismiss={dismissPendingInvite}
+        />
+      )}
+
       {/* Route guard: only an authenticated user gets past this point to
           the project list / canvas. Anonymous and loading states render the
           login prompt above with no project content underneath — the
           closest thing to "redirect to the login flow" available without a
           real router (see the View comment above). */}
-      {auth.status !== "authenticated" && (
+      {!pendingInviteToken && auth.status !== "authenticated" && (
         <div className="mx-auto max-w-3xl px-4 py-16 text-center text-[var(--text-muted)]">
           {auth.status === "loading" ? "Loading…" : "Log in with Discord to see your projects."}
         </div>
       )}
 
-      {auth.status === "authenticated" && view.name === "projects" && (
+      {!pendingInviteToken && auth.status === "authenticated" && view.name === "projects" && (
         <ProjectsPage onOpenProject={enterCanvas} />
       )}
     </main>

@@ -11,7 +11,7 @@ import type {
   MultiMachineModel,
   MultiMachineRatioKind,
   Recipe,
-} from "./types";
+} from "./types.js";
 
 /**
  * The five `Recipe.Machine` values that resolve against `MultiMachines`

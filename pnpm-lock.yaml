@@ -96,6 +96,9 @@ importers:
       '@scm/doc-storage':
         specifier: workspace:*
         version: link:../../packages/doc-storage
+      '@scm/ydoc':
+        specifier: workspace:*
+        version: link:../../packages/ydoc
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -297,6 +300,12 @@ importers:
 
   packages/ydoc:
     dependencies:
+      '@scm/gamedata':
+        specifier: workspace:*
+        version: link:../gamedata
+      '@scm/rational':
+        specifier: workspace:*
+        version: link:../rational
       yjs:
         specifier: 13.6.32
         version: 13.6.32
