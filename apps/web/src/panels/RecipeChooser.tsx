@@ -182,7 +182,13 @@ export function RecipeChooser({ flowPosition, screenPosition, onClose }: RecipeC
 
   function handlePickRecipe(recipe: Recipe) {
     const resolved = resolveMachine(recipe.machine, gameData);
-    if (resolved.kind === "machine") {
+    // Miner is the only MultiMachine family with a model (Mk.) dimension —
+    // it's deliberately flattened to always place at its default variant
+    // (Mk.1 x Normal, ratio 1 -> the game's base 60/min rate) with no
+    // picker step at all. A Miner's ppm is meant to be a single freely
+    // typed number on the node afterward (like the Steam app), not a
+    // building-tier choice made once at creation time.
+    if (resolved.kind === "machine" || resolved.name === "Miner") {
       createNode(recipe);
       return;
     }

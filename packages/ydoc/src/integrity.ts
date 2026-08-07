@@ -9,7 +9,7 @@
 // the new recipe. This module is the repair pass that runs after such a
 // merge and fixes the document back into a state every other part of the
 // app (the solver, the canvas renderer, the Postgres projection) can rely
-// on, per PLAN.md §5's four bullets:
+// on, per PLAN.md §5's four bullets, plus one later addition (rule 5 below):
 //
 //   1. Delete edges whose fromNode/toNode no longer exists.
 //   2. Reparent orphaned nodes (and, generalized here, orphaned containers
@@ -17,6 +17,10 @@
 //   3. Clamp shards to the current machine's MaxProductionShards; drop
 //      ports the current recipe doesn't have.
 //   4. Deduplicate edges (a backstop given Job 007's deterministic edgeId).
+//   5. Normalize "Miner"-family nodes to the flat default variant — not a
+//      merge-corruption repair like 1-4, but the same mechanism doubles as
+//      a one-time migration for projects created before Miners lost their
+//      Mk./purity picker (see `normalizeMinerVariant`'s own comment below).
 //
 // Callers MUST run this inside a transaction tagged `origin: 'integrity'`
 // (see `undo.ts`'s `runAsIntegrity`) so the repair never lands on anyone's
@@ -55,6 +59,8 @@ export interface IntegrityRepairSummary {
   clampedShardNodeIds: string[];
   /** Edges deleted as an exact-duplicate-connection backstop (see this module's header comment on rule 4). */
   deletedDuplicateEdgeIds: string[];
+  /** "Miner"-family nodes whose `machine`/`purity` was reset to the flat default variant (see rule 5). */
+  normalizedMinerNodeIds: string[];
 }
 
 function emptySummary(): IntegrityRepairSummary {
@@ -66,6 +72,7 @@ function emptySummary(): IntegrityRepairSummary {
     deletedInvalidPortEdgeIds: [],
     clampedShardNodeIds: [],
     deletedDuplicateEdgeIds: [],
+    normalizedMinerNodeIds: [],
   };
 }
 
@@ -213,6 +220,41 @@ function dedupeEdges(sfmDoc: SfmDocument, summary: IntegrityRepairSummary): void
 }
 
 /**
+ * The flat default Miner variant every `"Miner"`-family node should resolve
+ * to — Mk.1 x Normal, ratio `1` (the game's base 60/min extraction rate).
+ * Matches `buildNodeInputForRecipe`'s (`apps/web/src/panels/recipeChooser
+ * /filters.ts`) own `defaultVariant` fallback for a Miner recipe, verified
+ * by `packages/gamedata`'s own golden test ("Miner Mk.1 on Normal (all
+ * defaults) = 60/min").
+ */
+const MINER_DEFAULT_MACHINE = "Miner Mk.1";
+const MINER_DEFAULT_PURITY = "normal";
+
+/**
+ * Rule 5: normalize every `"Miner"`-family node back to the flat default
+ * variant. Unlike rules 1-4 above, this isn't repairing CRDT-merge
+ * corruption — it's a deliberate product-behavior change: `RecipeChooser.tsx`
+ * no longer offers a Mk./purity picker for Miners (a Miner is meant to be a
+ * single flat, freely-overtyped ppm value, not a per-node building-tier
+ * choice), so no *new* node can end up with a non-default variant. This rule
+ * exists so projects created before that change normalize the moment
+ * they're next loaded or edited, using the same transaction/undo-exclusion
+ * machinery (and the same client+server call sites) as the rest of this
+ * module. Only `machine`/`purity` are touched — a `limit` (ppm target) the
+ * user already typed is left exactly as-is; only the *reference* rate a
+ * blank field would compute against changes.
+ */
+function normalizeMinerVariant(sfmDoc: SfmDocument, gameData: GameData, summary: IntegrityRepairSummary): void {
+  for (const node of listNodes(sfmDoc)) {
+    const recipe = node.recipe ? gameData.recipesByName.get(node.recipe) : undefined;
+    if (recipe?.machine !== "Miner") continue;
+    if (node.machine === MINER_DEFAULT_MACHINE && node.purity === MINER_DEFAULT_PURITY) continue;
+    updateNode(sfmDoc, node.id, { machine: MINER_DEFAULT_MACHINE, purity: MINER_DEFAULT_PURITY });
+    summary.normalizedMinerNodeIds.push(node.id);
+  }
+}
+
+/**
  * Applies every PLAN.md §5 repair rule to `sfmDoc` in place, in a single
  * pass. Pure repair logic — does NOT open its own transaction or tag an
  * origin; call `runIntegrityReducer` (below) unless you're already inside
@@ -238,6 +280,7 @@ export function repairDocument(
 
   deleteDanglingEdges(sfmDoc, summary);
   clampShardsAndDropInvalidPorts(sfmDoc, gameData, summary);
+  normalizeMinerVariant(sfmDoc, gameData, summary);
   dedupeEdges(sfmDoc, summary);
 
   return summary;
@@ -252,7 +295,8 @@ export function isNoopRepair(summary: IntegrityRepairSummary): boolean {
     summary.deletedDanglingEdgeIds.length === 0 &&
     summary.deletedInvalidPortEdgeIds.length === 0 &&
     summary.clampedShardNodeIds.length === 0 &&
-    summary.deletedDuplicateEdgeIds.length === 0
+    summary.deletedDuplicateEdgeIds.length === 0 &&
+    summary.normalizedMinerNodeIds.length === 0
   );
 }
 

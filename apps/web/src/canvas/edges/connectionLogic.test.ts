@@ -213,15 +213,43 @@ describe("connectPorts", () => {
     expect(listEdges(sfmDoc)).toHaveLength(0);
   });
 
-  it("connecting the same two ports twice does not duplicate the edge (Job 007's deterministic-id guarantee, exercised through this UI-layer function)", () => {
+  it("dragging the same two ports a second time removes the connection instead of duplicating it (toggle)", () => {
     const { sfmDoc, containerId, nodeA, nodeB } = makeDoc();
     const connection = { source: nodeA, sourceHandle: "out:Iron Ore", target: nodeB, targetHandle: "in:Iron Ore" };
     const first = connectPorts(sfmDoc, containerId, connection);
-    const second = connectPorts(sfmDoc, containerId, connection);
     expect(first).not.toBeNull();
-    expect(second).not.toBeNull();
-    expect(second!.id).toBe(first!.id);
     expect(listEdges(sfmDoc)).toHaveLength(1);
+
+    const second = connectPorts(sfmDoc, containerId, connection);
+    expect(second).toBeNull();
+    expect(getEdge(sfmDoc, first!.id)).toBeUndefined();
+    expect(listEdges(sfmDoc)).toHaveLength(0);
+
+    // A third drag reconnects — the toggle isn't one-way.
+    const third = connectPorts(sfmDoc, containerId, connection);
+    expect(third).not.toBeNull();
+    expect(third!.id).toBe(first!.id);
+    expect(listEdges(sfmDoc)).toHaveLength(1);
+  });
+
+  it("toggling off via the reverse drag direction still removes the edge (same deterministic id either way)", () => {
+    const { sfmDoc, containerId, nodeA, nodeB } = makeDoc();
+    const forward = connectPorts(sfmDoc, containerId, {
+      source: nodeA,
+      sourceHandle: "out:Iron Ore",
+      target: nodeB,
+      targetHandle: "in:Iron Ore",
+    });
+    expect(forward).not.toBeNull();
+
+    const reverseToggleOff = connectPorts(sfmDoc, containerId, {
+      source: nodeB,
+      sourceHandle: "in:Iron Ore",
+      target: nodeA,
+      targetHandle: "out:Iron Ore",
+    });
+    expect(reverseToggleOff).toBeNull();
+    expect(listEdges(sfmDoc)).toHaveLength(0);
   });
 
   it("connecting via the reverse drag direction produces the exact same edge id as the forward direction", () => {

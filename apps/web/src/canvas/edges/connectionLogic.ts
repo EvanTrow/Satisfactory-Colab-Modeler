@@ -6,7 +6,15 @@
 // unit-testable the same way Jobs 009/010 tested `filters.ts`/
 // `recipeNodeMath.ts` — no DOM, no React Flow provider, just a real
 // `createDocument()` fixture.
-import { addEdge as addEdgeRecord, removeEdge as removeEdgeRecord, type EdgeRecord, type SfmDocument, type Waypoint } from "@scm/ydoc";
+import {
+  addEdge as addEdgeRecord,
+  computeEdgeId,
+  getEdge,
+  removeEdge as removeEdgeRecord,
+  type EdgeRecord,
+  type SfmDocument,
+  type Waypoint,
+} from "@scm/ydoc";
 
 /**
  * Job 010's port `Handle` id contract: `${"in"|"out"}:${part name}`. See
@@ -142,16 +150,31 @@ export function isValidPortConnection(connection: ConnectionLike): boolean {
 
 /**
  * Completes a drag-to-connect gesture: resolves + validates the connection,
- * then creates the edge via `@scm/ydoc`'s idempotent `addEdge`. Returns
- * `null` (no-op, no edge created) for a mismatched-part or otherwise
- * invalid connection — in normal UI use this is already blocked earlier by
+ * then **toggles** the edge — creates it if the two ports aren't already
+ * connected, removes it if they are. This is what makes "drag from a node
+ * to another node that already has that connection" a disconnect gesture
+ * instead of the no-op `addEdge`'s own idempotency would otherwise produce:
+ * both drags resolve to the same deterministic `computeEdgeId`, so a second
+ * drag over an existing connection is indistinguishable from a first one
+ * except by checking `getEdge` first.
+ *
+ * Returns `null` for a mismatched-part or otherwise invalid connection (no
+ * edge created) as well as for the toggle-off case (edge removed) — in
+ * normal UI use invalid connections are already blocked earlier by
  * `isValidPortConnection` wired to `isValidConnection`, but this function
  * re-validates on its own so it's safe (and correctly tested) to call
- * directly too.
+ * directly too. Callers that need to distinguish "removed" from "invalid"
+ * can check `getEdge` themselves; today's only caller (`onConnect`) doesn't
+ * need to.
  */
 export function connectPorts(sfmDoc: SfmDocument, containerId: string, connection: ConnectionLike): EdgeRecord | null {
   const resolved = resolveEdgeEndpoints(connection);
   if (!resolved) return null;
+  const edgeId = computeEdgeId(resolved.fromNode, resolved.fromPort, resolved.toNode, resolved.toPort);
+  if (getEdge(sfmDoc, edgeId)) {
+    removeEdgeRecord(sfmDoc, edgeId);
+    return null;
+  }
   return addEdgeRecord(sfmDoc, { containerId, ...resolved, style: null, labelPos: null });
 }
 

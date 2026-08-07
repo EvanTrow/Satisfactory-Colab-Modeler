@@ -274,6 +274,49 @@ describe("repairDocument", () => {
     expect(summary.deletedDuplicateEdgeIds).toEqual([removedId]);
     expect(listEdges(sfmDoc).map((e) => e.id)).toEqual([survivingId]);
   });
+
+  it("rule 5: normalizes a non-default Miner node back to Mk.1 x Normal, leaving its limit untouched", () => {
+    const { sfmDoc, root } = fixture();
+    const node = addNode(
+      sfmDoc,
+      baseNode(root.id, {
+        title: "Iron Ore",
+        recipe: "Iron Ore",
+        machine: "Miner Mk.3",
+        purity: "pure",
+        limitMode: "ppm",
+        limit: "480",
+      }),
+    );
+
+    const summary = repairDocument(sfmDoc, defaultGameData);
+
+    expect(summary.normalizedMinerNodeIds).toEqual([node.id]);
+    const repaired = getNode(sfmDoc, node.id);
+    expect(repaired?.machine).toBe("Miner Mk.1");
+    expect(repaired?.purity).toBe("normal");
+    // The user's own typed ppm target is a deliberate value, not a
+    // variant-derived default — normalizing the variant must not touch it.
+    expect(repaired?.limit).toBe("480");
+  });
+
+  it("rule 5: leaves an already-default Miner node alone", () => {
+    const { sfmDoc, root } = fixture();
+    addNode(
+      sfmDoc,
+      baseNode(root.id, {
+        title: "Iron Ore",
+        recipe: "Iron Ore",
+        machine: "Miner Mk.1",
+        purity: "normal",
+        limitMode: "ppm",
+      }),
+    );
+
+    const summary = repairDocument(sfmDoc, defaultGameData);
+
+    expect(summary.normalizedMinerNodeIds).toEqual([]);
+  });
 });
 
 describe("runIntegrityReducer", () => {

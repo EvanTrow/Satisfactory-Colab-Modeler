@@ -21,7 +21,6 @@ import { useTranslation } from "react-i18next";
 
 import { defaultGameData, type Recipe, type RecipePart } from "@scm/gamedata";
 import {
-  abs,
   equals,
   formatRational,
   isNegative,
@@ -38,6 +37,7 @@ import { getIconUrl } from "../../assets/icons";
 import { FieldPresenceRing, useRemotePresence, type RemotePresence } from "../../collab";
 import { useGameTerm } from "../../i18n";
 import { useCanvasDoc } from "../CanvasDocContext";
+import { formatRate } from "../formatRate";
 import { useSolverResult } from "../SolverResultContext";
 import { useSettings } from "../useSettings";
 import type { CanvasNode } from "../useYjsSync";
@@ -141,19 +141,6 @@ function useCommittedTextField(displayText: string, commit: (raw: string) => boo
   };
 }
 
-/**
- * Job 019: every displayed rate now goes through `formatRational` against
- * the live `Settings.numberFormats` instead of a hardcoded
- * `toDecimalString(..., {digits: 2})` — changing the number-format setting
- * re-renders this immediately (no reload) since `numberFormats` comes from
- * `useSettings`'s reactive subscription. The exact `n/d` value is still
- * always available in the row's own `title` tooltip (`toFractionString`,
- * unaffected by the format setting) regardless of which display style is
- * chosen.
- */
-function formatRate(value: Rational, numberFormats: NumberFormats): string {
-  return formatRational(abs(value), numberFormats);
-}
 
 interface PartRowProps {
   part: RecipePart;
@@ -359,10 +346,32 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
     .map((edge) => ({ edgeId: edge.id, part: edge.part }));
   const validityState = computeNodeValidityState(nodeResult, incidentEdges, edgeResultById);
 
-  const limitDisplayText = recipe
+  // A machine-count-mode node with no `limit` set is meant to read as
+  // genuinely blank — "nothing limiting this machine, the solver derives it
+  // from what's flowing in" — not as a pre-filled "1" that looks like a
+  // real user-set value someone would have to notice and delete. ppm-mode
+  // nodes (Miners/AWESOME Sinks) are the deliberate exception: they have no
+  // upstream to derive a rate from, so they still show a concrete default
+  // (the recipe's own reference rate, e.g. 60/min for a Miner) that's
+  // freely overtyped, same as before. `effectiveLimitValue` itself is
+  // unchanged and still drives every other consumer (the stopgap math, the
+  // ± clock buttons) exactly as it always has — only this display/commit
+  // pair treats "blank" as a real, distinct state for machine-count mode.
+  const limitIsBlank = node.limit === null && node.limitMode === "machines";
+  const limitEffectiveText = recipe
     ? formatRational(effectiveLimitValue(gameData, recipe, node), numberFormats)
     : "0";
+  const limitDisplayText = limitIsBlank ? "" : limitEffectiveText;
   const clockDisplayText = formatRational(effectiveClockPercent(node), numberFormats);
+  // A blank field still hints at what it'll actually run as: the real,
+  // graph-propagated machine count from the solver when one exists (the
+  // same value the "≈ N machines" readout below shows), falling back to
+  // the local single-node default only before anything's solved yet.
+  const limitPlaceholder = limitIsBlank
+    ? displayMachineCount
+      ? formatRational(displayMachineCount, numberFormats)
+      : limitEffectiveText
+    : undefined;
 
   // Job 027: "Manually touching clock or limit switches [auto-round] off"
   // (PLAN.md §2, verbatim) — every one of this card's three real-user-edit
@@ -378,7 +387,16 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
   // `useAutoRound.ts`'s header for the other half of this contract.
   function commitLimit(raw: string): boolean {
     const trimmed = raw.trim();
-    if (!trimmed) return false;
+    if (!trimmed) {
+      // Clearing the field is itself a valid commit for machine-count mode
+      // — it means "go back to blank/unconstrained," not "the user meant to
+      // leave this untouched." ppm-mode (Miner/AWESOME Sink) has no upstream
+      // to fall back on, so an empty ppm field still isn't meaningful there
+      // and reverts like any other failed parse.
+      if (node.limitMode !== "machines") return false;
+      updateNode(sfmDoc, id, { limit: null, autoRound: false });
+      return true;
+    }
     try {
       const parsed = parseRational(trimmed);
       updateNode(sfmDoc, id, { limit: toFractionString(parsed), autoRound: false });
@@ -604,7 +622,8 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
             <input
               type="text"
               inputMode="decimal"
-              className={`${fieldInputClass} ${node.autoRound ? autoRoundFieldClass : ""} ${highlightRingClass(validityState?.fields?.limit) ?? ""}`}
+              placeholder={limitPlaceholder}
+              className={`${fieldInputClass} placeholder:italic placeholder:text-[var(--text-muted)] ${node.autoRound ? autoRoundFieldClass : ""} ${highlightRingClass(validityState?.fields?.limit) ?? ""}`}
               title={
                 validityState?.fields?.limit === "invalid"
                   ? t("node.limitInvalidTooltip")
