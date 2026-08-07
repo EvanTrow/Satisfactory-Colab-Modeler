@@ -26,3 +26,5 @@ export {
 } from "./recipeNodeMath";
 
 export type { RecipeNodeValidity, RecipeNodeValidityState } from "./validityState";
+
+export { computeNodeValidityState, type IncidentEdgeRef } from "./computeValidity";

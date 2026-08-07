@@ -10,9 +10,17 @@
 // multipliers) is explicitly out of this job's scope (PLAN.md's later-phase
 // concerns), and building a bigger surface here would be scope creep past
 // "no new functional behavior beyond snap-to-grid."
+//
+// Job 019 added the two sections Job 018's own Handoff notes flagged as
+// missing UI: a solver-mode selector (`Settings.solverMode` — Job 018
+// verified Basic mode by setting it via the browser console, since no UI
+// existed) and the number-format controls PLAN.md §3 asks for ("fraction/
+// decimal, digits, rounding"). Both are still plain `updateSettings` calls,
+// same mechanism as the pre-existing checkboxes — no new state-management
+// pattern introduced.
 import { useState } from "react";
 
-import { updateSettings, type Settings } from "@scm/ydoc";
+import { updateSettings, type NumberFormats, type Settings, type SolverMode } from "@scm/ydoc";
 
 import type { SfmDocument } from "@scm/ydoc";
 
@@ -21,7 +29,40 @@ export interface SettingsMenuProps {
   settings: Settings;
 }
 
-const rowClass = "flex items-center justify-between gap-3 px-1 py-1 text-sm text-[var(--text-secondary)]";
+const rowClass =
+  "flex items-center justify-between gap-3 px-1 py-1 text-sm text-[var(--text-secondary)]";
+const selectClass =
+  "nodrag rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] px-1.5 py-0.5 text-xs text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none";
+
+/**
+ * PLAN.md §2's table names four modes (Full/Basic/Manual/None), but Full
+ * doesn't exist anywhere in the codebase yet (Job 023's addition — see
+ * `@scm/solver`'s `solve()`, which only implements `"none"`/`"manual"`/
+ * `"basic"`, and `useSolver.ts`'s own defensive fallback for anything else
+ * to `"none"`). `Settings.solverMode`'s zod schema already allows `"full"`
+ * in anticipation of that job, but offering it here would silently do
+ * nothing (or rather, silently behave as if `"none"` were chosen) — so this
+ * selector only offers the three modes that actually compute something
+ * different today.
+ */
+const SOLVER_MODES: readonly { value: Exclude<SolverMode, "full">; label: string }[] = [
+  { value: "none", label: "None (nothing computed)" },
+  { value: "manual", label: "Manual (entered values are final)" },
+  { value: "basic", label: "Basic (entered values are limits)" },
+];
+
+const NUMBER_FORMAT_STYLES: readonly { value: NumberFormats["style"]; label: string }[] = [
+  { value: "fraction", label: "Fraction (22/7)" },
+  { value: "mixed", label: "Mixed number (3 1/7)" },
+  { value: "decimal", label: "Decimal" },
+];
+
+const ROUNDING_MODES: readonly { value: NumberFormats["rounding"]; label: string }[] = [
+  { value: "round", label: "Round" },
+  { value: "floor", label: "Floor" },
+  { value: "ceil", label: "Ceil" },
+  { value: "truncate", label: "Truncate" },
+];
 
 export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
   const [open, setOpen] = useState(false);
@@ -31,8 +72,8 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title="Snap-to-grid settings"
-        aria-label="Snap-to-grid settings"
+        title="Settings"
+        aria-label="Settings"
         className="nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
       >
         <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden>
@@ -47,7 +88,7 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
         <>
           <div className="fixed inset-0 z-40" onMouseDown={() => setOpen(false)} />
           <div
-            className="absolute right-0 top-full z-50 mt-1 w-64 rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)] p-2 shadow-[var(--shadow-modal)]"
+            className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)] p-2 shadow-[var(--shadow-modal)]"
             // Same backdrop-vs-content mousedown-ordering fix
             // `RecipeChooser.tsx`/`NodeContextMenu.tsx` already apply: without
             // this, the backdrop's own `onMouseDown` (which closes the menu)
@@ -59,7 +100,9 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
             // without this line.
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <p className="mb-1 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Snap to grid</p>
+            <p className="mb-1 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+              Snap to grid
+            </p>
             <label className={rowClass}>
               <span>
                 Machines
@@ -84,8 +127,131 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
               <input
                 type="checkbox"
                 checked={settings.snapWaypoints}
-                onChange={(event) => updateSettings(sfmDoc, { snapWaypoints: event.target.checked })}
+                onChange={(event) =>
+                  updateSettings(sfmDoc, { snapWaypoints: event.target.checked })
+                }
                 className="accent-[var(--accent)]"
+              />
+            </label>
+
+            {/*
+              Job 019: `Settings.solverMode` selector — Job 018 built the
+              worker host but explicitly left this UI for this job (its own
+              Handoff notes: "no UI exists yet to change Settings.solverMode
+              ... verified Basic mode by setting it via the console"). A
+              single `updateSettings` call, same mechanism as the checkboxes
+              above.
+            */}
+            <p className="mb-1 mt-3 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+              Calculator
+            </p>
+            <label className={rowClass}>
+              <span>Mode</span>
+              <select
+                className={selectClass}
+                value={settings.solverMode === "full" ? "none" : settings.solverMode}
+                onChange={(event) =>
+                  updateSettings(sfmDoc, { solverMode: event.target.value as SolverMode })
+                }
+              >
+                {SOLVER_MODES.map((mode) => (
+                  <option key={mode.value} value={mode.value}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {/*
+              Job 019: number-format settings (PLAN.md §3: "fraction/
+              decimal, digits, rounding"). `updateSettings`'s own doc comment
+              requires patching `numberFormats` as a whole object (it's a
+              plain JS value, not a nested `Y.Map` — see `mutations.ts`), so
+              every control here reads the CURRENT `numberFormats` and writes
+              back a full copy with just its own field changed, rather than
+              patching a single key.
+            */}
+            <p className="mb-1 mt-3 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+              Number format
+            </p>
+            <label className={rowClass}>
+              <span>Style</span>
+              <select
+                className={selectClass}
+                value={settings.numberFormats.style}
+                onChange={(event) =>
+                  updateSettings(sfmDoc, {
+                    numberFormats: {
+                      ...settings.numberFormats,
+                      style: event.target.value as NumberFormats["style"],
+                    },
+                  })
+                }
+              >
+                {NUMBER_FORMAT_STYLES.map((style) => (
+                  <option key={style.value} value={style.value}>
+                    {style.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {/* Digits/rounding/trim only affect the "decimal" style (`@scm/rational`'s `formatRational` ignores them for "fraction"/"mixed") — disabled rather than hidden, so the setting is still visible and its last value isn't lost when switching styles back and forth. */}
+            <label className={rowClass}>
+              <span>Digits</span>
+              <input
+                type="number"
+                min={0}
+                max={12}
+                disabled={settings.numberFormats.style !== "decimal"}
+                value={settings.numberFormats.digits}
+                onChange={(event) => {
+                  const digits = Number.parseInt(event.target.value, 10);
+                  if (Number.isInteger(digits) && digits >= 0) {
+                    updateSettings(sfmDoc, {
+                      numberFormats: { ...settings.numberFormats, digits },
+                    });
+                  }
+                }}
+                className={`nodrag w-14 rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] px-1.5 py-0.5 text-right text-xs text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none disabled:opacity-40`}
+              />
+            </label>
+            <label className={rowClass}>
+              <span>Rounding</span>
+              <select
+                className={selectClass}
+                disabled={settings.numberFormats.style !== "decimal"}
+                value={settings.numberFormats.rounding}
+                onChange={(event) =>
+                  updateSettings(sfmDoc, {
+                    numberFormats: {
+                      ...settings.numberFormats,
+                      rounding: event.target.value as NumberFormats["rounding"],
+                    },
+                  })
+                }
+              >
+                {ROUNDING_MODES.map((mode) => (
+                  <option key={mode.value} value={mode.value}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={rowClass}>
+              <span>Trim trailing zeros</span>
+              <input
+                type="checkbox"
+                disabled={settings.numberFormats.style !== "decimal"}
+                checked={settings.numberFormats.trimTrailingZeros}
+                onChange={(event) =>
+                  updateSettings(sfmDoc, {
+                    numberFormats: {
+                      ...settings.numberFormats,
+                      trimTrailingZeros: event.target.checked,
+                    },
+                  })
+                }
+                className="accent-[var(--accent)] disabled:opacity-40"
               />
             </label>
           </div>

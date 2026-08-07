@@ -3,6 +3,10 @@
 // notes for how this fits together.
 export { CanvasView } from "./CanvasView";
 export { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
+// Job 019: Job 018's live solver output, threaded through context so
+// `RecipeNode.tsx`/`panels/SummaryPanel.tsx` don't each spin up their own
+// `useSolver` scheduler/worker pair — see this module's own header comment.
+export { SolverResultContext, useSolverResult } from "./SolverResultContext";
 export { Breadcrumbs, type BreadcrumbsProps } from "./Breadcrumbs";
 export {
   useYjsSync,
@@ -38,8 +42,10 @@ export {
 export {
   RecipeNode,
   defaultLimitMode,
+  computeNodeValidityState,
   type RecipeNodeValidity,
   type RecipeNodeValidityState,
+  type IncidentEdgeRef,
 } from "./nodes";
 export {
   ConnectionEdge,
@@ -75,10 +81,17 @@ export {
   type UpdateQueue,
   type SaveStatus,
 } from "./persistence/updateQueue";
-export { useProjectDocument, type ProjectDocumentState, type StaticCanvasDoc } from "./persistence/useProjectDocument";
+export {
+  useProjectDocument,
+  type ProjectDocumentState,
+  type StaticCanvasDoc,
+} from "./persistence/useProjectDocument";
 // Job 016: the autosave indicator + version-history/restore UI, both built
 // directly on top of the exports above.
-export { SaveStatusIndicator, type SaveStatusIndicatorProps } from "./persistence/SaveStatusIndicator";
+export {
+  SaveStatusIndicator,
+  type SaveStatusIndicatorProps,
+} from "./persistence/SaveStatusIndicator";
 export { VersionPanel, type VersionPanelProps } from "./persistence/VersionPanel";
 export {
   buildClipboard,

@@ -75,6 +75,23 @@
   --danger-soft: rgba(185, 28, 28, 0.12);
   --success: #15803d;
 
+  /*
+   * Job 019: PLAN.md §3's second highlight color — "red highlighting for
+   * invalid values and orange for non-matching" (a Basic-mode split/merge
+   * rate mismatch, or an edge that otherwise can't reconcile two resolved
+   * neighbors — see `canvas/nodes/computeValidity.ts`'s header for the
+   * exact red-vs-orange mapping). Deliberately a more saturated, redder
+   * orange than `--outpost` above (amber, #b45309/#f59e0b) rather than
+   * reusing it — this file's own Job 014 comment already flagged that an
+   * outpost-amber-colored second semantic would collide, and validity
+   * highlighting needs to read as distinct from "this is an outpost" at a
+   * glance. Flagged in jobs/019's Handoff notes as a soft spot worth a
+   * design pass once real multi-outpost factories are being built daily
+   * (Phase 7 polish).
+   */
+  --mismatch: #c2410c;
+  --mismatch-soft: rgba(194, 65, 12, 0.14);
+
   --node-header: #2f4f4f;
   --node-header-text: #f5f5f4;
 
@@ -130,6 +147,10 @@
   --danger: #f87171;
   --danger-soft: rgba(248, 113, 113, 0.16);
   --success: #4ade80;
+
+  /* Job 019 — see the light theme's own comment above for the full rationale. */
+  --mismatch: #fb923c;
+  --mismatch-soft: rgba(251, 146, 60, 0.18);
 
   --node-header: #24413f;
   --node-header-text: #f4f4f5;

@@ -11,29 +11,58 @@
 // breadcrumb trail, and a node-level context menu for moving nodes
 // into/out of an outpost and deleting one (reparenting its contents rather
 // than destroying them).
-import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import {
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type { SfmDocument, Settings } from "@scm/ydoc";
-import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
+import {
+  Background,
+  BackgroundVariant,
+  Controls,
+  ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
+} from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
 import type { ProjectRole } from "../api/projects";
+import { SummaryPanel } from "../panels";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
 import { DevNodeTools } from "./DevNodeTools";
 import { SettingsMenu } from "./SettingsMenu";
+import { SolverResultContext } from "./SolverResultContext";
 import { type ClickPoint, isDoubleClick } from "./doubleClick";
 import { ConnectionEdge, useConnectionHandlers } from "./edges";
 import { RecipeNode } from "./nodes";
-import { BoundaryEdge, NodeContextMenu, OutpostNode, deleteOutpost, moveNodeToContainer, type NodeContextMenuState } from "./outposts";
+import {
+  BoundaryEdge,
+  NodeContextMenu,
+  OutpostNode,
+  deleteOutpost,
+  moveNodeToContainer,
+  type NodeContextMenuState,
+} from "./outposts";
 import { SaveStatusIndicator } from "./persistence/SaveStatusIndicator";
 import { type SaveStatus } from "./persistence/updateQueue";
 import { useProjectDocument, type StaticCanvasDoc } from "./persistence/useProjectDocument";
 import { VersionPanel } from "./persistence/VersionPanel";
 import { RecipeChooser } from "../panels";
-import { MarqueeOverlay, useMarqueeSelection, useSelectionKeybinds, useUndoRedoState } from "./selection";
+import {
+  MarqueeOverlay,
+  useMarqueeSelection,
+  useSelectionKeybinds,
+  useUndoRedoState,
+} from "./selection";
 import { ThemeToggle, useTheme, type ThemeMode } from "../theme";
 import { useSettings } from "./useSettings";
+import { useSolver } from "../workers";
 import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
 
 // Module-level constants (not created inside the component) so React Flow
@@ -85,7 +114,13 @@ interface CanvasViewProps {
  * `rootContainerId`/`undoManager` exist — those hooks assume a live
  * `SfmDocument` unconditionally, so they can't run before that.
  */
-export function CanvasView({ projectId, projectTitle, projectShortId, role, onBack }: CanvasViewProps) {
+export function CanvasView({
+  projectId,
+  projectTitle,
+  projectShortId,
+  role,
+  onBack,
+}: CanvasViewProps) {
   const docState = useProjectDocument(projectId, role);
 
   if (docState.status === "loading") {
@@ -146,7 +181,9 @@ function CanvasStatusScreen({ projectTitle, onBack, children }: CanvasStatusScre
           >
             ← Back to projects
           </button>
-          <h2 className="truncate text-sm font-medium text-[var(--text-primary)]">{projectTitle}</h2>
+          <h2 className="truncate text-sm font-medium text-[var(--text-primary)]">
+            {projectTitle}
+          </h2>
         </div>
       </div>
       <div className="flex flex-1 items-center justify-center text-sm text-[var(--text-muted)]">
@@ -215,6 +252,25 @@ function CanvasViewReady({
     [sfmDoc, containerId, rootContainerId, navigateToContainer, undoManager],
   );
 
+  // Job 019: Job 018's live solver output, called exactly ONCE here (not
+  // inside `RecipeNode`/`SummaryPanel`, which would each spin up their own
+  // scheduler/worker pair — see `SolverResultContext.ts`'s header comment)
+  // and threaded through context to everything under this provider.
+  // Memoized on its own fields (mirroring `docContext` above) so a Provider
+  // value change — and therefore a re-render of every context consumer —
+  // only happens when the solver's own output actually changes, not on
+  // every unrelated re-render of this component (e.g. a theme toggle).
+  const solver = useSolver(sfmDoc);
+  const solverContextValue = useMemo(
+    () => ({
+      result: solver.result,
+      staleness: solver.staleness,
+      nodeResultById: solver.nodeResultById,
+      edgeResultById: solver.edgeResultById,
+    }),
+    [solver.result, solver.staleness, solver.nodeResultById, solver.edgeResultById],
+  );
+
   // Dev-only escape hatch matching Job 008's acceptance criteria wording
   // ("verify by reading the doc state after a drag in a test or dev
   // console"): exposes the live document on `window` so `listNodes(window
@@ -230,18 +286,21 @@ function CanvasViewReady({
 
   return (
     <CanvasDocContext.Provider value={docContext}>
-      <div className="flex h-svh w-full flex-col bg-[var(--surface-app)] text-[var(--text-primary)]">
-        <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-2">
-          <div className="min-w-0">
-            <button
-              type="button"
-              onClick={onBack}
-              className="text-xs text-[var(--text-muted)] underline hover:text-[var(--text-primary)]"
-            >
-              ← Back to projects
-            </button>
-            <h2 className="truncate text-sm font-medium text-[var(--text-primary)]">{projectTitle}</h2>
-            {/*
+      <SolverResultContext.Provider value={solverContextValue}>
+        <div className="flex h-svh w-full flex-col bg-[var(--surface-app)] text-[var(--text-primary)]">
+          <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-2">
+            <div className="min-w-0">
+              <button
+                type="button"
+                onClick={onBack}
+                className="text-xs text-[var(--text-muted)] underline hover:text-[var(--text-primary)]"
+              >
+                ← Back to projects
+              </button>
+              <h2 className="truncate text-sm font-medium text-[var(--text-primary)]">
+                {projectTitle}
+              </h2>
+              {/*
               Job 013: the breadcrumb trail — "drill in to edit contents...
               a breadcrumb trail" (this job's own Scope wording). `sync
               .containers` is the *whole document's* containers (not just
@@ -250,10 +309,14 @@ function CanvasViewReady({
               `computeBreadcrumbPath` walk the full ancestor chain
               regardless of how deep `containerId` currently is.
             */}
-            <Breadcrumbs containers={sync.containers} currentContainerId={containerId} onNavigate={navigateToContainer} />
-          </div>
-          <div className="flex shrink-0 items-center gap-3">
-            {/*
+              <Breadcrumbs
+                containers={sync.containers}
+                currentContainerId={containerId}
+                onNavigate={navigateToContainer}
+              />
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              {/*
               Job 012: Undo/Redo toolbar buttons, wired straight to the
               document's `Y.UndoManager` (created in
               `persistence/useProjectDocument.ts`, once the doc has
@@ -262,38 +325,45 @@ function CanvasViewReady({
               second, discoverable entry point to the identical operation,
               not a separate code path.
             */}
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => undoManager.undo()}
-                disabled={!canUndo}
-                title="Undo (Ctrl/Cmd+Z)"
-                className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                ↶ Undo
-              </button>
-              <button
-                type="button"
-                onClick={() => undoManager.redo()}
-                disabled={!canRedo}
-                title="Redo (Ctrl/Cmd+Shift+Z)"
-                className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                ↷ Redo
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => undoManager.undo()}
+                  disabled={!canUndo}
+                  title="Undo (Ctrl/Cmd+Z)"
+                  className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  ↶ Undo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => undoManager.redo()}
+                  disabled={!canRedo}
+                  title="Redo (Ctrl/Cmd+Shift+Z)"
+                  className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  ↷ Redo
+                </button>
+              </div>
+              {/* Job 019: the real summary panel — made/used/unmade/unused, power, sink points, cost-to-build, scoped Everything/Current Outpost/Selected. */}
+              <SummaryPanel
+                sfmDoc={sfmDoc}
+                containerId={containerId}
+                nodes={sync.nodes}
+                numberFormats={settings.numberFormats}
+              />
+              {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. Job 019 added the solver-mode/number-format sections. */}
+              <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
+              <ThemeToggle theme={theme} onToggle={toggleTheme} />
+              {/* Job 016: version history + restore, and the live autosave-status indicator (replaces Job 015's static "autosaves ~1.5s..." placeholder text). */}
+              <VersionPanel projectId={projectId} role={role} onRestored={onRestored} />
+              <span className="text-xs text-[var(--text-muted)]">{projectShortId}</span>
+              <SaveStatusIndicator status={saveStatus} role={role} />
             </div>
-            {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. */}
-            <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
-            <ThemeToggle theme={theme} onToggle={toggleTheme} />
-            {/* Job 016: version history + restore, and the live autosave-status indicator (replaces Job 015's static "autosaves ~1.5s..." placeholder text). */}
-            <VersionPanel projectId={projectId} role={role} onRestored={onRestored} />
-            <span className="text-xs text-[var(--text-muted)]">{projectShortId}</span>
-            <SaveStatusIndicator status={saveStatus} role={role} />
           </div>
-        </div>
 
-        <div className="relative flex-1">
-          {/*
+          <div className="relative flex-1">
+            {/*
             `useReactFlow()` (needed below to convert a click's screen
             coordinates into document/flow coordinates for the Recipe
             Chooser) only works inside a `<ReactFlowProvider>` — the
@@ -301,11 +371,12 @@ function CanvasViewReady({
             subtree, not this component's own scope. `CanvasFlow` is a
             child of the explicit provider below so it can call the hook.
           */}
-          <ReactFlowProvider>
-            <CanvasFlow sync={sync} settings={settings} theme={theme} />
-          </ReactFlowProvider>
+            <ReactFlowProvider>
+              <CanvasFlow sync={sync} settings={settings} theme={theme} />
+            </ReactFlowProvider>
+          </div>
         </div>
-      </div>
+      </SolverResultContext.Provider>
     </CanvasDocContext.Provider>
   );
 }
@@ -362,10 +433,8 @@ function CanvasFlow({ sync, settings, theme }: CanvasFlowProps) {
   // Job 011: drag-to-connect, edge removal via re-drag, and mismatched-part
   // rejection. See `useConnectionHandlers.ts`'s header comment for exactly
   // how the reconnect-vs-remove-by-drag split works.
-  const { isValidConnection, onConnect, onReconnectStart, onReconnect, onReconnectEnd } = useConnectionHandlers(
-    sfmDoc,
-    containerId,
-  );
+  const { isValidConnection, onConnect, onReconnectStart, onReconnect, onReconnectEnd } =
+    useConnectionHandlers(sfmDoc, containerId);
 
   // Job 012: right-click-drag marquee multi-select. `enabled` also gates
   // off the Job 013 node context menu, mirroring the existing Recipe
@@ -519,7 +588,9 @@ function CanvasFlow({ sync, settings, theme }: CanvasFlowProps) {
           state={nodeMenu}
           siblingOutposts={siblingOutposts}
           parentContainer={parentContainer}
-          onMoveToContainer={(nodeId, targetContainerId) => moveNodeToContainer(sfmDoc, nodeId, targetContainerId)}
+          onMoveToContainer={(nodeId, targetContainerId) =>
+            moveNodeToContainer(sfmDoc, nodeId, targetContainerId)
+          }
           onOpenOutpost={(id) => navigateToContainer(id)}
           onDeleteOutpost={(id) => deleteOutpost(sfmDoc, id)}
           onClose={() => setNodeMenu(null)}

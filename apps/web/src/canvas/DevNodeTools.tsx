@@ -8,56 +8,59 @@
 // Rendered only in dev builds (`import.meta.env.DEV`) by `CanvasView.tsx` —
 // see that file for the `window.__sfmDoc` console-inspection hook this
 // panel's instructions refer to.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { addNode } from "@scm/ydoc";
 import { Panel } from "@xyflow/react";
 
 import { useCanvasDoc } from "./CanvasDocContext";
-import { useSolver } from "../workers";
+import { useSolverResult } from "./SolverResultContext";
 
 let testNodeCounter = 0;
 
 /**
  * Job 018's manual-verification hook, per that job's Notes section: this
- * dev-only panel calls `useSolver(sfmDoc)` and surfaces its live
- * `{result, staleness}` plus dispatch/cancel counters, so a real running
- * browser session can confirm (via the numbers on screen, or
- * `window.__solveDebug` in the console) that editing one connected
- * component never re-triggers a solve of a disconnected one, and that a
- * superseded in-flight solve is genuinely cancelled rather than just
- * ignored. Job 019 owns the real summary panel/highlighting UI — this is
+ * dev-only panel originally called `useSolver(sfmDoc)` directly to surface
+ * its live `{result, staleness}` (plus dispatch/cancel counters) for manual
+ * browser verification. Job 019 switched this to read `useSolverResult()`
+ * (the context `CanvasView.tsx` now populates via a single, shared
+ * `useSolver` call) instead of calling `useSolver` a second time itself —
+ * two independent calls would mean two independent schedulers, each with
+ * its own real `Worker` pair, both solving the same document redundantly
+ * (see `SolverResultContext.ts`'s header comment). This is also why the
+ * dispatch/cancel counters are gone: those came from `useSolver`'s own
+ * `diagnostics` argument, which only the ONE real call site
+ * (`CanvasView.tsx`) can own now — `result`/`staleness` (still exposed
+ * here) are enough to keep this panel useful for what it was built for.
+ * Job 019 owns the real summary panel/highlighting UI — this remains
  * diagnostic tooling only, same spirit as `window.__sfmDoc` above.
  */
 function SolverDebugPanel() {
-  const { sfmDoc } = useCanvasDoc();
-  const dispatchCountRef = useRef(0);
-  const cancelCountRef = useRef(0);
-  const [counts, setCounts] = useState({ dispatch: 0, cancel: 0 });
-
-  const { result, staleness } = useSolver(sfmDoc, {
-    onDispatch: () => setCounts({ dispatch: ++dispatchCountRef.current, cancel: cancelCountRef.current }),
-    onCancel: () => setCounts({ dispatch: dispatchCountRef.current, cancel: ++cancelCountRef.current }),
-  });
+  const { result, staleness } = useSolverResult();
 
   useEffect(() => {
     if (import.meta.env.DEV) {
-      (window as unknown as { __solveDebug?: unknown }).__solveDebug = { result, staleness, counts };
+      (window as unknown as { __solveDebug?: unknown }).__solveDebug = { result, staleness };
     }
-  }, [result, staleness, counts]);
+  }, [result, staleness]);
 
   const invalidNodeCount = result?.nodes.filter((n) => !n.valid).length ?? 0;
 
   return (
     <div className="mt-3 border-t border-[var(--border-default)] pt-2">
       <p className="text-[var(--text-muted)]">
-        Solver (Job 018 diagnostic — real panel is Job 019): mode <code>{result?.mode ?? "(none yet)"}</code>,{" "}
-        <span className={staleness === "stale-recomputing" ? "text-amber-500" : ""}>{staleness}</span>
+        Solver (Job 018 diagnostic — real panel is Job 019): mode{" "}
+        <code>{result?.mode ?? "(none yet)"}</code>,{" "}
+        <span className={staleness === "stale-recomputing" ? "text-amber-500" : ""}>
+          {staleness}
+        </span>
       </p>
       <p className="text-[var(--text-muted)]">
-        nodes solved: {result?.nodes.length ?? 0} ({invalidNodeCount} invalid) · worker dispatches: {counts.dispatch} · cancelled: {counts.cancel}
+        nodes solved: {result?.nodes.length ?? 0} ({invalidNodeCount} invalid)
       </p>
-      <p className="mt-1 text-[var(--text-muted)]">Inspect <code>window.__solveDebug</code> for the full result.</p>
+      <p className="mt-1 text-[var(--text-muted)]">
+        Inspect <code>window.__solveDebug</code> for the full result.
+      </p>
     </div>
   );
 }
@@ -102,7 +105,8 @@ export function DevNodeTools() {
       className="max-w-[240px] rounded-lg border border-[var(--border-default)] bg-[var(--surface-panel)]/95 px-3 py-2 text-xs text-[var(--text-secondary)] shadow-[var(--shadow-card)]"
     >
       <p className="mb-2 text-[var(--text-muted)]">
-        Dev-only test harness (Job 008) proving the canvas↔Yjs wiring. No Recipe Chooser yet — that's Job 009.
+        Dev-only test harness (Job 008) proving the canvas↔Yjs wiring. No Recipe Chooser yet —
+        that's Job 009.
       </p>
       <button
         type="button"
@@ -111,10 +115,12 @@ export function DevNodeTools() {
       >
         Add test node (calls addNode)
       </button>
-      {lastAddedId && <p className="mt-2 truncate text-[var(--text-muted)]">Last added: {lastAddedId}</p>}
+      {lastAddedId && (
+        <p className="mt-2 truncate text-[var(--text-muted)]">Last added: {lastAddedId}</p>
+      )}
       <p className="mt-2 text-[var(--text-muted)]">
-        Drag a node, then inspect <code>window.__sfmDoc</code> in the console to confirm its x/y wrote back to the
-        doc.
+        Drag a node, then inspect <code>window.__sfmDoc</code> in the console to confirm its x/y
+        wrote back to the doc.
       </p>
       <SolverDebugPanel />
     </Panel>
