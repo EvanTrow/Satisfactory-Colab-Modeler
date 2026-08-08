@@ -263,6 +263,7 @@
   "node.hasSelection": "{{name}} has this selected",
   "node.portTooltip.invalid": "This connection could not be resolved — see the node/edge for details.",
   "node.portTooltip.mismatched": "Rate mismatch: this part's in/out rate doesn't reconcile with a connected neighbor.",
+  "node.mismatchedMessage": "Rate mismatch: {{details}} doesn't reconcile with a connected neighbor.",
   "node.portTooltip.default": "{{direction}}: right-click to disconnect",
   "node.portTooltip.unconnected": "{{direction}}: not connected",
   "node.portTooltip.insufficientInput": "Not enough coming in: needs {{required}}/min but only receiving {{supplied}}/min (short {{deficit}}/min).",

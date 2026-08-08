@@ -54,7 +54,7 @@ const DEFAULT_SETTINGS: Settings = {
   powerMultiplier: 1,
   spaceElevatorMultiplier: 1,
   snapMachines: false,
-  gridMachine: { x: 100, y: 100 },
+  gridMachine: { x: 50, y: 50 },
   snapWaypoints: false,
   gridWaypoint: { x: 50, y: 50 },
   numberFormats: {

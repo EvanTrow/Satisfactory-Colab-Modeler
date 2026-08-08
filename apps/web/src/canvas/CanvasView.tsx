@@ -826,23 +826,25 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
         elementsSelectable={interactive}
       >
         {/*
-          Job 014: the dot grid's spacing now mirrors `Settings.gridMachine`
+          Job 014: the dot grid's spacing mirrors `Settings.gridMachine`
           (the same field `useYjsSync.ts`'s `onNodeDragStop` snaps *to*) —
           two independent mechanisms (rendering a grid vs. actually snapping
           to it) kept visually consistent per this job's own scope note,
-          rather than one implying the other. `color` is a real CSS custom
-          property reference (`var(--grid-dot)`), not a literal — `Background`
-          forwards its `color` prop into the SVG's own `style` attribute as
-          `--xy-background-pattern-color-props` (confirmed against
-          `@xyflow/react`'s source), so this resolves through `index.css`'s
-          theme tokens exactly like any other themed value in this app,
-          swapping automatically between light/dark with no JS branching
-          needed here.
+          rather than one implying the other: every dot is a real snap
+          point, 1:1, so `DEFAULT_SETTINGS.gridMachine` (see `document.ts`)
+          is the actual density knob, not this gap. `color` is a real CSS
+          custom property reference (`var(--grid-dot)`), not a literal —
+          `Background` forwards its `color` prop into the SVG's own `style`
+          attribute as `--xy-background-pattern-color-props` (confirmed
+          against `@xyflow/react`'s source), so this resolves through
+          `index.css`'s theme tokens exactly like any other themed value in
+          this app, swapping automatically between light/dark with no JS
+          branching needed here.
         */}
         <Background
           variant={BackgroundVariant.Dots}
           gap={[settings.gridMachine.x, settings.gridMachine.y]}
-          size={1.5}
+          size={3}
           color="var(--grid-dot)"
         />
         <Controls showZoom={false} showFitView={false} showInteractive={false}>

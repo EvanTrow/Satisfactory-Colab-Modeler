@@ -475,6 +475,18 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
   const unhandledByproductNames = recipe ? computeUnhandledByproducts(recipe, connectedPorts) : [];
   const byproductsSummary = unhandledByproductNames.map(gameTerm).join(", ");
 
+  // The orange "mismatched" card border (`highlightBorderClass` above) had
+  // no accompanying explanation — a user sees the border but nothing tells
+  // them a rate mismatch is the cause. Mirrors `shortPartNames`/
+  // `unhandledByproductNames` above: pull the actual affected part names out
+  // of `validityState.ports` so the tooltip/banner can name them instead of
+  // just saying "something's wrong."
+  const validityPorts = validityState?.ports;
+  const mismatchedPartNames = validityPorts
+    ? Object.keys(validityPorts).filter((partName) => validityPorts[partName] === "mismatched")
+    : [];
+  const mismatchSummary = mismatchedPartNames.map(gameTerm).join(", ");
+
   // A machine-count-mode node with no `limit` set is meant to read as
   // genuinely blank — "nothing limiting this machine, the solver derives it
   // from what's flowing in" — not as a pre-filled "1" that looks like a
@@ -693,9 +705,11 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
           ? t("node.insufficientInputMessage", { details: shortagesSummary })
           : validityState?.overall === "invalid"
             ? t("node.invalid", { issues: nodeResult?.issues.join("; ") || t("node.invalidFallback") })
-            : unhandledByproductNames.length > 0
-              ? t("node.unhandledByproductMessage", { details: byproductsSummary })
-              : undefined
+            : validityState?.overall === "mismatched"
+              ? t("node.mismatchedMessage", { details: mismatchSummary })
+              : unhandledByproductNames.length > 0
+                ? t("node.unhandledByproductMessage", { details: byproductsSummary })
+                : undefined
       }
     >
       {remoteSelectors.length > 0 && (
@@ -801,6 +815,16 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
       {shortPartNames.length > 0 && (
         <p className="mx-2 mt-1.5 rounded-md bg-[var(--danger-soft)] px-2 py-1 text-[10px] text-[var(--danger)]">
           {t("node.insufficientInputMessage", { details: shortagesSummary })}
+        </p>
+      )}
+
+      {/* Same always-visible treatment for the orange "mismatched" border —
+          shown whenever that's actually the border's cause (i.e. not
+          shadowed by the red banner above, matching the border's own
+          `shortPartNames` > `validityState.overall` precedence). */}
+      {shortPartNames.length === 0 && validityState?.overall === "mismatched" && (
+        <p className="mx-2 mt-1.5 rounded-md bg-[var(--mismatch-soft)] px-2 py-1 text-[10px] text-[var(--mismatch)]">
+          {t("node.mismatchedMessage", { details: mismatchSummary })}
         </p>
       )}
 
