@@ -22,7 +22,9 @@ import { listContainers, listEdges, listNodes, type SfmDocument } from "@scm/ydo
 import type { SolverEdge, SolverMode, SolverNode, SolverSnapshot } from "@scm/solver";
 
 import { collapseBlueprints, type BlueprintDisplayInfo } from "./blueprintCollapse";
+import { computeSinkConsumerNodes } from "./sinkPassthrough";
 import { computeSplurgerPassthroughEdges } from "./splurgerPassthrough";
+import { computeStorageBufferNodes } from "./storagePassthrough";
 
 /**
  * Only `kind: "recipe"` nodes are included — the only node kind
@@ -46,14 +48,26 @@ import { computeSplurgerPassthroughEdges } from "./splurgerPassthrough";
  * itself. See that module's header comment for exactly which wiring shapes
  * this can and can't represent, and jobs/024-priority-nodes.md's Handoff
  * notes for the full design writeup.
+ *
+ * `kind: "sink"`/`"depot"` (AWESOME Sink/Dimensional Depot Uploader) and
+ * `kind: "storage"` (Storage Container) get the same "rewrite before the
+ * filter runs" treatment, via `sinkPassthrough.ts`/`storagePassthrough.ts`
+ * — except neither erases itself into a direct edge between two REAL
+ * nodes; each synthesizes its own tiny single-part `blueprintCopyBasis`
+ * compound node(s) (Job 026's escape hatch for a node with no real
+ * gamedata recipe) to stand in for what it consumes/produces, since none of
+ * these three kinds has a fixed recipe ratio the way a Splurger's
+ * passthrough rewrite can lean on. See those two modules' headers for why.
  */
 export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   const allNodes = listNodes(sfmDoc);
   const recipeNodes = allNodes.filter((node) => node.kind === "recipe");
   const recipeNodeIds = new Set(recipeNodes.map((node) => node.id));
   const splurgerNodes = allNodes.filter((node) => node.kind === "splurger");
+  const sinkNodes = allNodes.filter((node) => node.kind === "sink" || node.kind === "depot");
+  const storageNodes = allNodes.filter((node) => node.kind === "storage");
 
-  const nodes: SolverNode[] = recipeNodes.map((node) => ({
+  const recipeSolverNodes: SolverNode[] = recipeNodes.map((node) => ({
     id: node.id,
     // `NodeRecord.recipe`/`.machine` are nullable (Job 007's schema) — a
     // recipe node with either unset (mid-creation, or corrupt data) maps to
@@ -71,6 +85,23 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   }));
 
   const allEdges = listEdges(sfmDoc);
+
+  // Sink/Depot (Job's AWESOME Sink/Dimensional Depot addition) and Storage
+  // Container rewrites — see this function's own header comment above and
+  // `sinkPassthrough.ts`/`storagePassthrough.ts`'s headers. Each contributes
+  // its own synthetic `blueprintCopyBasis` compound nodes, which join
+  // `representableNodeIds` alongside real recipe nodes so the edge filters
+  // below don't drop the very edges just rewritten to target them.
+  const sinkResult = computeSinkConsumerNodes(sinkNodes, allEdges);
+  const storageResult = computeStorageBufferNodes(storageNodes, allEdges);
+  const representableNodeIds = new Set([
+    ...recipeNodeIds,
+    ...sinkResult.nodes.map((n) => n.id),
+    ...storageResult.nodes.map((n) => n.id),
+  ]);
+  const specialtyEdges = [...sinkResult.edges, ...storageResult.edges].filter(
+    (edge) => representableNodeIds.has(edge.fromNode) && representableNodeIds.has(edge.toNode),
+  );
 
   const directEdges = allEdges
     .filter((edge) => recipeNodeIds.has(edge.fromNode) && recipeNodeIds.has(edge.toNode))
@@ -101,7 +132,8 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
       ...(edge.priorityTier ? { priorityTier: edge.priorityTier } : {}),
     }));
 
-  const edges: SolverEdge[] = [...directEdges, ...splurgerEdges];
+  const nodes: SolverNode[] = [...recipeSolverNodes, ...sinkResult.nodes, ...storageResult.nodes];
+  const edges: SolverEdge[] = [...directEdges, ...splurgerEdges, ...specialtyEdges];
 
   return { nodes, edges };
 }

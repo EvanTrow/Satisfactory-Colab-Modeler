@@ -112,6 +112,7 @@ export function pasteClipboard(
         purity: node.purity,
         beltTier: node.beltTier,
         storageMode: node.storageMode,
+        splurgerVariant: node.splurgerVariant,
         // `priorityOrder` entries are port ids on the node itself (which
         // outgoing port to favor), not references to other node ids, so
         // they carry over unchanged — nothing to remap.

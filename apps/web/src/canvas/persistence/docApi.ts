@@ -63,7 +63,8 @@ export async function saveProjectVersion(projectId: string, label?: string): Pro
 /** Result of a successful restore — see `apps/api`'s `docRoutes.ts` restore route. */
 export interface RestoreVersionResult {
   restoredVersionId: string;
-  preRestoreVersion: ProjectVersionInfo;
+  /** `null` when the caller opted out of the pre-restore safety snapshot. */
+  preRestoreVersion: ProjectVersionInfo | null;
 }
 
 /**
@@ -73,14 +74,36 @@ export interface RestoreVersionResult {
  * `reloadAfterRestore`), since a restore is a wholesale replace, not
  * something a `Y.applyUpdate` merge into the existing local doc can express
  * correctly (see that function's own doc comment).
+ *
+ * `createPreRestoreVersion` (default `true`) controls whether the server
+ * takes a safety snapshot of current state before overwriting it — the
+ * version-history UI asks the user each restore rather than forcing this
+ * unconditionally.
  */
-export async function restoreProjectVersion(projectId: string, versionId: string): Promise<RestoreVersionResult> {
+export async function restoreProjectVersion(
+  projectId: string,
+  versionId: string,
+  createPreRestoreVersion = true,
+): Promise<RestoreVersionResult> {
   const res = await fetch(`/api/projects/${projectId}/versions/${versionId}/restore`, {
     method: "POST",
     credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ createPreRestoreVersion }),
   });
   if (!res.ok) {
     throw new ApiError(res.status, await parseErrorBody(res));
   }
   return (await res.json()) as RestoreVersionResult;
+}
+
+/** Deletes one version from a project's history — Job 016 follow-up's "add a way to delete versions." Never touches the project's current live document state. */
+export async function deleteProjectVersion(projectId: string, versionId: string): Promise<void> {
+  const res = await fetch(`/api/projects/${projectId}/versions/${versionId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new ApiError(res.status, await parseErrorBody(res));
+  }
 }

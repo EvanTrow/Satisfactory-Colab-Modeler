@@ -610,4 +610,165 @@ describe("POST /api/projects/:id/versions/:versionId/restore", () => {
     expect(res.statusCode).toBe(404);
     await app.close();
   });
+
+  it("skips the pre_restore safety snapshot when createPreRestoreVersion: false is passed", async () => {
+    const app = await buildApp({ logger: false });
+    await app.ready();
+    const owner = await createTestUser("versionroutes-restore-nobackup-owner");
+    const cookie = await cookieFor(owner.id);
+
+    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie } });
+    const project = createRes.json();
+    const saveRes = await app.inject({ method: "POST", url: `/api/projects/${project.id}/versions`, headers: { cookie }, payload: { label: "A" } });
+    const versionA = saveRes.json();
+
+    const restoreRes = await app.inject({
+      method: "POST",
+      url: `/api/projects/${project.id}/versions/${versionA.id}/restore`,
+      headers: { cookie },
+      payload: { createPreRestoreVersion: false },
+    });
+    expect(restoreRes.statusCode).toBe(200);
+    expect(restoreRes.json().preRestoreVersion).toBeNull();
+
+    // No pre_restore row was created — only versionA exists.
+    const listRes = await app.inject({ method: "GET", url: `/api/projects/${project.id}/versions`, headers: { cookie } });
+    const versions = listRes.json() as Array<{ id: string; kind: string }>;
+    expect(versions).toHaveLength(1);
+    expect(versions[0]!.id).toBe(versionA.id);
+
+    await app.close();
+  });
+});
+
+describe("DELETE /api/projects/:id/versions/:versionId", () => {
+  it("requires auth", async () => {
+    const app = await buildApp({ logger: false });
+    await app.ready();
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${crypto.randomUUID()}/versions/${crypto.randomUUID()}`,
+    });
+    expect(res.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it("deletes a version as the owner", async () => {
+    const app = await buildApp({ logger: false });
+    await app.ready();
+    const owner = await createTestUser("versionroutes-delete-owner");
+    const cookie = await cookieFor(owner.id);
+
+    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie } });
+    const project = createRes.json();
+    const saveRes = await app.inject({
+      method: "POST",
+      url: `/api/projects/${project.id}/versions`,
+      headers: { cookie },
+      payload: { label: "To delete" },
+    });
+    const version = saveRes.json();
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}/versions/${version.id}`,
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(204);
+
+    const listRes = await app.inject({ method: "GET", url: `/api/projects/${project.id}/versions`, headers: { cookie } });
+    expect(listRes.json()).toEqual([]);
+
+    await app.close();
+  });
+
+  it("deletes a version as an editor", async () => {
+    const app = await buildApp({ logger: false });
+    await app.ready();
+    const owner = await createTestUser("versionroutes-delete-owner-2");
+    const editor = await createTestUser("versionroutes-delete-editor");
+    const ownerCookie = await cookieFor(owner.id);
+    const editorCookie = await cookieFor(editor.id);
+
+    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const project = createRes.json();
+    await db.insertInto("project_members").values({ project_id: project.id, user_id: editor.id, role: "editor" }).execute();
+    const saveRes = await app.inject({ method: "POST", url: `/api/projects/${project.id}/versions`, headers: { cookie: ownerCookie } });
+    const version = saveRes.json();
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}/versions/${version.id}`,
+      headers: { cookie: editorCookie },
+    });
+    expect(res.statusCode).toBe(204);
+    await app.close();
+  });
+
+  it("rejects a viewer with 403 — the version is not deleted", async () => {
+    const app = await buildApp({ logger: false });
+    await app.ready();
+    const owner = await createTestUser("versionroutes-delete-owner-3");
+    const viewer = await createTestUser("versionroutes-delete-viewer");
+    const ownerCookie = await cookieFor(owner.id);
+    const viewerCookie = await cookieFor(viewer.id);
+
+    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const project = createRes.json();
+    await db.insertInto("project_members").values({ project_id: project.id, user_id: viewer.id, role: "viewer" }).execute();
+    const saveRes = await app.inject({ method: "POST", url: `/api/projects/${project.id}/versions`, headers: { cookie: ownerCookie } });
+    const version = saveRes.json();
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}/versions/${version.id}`,
+      headers: { cookie: viewerCookie },
+    });
+    expect(res.statusCode).toBe(403);
+
+    const listRes = await app.inject({ method: "GET", url: `/api/projects/${project.id}/versions`, headers: { cookie: ownerCookie } });
+    expect(listRes.json()).toHaveLength(1);
+
+    await app.close();
+  });
+
+  it("returns 404 for a non-member", async () => {
+    const app = await buildApp({ logger: false });
+    await app.ready();
+    const owner = await createTestUser("versionroutes-delete-owner-4");
+    const stranger = await createTestUser("versionroutes-delete-stranger");
+    const ownerCookie = await cookieFor(owner.id);
+    const strangerCookie = await cookieFor(stranger.id);
+
+    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie: ownerCookie } });
+    const project = createRes.json();
+    const saveRes = await app.inject({ method: "POST", url: `/api/projects/${project.id}/versions`, headers: { cookie: ownerCookie } });
+    const version = saveRes.json();
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}/versions/${version.id}`,
+      headers: { cookie: strangerCookie },
+    });
+    expect(res.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it("returns 404 for a nonexistent version id", async () => {
+    const app = await buildApp({ logger: false });
+    await app.ready();
+    const owner = await createTestUser("versionroutes-delete-missing-owner");
+    const cookie = await cookieFor(owner.id);
+
+    const createRes = await app.inject({ method: "POST", url: "/api/projects", headers: { cookie } });
+    const project = createRes.json();
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}/versions/${crypto.randomUUID()}`,
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(404);
+    await app.close();
+  });
 });

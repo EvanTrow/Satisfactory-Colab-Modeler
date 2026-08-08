@@ -16,6 +16,8 @@ describe("createDocument", () => {
     expect(settings.numberFormats.style).toBe("decimal");
     expect(settings.numberFormats.digits).toBe(2);
     expect(settings.connectionStyle).toBe("bezier");
+    expect(settings.recipeTierFilter).toBeNull();
+    expect(settings.recipePhaseFilter).toBeNull();
   });
 
   it("applies meta/settings overrides passed to createDocument", () => {

@@ -2,26 +2,25 @@
 // "Toggle that continuously solves clock speed so machine count is a whole
 // number." Deliberately its own module (not folded into
 // `recipeNodeMath.ts`) even though it leans on that file's
-// `deriveClockForTargetCount` — the *direction* this picks a target count
-// from is genuinely different math from the manual ± buttons
-// (`snapClockToWholeMachineCount`), not just a thin wrapper, and keeping it
-// separate matches every prior canvas job's pattern of extracting pure,
+// `deriveClockForTargetCount` — this is genuinely different math from the
+// manual ± buttons (which step through a fixed `CLOCK_PRESETS` list, no
+// solving involved), not just a thin wrapper, and keeping it separate
+// matches every prior canvas job's pattern of extracting pure,
 // independently-testable logic into its own file (recipeNodeMath.ts itself,
 // edgeGeometry.ts, snapToGrid.ts, splurgerPassthrough.ts, ...).
 //
 // ---------------------------------------------------------------------------
-// Why NEAREST rounding, not directional (read before "fixing" this to reuse
-// `snapClockToWholeMachineCount` directly)
+// Why NEAREST rounding, not directional
 // ---------------------------------------------------------------------------
-// The manual ± buttons have a user-supplied direction ("−" always rounds
-// the count UP, "+" always rounds it DOWN — PLAN.md's own wording) because
-// a button click IS the direction. Auto-round has no click to read a
-// direction from — it fires from a graph recompute, not a user gesture — so
-// "which whole number do I snap to" has to be answered some other way.
-// Nearest-with-ties-up is the least surprising choice: it minimizes how far
-// the clock has to move away from whatever the graph's real demand implies,
-// and it's stable (see below) in exactly the same way a directional snap
-// would be, just without importing a direction the caller doesn't have.
+// A manual ± button click has an obvious direction (up or down the preset
+// list) because the click itself IS the direction. Auto-round has no click
+// to read a direction from — it fires from a graph recompute, not a user
+// gesture — so "which whole number do I snap to" has to be answered some
+// other way. Nearest-with-ties-up is the least surprising choice: it
+// minimizes how far the clock has to move away from whatever the graph's
+// real demand implies, and it's stable (see below) in exactly the same way
+// a directional snap would be, just without importing a direction the
+// caller doesn't have.
 //
 // ---------------------------------------------------------------------------
 // The convergence/stability argument — the load-bearing part of this file
@@ -89,9 +88,7 @@ const HALF: Rational = of(1, 2);
 /**
  * Rounds `count` to the nearest whole number (ties round up/away from the
  * floor), clamped to a minimum of exactly `1` — a factory can't run a zero
- * or negative number of machines, the same floor
- * `snapClockToWholeMachineCount` already enforces for its own directional
- * target.
+ * or negative number of machines.
  */
 export function nearestWholeMachineCount(count: Rational): Rational {
   const floor = floorToBigInt(count);
@@ -105,9 +102,7 @@ export function nearestWholeMachineCount(count: Rational): Rational {
  * LIVE solved machine count (`NodeSolveResult.machineCount`, parsed by the
  * caller — see `useAutoRound.ts`). Returns `null` when there's genuinely
  * nothing to do: already a whole number (≥ 1), or a degenerate zero/negative
- * input this function can't anchor the count∝1/clock relationship on
- * (mirroring `snapClockToWholeMachineCount`'s own guard for the exact same
- * situation).
+ * input this function can't anchor the count∝1/clock relationship on.
  */
 export function computeAutoRoundClock(
   currentClockPercent: Rational,

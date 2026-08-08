@@ -1,4 +1,5 @@
 import { addContainer, addEdge, addNode, createDocument, setPriorityOrder, type SfmDocument } from "@scm/ydoc";
+import { solve } from "@scm/solver";
 import { describe, expect, it } from "vitest";
 
 import { buildSolverSnapshot } from "./buildSnapshot";
@@ -26,6 +27,7 @@ function makeRecipeNode(
     purity: null,
     beltTier: null,
     storageMode: null,
+    splurgerVariant: null,
     ...overrides,
   });
 }
@@ -54,6 +56,7 @@ describe("buildSolverSnapshot", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
 
     const snapshot = buildSolverSnapshot(sfmDoc);
@@ -123,6 +126,7 @@ describe("buildSolverSnapshot", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
 
     addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: a.id, fromPort: "out", toNode: b.id, toPort: "in", style: null, labelPos: null });
@@ -181,6 +185,7 @@ describe("buildSolverSnapshot", () => {
         purity: null,
         beltTier: null,
         storageMode: null,
+        splurgerVariant: null,
       });
     }
 
@@ -288,6 +293,164 @@ describe("buildSolverSnapshot", () => {
 
       const snapshot = buildSolverSnapshot(sfmDoc);
       expect(snapshot.edges).toHaveLength(0);
+    });
+  });
+
+  describe("AWESOME Sink / Dimensional Depot rewrite", () => {
+    function makeSink(sfmDoc: SfmDocument, containerId: string, overrides: Partial<Parameters<typeof addNode>[1]> = {}) {
+      return addNode(sfmDoc, {
+        containerId,
+        kind: "sink",
+        recipe: null,
+        machine: "AWESOME Sink",
+        x: 0,
+        y: 0,
+        title: "AWESOME Sink",
+        color: "#000",
+        limit: null,
+        limitMode: "ppm",
+        clock: null,
+        autoRound: false,
+        shards: 0,
+        purity: null,
+        beltTier: null,
+        storageMode: null,
+        splurgerVariant: null,
+        ...overrides,
+      });
+    }
+
+    it("never turns a Sink itself into a SolverNode", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      const sink = makeSink(sfmDoc, root);
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      expect(snapshot.nodes.some((n) => n.id === sink.id)).toBe(false);
+    });
+
+    it("caps the upstream producer's rate at the sink's own ppm limit", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+
+      const producer = makeRecipeNode(sfmDoc, root, { title: "Producer" });
+      const sink = makeSink(sfmDoc, root, { limit: "10", limitMode: "ppm" });
+      addEdge(sfmDoc, {
+        containerId: root,
+        part: "Iron Ingot",
+        fromNode: producer.id,
+        fromPort: "out:Iron Ingot",
+        toNode: sink.id,
+        toPort: "in:*",
+        style: null,
+        labelPos: null,
+      });
+
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      const result = solve(snapshot, "basic");
+      const producerResult = result.nodes.find((n) => n.nodeId === producer.id)!;
+      expect(producerResult.resolved).toBe(true);
+      expect(producerResult.partRates["Iron Ingot"]).toBe("10");
+    });
+
+    it("consumes each distinct connected part independently, at the sink's own limit each", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+
+      const ironProducer = makeRecipeNode(sfmDoc, root, { title: "Iron", recipe: "Iron Ingot", machine: "Smelter" });
+      const copperProducer = makeRecipeNode(sfmDoc, root, { title: "Copper", recipe: "Copper Ingot", machine: "Smelter" });
+      const sink = makeSink(sfmDoc, root, { limit: "20", limitMode: "ppm" });
+      addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: ironProducer.id, fromPort: "out:Iron Ingot", toNode: sink.id, toPort: "in:*", style: null, labelPos: null });
+      addEdge(sfmDoc, { containerId: root, part: "Copper Ingot", fromNode: copperProducer.id, fromPort: "out:Copper Ingot", toNode: sink.id, toPort: "in:*", style: null, labelPos: null });
+
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      const result = solve(snapshot, "basic");
+      expect(result.nodes.find((n) => n.nodeId === ironProducer.id)!.partRates["Iron Ingot"]).toBe("20");
+      expect(result.nodes.find((n) => n.nodeId === copperProducer.id)!.partRates["Copper Ingot"]).toBe("20");
+    });
+  });
+
+  describe("Storage Container rewrite", () => {
+    function makeStorage(sfmDoc: SfmDocument, containerId: string, overrides: Partial<Parameters<typeof addNode>[1]> = {}) {
+      return addNode(sfmDoc, {
+        containerId,
+        kind: "storage",
+        recipe: null,
+        machine: null,
+        x: 0,
+        y: 0,
+        title: "Storage Container",
+        color: "#000",
+        limit: null,
+        limitMode: "machines",
+        clock: null,
+        autoRound: false,
+        shards: 0,
+        purity: null,
+        beltTier: null,
+        storageMode: "partiallyFull",
+        splurgerVariant: null,
+        ...overrides,
+      });
+    }
+
+    it("never turns a Storage Container itself into a SolverNode", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      const storage = makeStorage(sfmDoc, root);
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      expect(snapshot.nodes.some((n) => n.id === storage.id)).toBe(false);
+    });
+
+    it("decouples input from output — a pinned upstream producer and a differently-pinned downstream consumer both resolve independently, with no forced conservation across the storage node", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+
+      const producer = makeRecipeNode(sfmDoc, root, { title: "Producer", limit: "5", limitMode: "machines" });
+      const consumer = makeRecipeNode(sfmDoc, root, { title: "Consumer", recipe: "Iron Rod", machine: "Constructor", limit: "3", limitMode: "machines" });
+      const storage = makeStorage(sfmDoc, root);
+
+      addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: producer.id, fromPort: "out:Iron Ingot", toNode: storage.id, toPort: "in:*", style: null, labelPos: null });
+      addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: storage.id, fromPort: "out:*", toNode: consumer.id, toPort: "in:Iron Ingot", style: null, labelPos: null });
+
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      const result = solve(snapshot, "basic");
+      expect(result.valid).toBe(true);
+      const producerResult = result.nodes.find((n) => n.nodeId === producer.id)!;
+      const consumerResult = result.nodes.find((n) => n.nodeId === consumer.id)!;
+      expect(producerResult.machineCount).toBe("5");
+      expect(consumerResult.machineCount).toBe("3");
+    });
+
+    it("routes multiple producers of the same part into one shared consumer node on the input side", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+
+      // Basic mode has no splitter/merger *preference* — a shared consumer's
+      // total demand is even-split across its sibling producer edges
+      // (PLAN.md §2's "no" for Basic in that column), so two producers with
+      // UNEQUAL pinned outputs feeding one synthetic consumer would report a
+      // legitimate rate mismatch, exactly as two unequal producers feeding
+      // any ordinary recipe node's shared input already would — nothing
+      // specific to this rewrite. Equal limits here isolates what this test
+      // actually checks: that both producers route to the SAME shared
+      // synthetic consumer node rather than two independent ones.
+      const producerA = makeRecipeNode(sfmDoc, root, { title: "A", limit: "3", limitMode: "machines" });
+      const producerB = makeRecipeNode(sfmDoc, root, { title: "B", limit: "3", limitMode: "machines" });
+      const storage = makeStorage(sfmDoc, root);
+      addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: producerA.id, fromPort: "out:Iron Ingot", toNode: storage.id, toPort: "in:*", style: null, labelPos: null });
+      addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: producerB.id, fromPort: "out:Iron Ingot", toNode: storage.id, toPort: "in:*", style: null, labelPos: null });
+
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      const result = solve(snapshot, "basic");
+      expect(result.valid).toBe(true);
+      expect(result.nodes.find((n) => n.nodeId === producerA.id)!.machineCount).toBe("3");
+      expect(result.nodes.find((n) => n.nodeId === producerB.id)!.machineCount).toBe("3");
     });
   });
 });

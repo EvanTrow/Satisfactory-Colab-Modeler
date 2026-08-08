@@ -39,6 +39,7 @@ describe("createUndoManager", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     undoManager.stopCapturing();
 
@@ -81,6 +82,7 @@ describe("createUndoManager", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     undoManager.stopCapturing();
 
@@ -126,6 +128,7 @@ describe("createUndoManager", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     undoManager.stopCapturing();
     expect(undoManager.undoStack).toHaveLength(1);

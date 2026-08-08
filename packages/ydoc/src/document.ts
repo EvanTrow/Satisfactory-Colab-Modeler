@@ -64,6 +64,8 @@ const DEFAULT_SETTINGS: Settings = {
     trimTrailingZeros: true,
   },
   connectionStyle: "bezier",
+  recipeTierFilter: null,
+  recipePhaseFilter: null,
 };
 
 function setPlainFields(map: Y.Map<unknown>, values: Record<string, unknown>): void {

@@ -170,6 +170,28 @@ export interface SplurgerShape<E extends SplurgerEdgeLike = SplurgerEdgeLike> {
   readonly kind: SplurgerShapeKind;
   readonly inputEdges: readonly E[];
   readonly outputEdges: readonly E[];
+  /**
+   * Parts present on only ONE side (input-only, or output-only) — since
+   * `kind` is computed from TOTAL edge counts across every part at once, a
+   * Splurger can read as a perfectly ordinary "passthrough"/"splitter"/
+   * "merger" while one or more of its individual parts has nowhere to
+   * route: `computeSplurgerPassthroughEdges` groups strictly PER PART and
+   * silently produces no synthetic edge at all for a part with nothing on
+   * the other side (there's genuinely nowhere to route it) — this is what
+   * lets `SplurgerNode.tsx` surface that as a visible warning instead of
+   * flow quietly vanishing from the solve with no indication why.
+   */
+  readonly danglingParts: readonly string[];
+  /**
+   * Which direction's edges actually own the priority-tier assignment for
+   * THIS shape — `"out"` for a splitter (its one input has no tier
+   * decision to make), `"in"` for a merger, `null` for every other shape
+   * (passthrough/empty/unsupported have no multi-way tiering at all).
+   * Mirrors `computeSplurgerPassthroughEdges`'s own "many side owns the
+   * tier" rule exactly — `SplurgerNode.tsx` uses this to hide/disable tier
+   * controls on rows where toggling them would have no effect on the solve.
+   */
+  readonly tierOwningDirection: "in" | "out" | null;
 }
 
 /**
@@ -193,7 +215,33 @@ export function computeSplurgerShape<E extends SplurgerEdgeLike>(
   else if (outputEdges.length > 1) kind = "splitter";
   else if (inputEdges.length > 1) kind = "merger";
   else kind = "passthrough";
-  return { kind, inputEdges, outputEdges };
+
+  const inputParts = new Set(inputEdges.map((e) => e.part));
+  const outputParts = new Set(outputEdges.map((e) => e.part));
+  const danglingParts = [...new Set([...inputParts, ...outputParts])].filter(
+    (part) => inputParts.has(part) !== outputParts.has(part),
+  );
+
+  const tierOwningDirection = kind === "splitter" ? "out" : kind === "merger" ? "in" : null;
+
+  return { kind, inputEdges, outputEdges, danglingParts, tierOwningDirection };
+}
+
+/**
+ * Whether each side of a `kind: "splurger"` node shows TWO priority-tier
+ * groups ("Top — priority"/"Bottom — overflow") or just a single flat list
+ * — a STATIC property of the node's own `splurgerVariant` (`@scm/ydoc`'s
+ * `splurgerPortCaps`), not of current wiring the way `computeSplurgerShape`'s
+ * `tierOwningDirection` is. Takes a plain `{ in; out }` shape rather than
+ * importing `@scm/ydoc`'s `SplurgerPortCaps` type directly — this module
+ * stays dependency-free by design (see this file's header) — but is meant
+ * to be called with exactly that object from `SplurgerNode.tsx`.
+ */
+export function tierGroupsForCaps(caps: { readonly in: number; readonly out: number }): {
+  readonly in: boolean;
+  readonly out: boolean;
+} {
+  return { in: caps.in > 1, out: caps.out > 1 };
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +275,25 @@ export interface SplurgerPassthroughResult {
    * silent flow discrepancy on their own.
    */
   readonly unsupportedNodeIds: ReadonlySet<string>;
+}
+
+/**
+ * Reads a tier directly off one of THIS Splurger's own port strings — see
+ * `edges/connectionLogic.ts`'s `WILDCARD_PART_TOP`/`WILDCARD_PART_BOTTOM`
+ * (`"*top"`/`"*bottom"`, duplicated here as literals rather than imported —
+ * this module stays dependency-free by design, see its header). New
+ * connections made through a tiered side's two real handles carry their
+ * tier this way, for free, with no `priorityOrder` bookkeeping needed at
+ * all. `undefined` for an edge whose port is still the plain `"*"` wildcard
+ * — a 1-cap side's only handle (no tier concept), or a LEGACY edge made
+ * before this port-per-tier scheme existed — callers fall back to the
+ * `priorityOrder`-based `tierForEdge` for those, so an old document's
+ * existing tier assignments keep working unchanged.
+ */
+function tierFromPort(port: string): PriorityTier | undefined {
+  if (port.endsWith("*top")) return "top";
+  if (port.endsWith("*bottom")) return "bottom";
+  return undefined;
 }
 
 /**
@@ -283,7 +350,7 @@ export function computeSplurgerPassthroughEdges(
             fromPort: input.fromPort,
             toNode: output.toNode,
             toPort: output.toPort,
-            priorityTier: tierForEdge(assignment, output.id),
+            priorityTier: tierFromPort(output.fromPort) ?? tierForEdge(assignment, output.id),
           });
         }
       } else {
@@ -296,7 +363,7 @@ export function computeSplurgerPassthroughEdges(
             fromPort: input.fromPort,
             toNode: output.toNode,
             toPort: output.toPort,
-            priorityTier: tierForEdge(assignment, input.id),
+            priorityTier: tierFromPort(input.toPort) ?? tierForEdge(assignment, input.id),
           });
         }
       }

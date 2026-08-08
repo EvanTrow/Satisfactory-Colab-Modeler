@@ -15,17 +15,20 @@
 // of node," not just "a recipe node with different data," at a glance.
 import { memo } from "react";
 
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { Handle, Position, useConnection, type NodeProps } from "@xyflow/react";
 
 import { getOutpostIconUrl } from "../../assets/icons";
 import { useRemotePresence } from "../../collab";
 import { useCanvasDoc } from "../CanvasDocContext";
+import { isValidDragCandidate } from "../edges/connectionLogic";
 import type { CanvasNode } from "../useYjsSync";
 
 const outpostIconUrl = getOutpostIconUrl();
 
-const inHandleClass = "!h-2.5 !w-2.5 !border-2 !border-[var(--surface-card)] !bg-[var(--outpost)]";
-const outHandleClass = "!h-2.5 !w-2.5 !border-2 !border-[var(--surface-card)] !bg-[var(--outpost)]";
+const inHandleClass = "!h-3.5 !w-3.5 !border-2 !border-[var(--surface-card)] !bg-[var(--outpost)]";
+const outHandleClass = "!h-3.5 !w-3.5 !border-2 !border-[var(--surface-card)] !bg-[var(--outpost)]";
+/** Applied to a `Handle` while a connection is being dragged from elsewhere and dropping it here wouldn't be valid — see `RecipeNode.tsx`'s identical `handleFadeClass`. */
+const handleFadeClass = "opacity-20 pointer-events-none transition-opacity";
 
 export const OutpostNode = memo(function OutpostNode({ id, data, selected }: NodeProps<CanvasNode>) {
   const { navigateToContainer, awareness } = useCanvasDoc();
@@ -35,10 +38,25 @@ export const OutpostNode = memo(function OutpostNode({ id, data, selected }: Nod
   // in, so this needs no special-casing beyond reading `id` the normal way.
   const remotePresence = useRemotePresence(awareness);
   const remoteSelectors = remotePresence.filter((peer) => peer.state.selection.includes(id));
+  // See `RecipeNode.tsx`'s identical hook for why this is selector-scoped to
+  // just `fromHandle`. These boundary handles use a `boundary:<edgeId>:<dir>`
+  // id (`portMapping.ts`'s `boundaryPortId`), which `connectionLogic.ts`'s
+  // `parsePortHandleId` never parses — meaning they already never validate as
+  // a drag target under the existing `isValidConnection` rule, drag or no
+  // drag. This just makes that existing fact visible: every one of these
+  // dots dims during any connection drag, not only ones started elsewhere on
+  // this outpost.
+  const fromHandle = useConnection((connection) => connection.fromHandle);
   const container = data.container;
   // Defensive only — `containerToOutpostFlowNode` always sets `data.container` for a `type: "outpost"` node.
   if (!container) return null;
   const ports = data.ports ?? [];
+
+  function isHandleFaded(handleId: string, type: "source" | "target"): boolean {
+    if (!fromHandle) return false;
+    if (fromHandle.nodeId === id && fromHandle.id === handleId) return false;
+    return !isValidDragCandidate(fromHandle, { nodeId: id, id: handleId, type });
+  }
 
   function open() {
     navigateToContainer(container!.id);
@@ -104,7 +122,12 @@ export const OutpostNode = memo(function OutpostNode({ id, data, selected }: Nod
               className="relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)]"
             >
               {port.direction === "in" && (
-                <Handle type="target" position={Position.Left} id={port.id} className={inHandleClass} />
+                <Handle
+                  type="target"
+                  position={Position.Left}
+                  id={port.id}
+                  className={`${inHandleClass} ${isHandleFaded(port.id, "target") ? handleFadeClass : ""}`}
+                />
               )}
               <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]">
                 {port.direction === "in" ? "→ " : ""}
@@ -112,7 +135,12 @@ export const OutpostNode = memo(function OutpostNode({ id, data, selected }: Nod
                 {port.direction === "out" ? " →" : ""}
               </span>
               {port.direction === "out" && (
-                <Handle type="source" position={Position.Right} id={port.id} className={outHandleClass} />
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={port.id}
+                  className={`${outHandleClass} ${isHandleFaded(port.id, "source") ? handleFadeClass : ""}`}
+                />
               )}
             </div>
           ))

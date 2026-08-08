@@ -153,6 +153,19 @@
   --blueprint-soft: rgba(13, 148, 136, 0.14);
   --blueprint-border: rgba(13, 148, 136, 0.55);
 
+  /*
+   * Add-a-machine redesign: alternate-recipe highlighting in
+   * `RecipeChooser.tsx`'s recipe list (a blue badge/row-tint, Steam-app-
+   * inspired). A sixth "own identity" accent, same reasoning as
+   * `--outpost`/`--splurger`/`--blueprint` above — kept distinct from
+   * `--accent` (indigo, already means "selected/primary interactive"
+   * elsewhere, e.g. the machine filter list's selected state) so this reads
+   * as its own semantic, not a mis-clicked selection.
+   */
+  --alt-recipe: #1d4ed8;
+  --alt-recipe-soft: rgba(37, 99, 235, 0.14);
+  --alt-recipe-border: rgba(29, 78, 216, 0.5);
+
   --node-header: #2f4f4f;
   --node-header-text: #f5f5f4;
 
@@ -240,6 +253,11 @@
   --blueprint: #2dd4bf;
   --blueprint-soft: rgba(45, 212, 191, 0.18);
   --blueprint-border: rgba(45, 212, 191, 0.55);
+
+  /* See the light theme's own comment above for the full rationale. */
+  --alt-recipe: #60a5fa;
+  --alt-recipe-soft: rgba(96, 165, 250, 0.18);
+  --alt-recipe-border: rgba(96, 165, 250, 0.55);
 
   --node-header: #24413f;
   --node-header-text: #f4f4f5;

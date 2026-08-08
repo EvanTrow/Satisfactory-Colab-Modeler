@@ -51,12 +51,15 @@ import {
   type EdgeRecord,
   type NodeRecord,
   type SfmDocument,
+  getContainer,
+  getNode,
   getSettings,
   listContainers,
   listEdges,
   listNodes,
   moveNode,
   updateContainer,
+  updateWaypoint,
 } from "@scm/ydoc";
 import {
   applyEdgeChanges,
@@ -130,16 +133,19 @@ export interface CanvasEdgeData extends Record<string, unknown> {
 
 export type CanvasEdge = RFEdge<CanvasEdgeData>;
 
+const CUSTOM_NODE_KINDS = new Set(["recipe", "splurger", "sink", "depot", "storage"]);
+
 function nodeRecordToFlowNode(record: NodeRecord, selected = false): CanvasNode {
   return {
-    // `kind: "recipe"` (`RecipeNode`) and, since Job 024, `kind: "splurger"`
-    // (`SplurgerNode`) are the only kinds with a real custom node type so
-    // far — both registered in `CanvasView.tsx`'s `nodeTypes`. Every other
-    // kind (storage, none built yet, plus the `"debug"` kind `DevNodeTools`
-    // uses) falls back to React Flow's built-in "default" box, same as
-    // every kind did before Job 010.
+    // `kind: "recipe"` (`RecipeNode`), `kind: "splurger"` (`SplurgerNode`,
+    // Job 024), `kind: "sink"`/`"depot"` (`SinkNode`) and `kind: "storage"`
+    // (`StorageNode`) all have a real custom node type, registered in
+    // `CanvasView.tsx`'s `nodeTypes` under their own kind string. Every
+    // other kind (the `"debug"` kind `DevNodeTools` uses, or anything
+    // unrecognized) falls back to React Flow's built-in "default" box, same
+    // as every kind did before Job 010.
     id: record.id,
-    type: record.kind === "recipe" ? "recipe" : record.kind === "splurger" ? "splurger" : "default",
+    type: CUSTOM_NODE_KINDS.has(record.kind) ? record.kind : "default",
     position: { x: record.x, y: record.y },
     // Job 012: `selected` is carried over from whatever the store's
     // previous copy of this node had (see `syncAll` below) — this
@@ -330,7 +336,7 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
     setEdges(applyEdgeChanges(changes, current));
   };
 
-  const onNodeDragStop: OnNodeDrag<CanvasNode> = (_event, node) => {
+  const onNodeDragStop: OnNodeDrag<CanvasNode> = (_event, node, nodes) => {
     // The one and only place a drag gesture writes back into the doc — see
     // this module's header comment for why this isn't done per-frame.
     // Job 013: an outpost boundary node's id is a *container* id, not a
@@ -350,15 +356,58 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
     // moment of drag-stop rather than a subscribed value, since this
     // callback only ever needs the *current* setting at the instant the
     // drag ends, not a value that re-renders anything.
+    //
+    // React Flow's third callback arg is *every* node that moved during
+    // this gesture, not just the one the pointer was on — a multi-selection
+    // drag moves every selected node locally (per-frame, via
+    // `onNodesChange`/`applyNodeChanges`), but only writing `node`'s own
+    // position back here would leave every other selected node's Yjs
+    // position stale. The very next `syncAll()` (triggered by this
+    // function's own `moveNode`/`updateContainer` call, via `observeDeep`)
+    // then re-derives the store from the doc and those still-stale nodes
+    // would snap back to wherever they were before the drag. So every
+    // dragged node gets its own write-back, not just the event's `node`.
     const settings = getSettings(sfmDoc);
-    const position = settings.snapMachines
-      ? snapPointToGrid(node.position, settings.gridMachine)
-      : node.position;
 
-    if (node.data.container) {
-      updateContainer(sfmDoc, node.id, { x: position.x, y: position.y });
-    } else {
-      moveNode(sfmDoc, node.id, position.x, position.y);
+    // Captured before any writes below, since a dragged node's *pre*-drag
+    // position only exists in the doc up until its own `moveNode`/
+    // `updateContainer` call overwrites it — this is what lets an edge
+    // between two co-dragged nodes translate its waypoints by the same
+    // on-screen delta the nodes themselves just moved by, further down.
+    const deltaById = new Map<string, { dx: number; dy: number }>();
+
+    for (const draggedNode of nodes) {
+      const position = settings.snapMachines
+        ? snapPointToGrid(draggedNode.position, settings.gridMachine)
+        : draggedNode.position;
+
+      if (draggedNode.data.container) {
+        const previous = getContainer(sfmDoc, draggedNode.id);
+        if (previous) deltaById.set(draggedNode.id, { dx: position.x - previous.x, dy: position.y - previous.y });
+        updateContainer(sfmDoc, draggedNode.id, { x: position.x, y: position.y });
+      } else {
+        const previous = getNode(sfmDoc, draggedNode.id);
+        if (previous) deltaById.set(draggedNode.id, { dx: position.x - previous.x, dy: position.y - previous.y });
+        moveNode(sfmDoc, draggedNode.id, position.x, position.y);
+      }
+    }
+
+    // A waypoint is a fixed point in the container's coordinate space, not
+    // relative to either endpoint — so on a single-node drag, leaving it in
+    // place is correct (that's what lets a manually-routed edge keep its
+    // shape while just one end moves). But when *both* of an edge's
+    // endpoints were dragged together (the multi-selection case this fix's
+    // header comment describes), the whole edge moved as a rigid group with
+    // nothing about its routing actually changing relative to its two
+    // anchors — so its waypoints need to ride along by that same delta,
+    // or the route stays behind while the nodes slide out from under it.
+    for (const edgeRecord of listEdges(sfmDoc)) {
+      if (edgeRecord.waypoints.length === 0) continue;
+      const delta = deltaById.get(edgeRecord.fromNode);
+      if (!delta || !deltaById.has(edgeRecord.toNode)) continue;
+      edgeRecord.waypoints.forEach((waypoint, index) => {
+        updateWaypoint(sfmDoc, edgeRecord.id, index, { x: waypoint.x + delta.dx, y: waypoint.y + delta.dy });
+      });
     }
   };
 

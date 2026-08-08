@@ -159,6 +159,7 @@ export function addNode(sfmDoc: SfmDocument, input: NewNodeInput, origin?: unkno
     map.set("purity", input.purity);
     map.set("beltTier", input.beltTier);
     map.set("storageMode", input.storageMode);
+    map.set("splurgerVariant", input.splurgerVariant);
     const priorityOrder = new Y.Array<string>();
     if (input.priorityOrder?.length) {
       priorityOrder.push(input.priorityOrder);

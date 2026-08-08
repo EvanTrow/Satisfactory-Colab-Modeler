@@ -12,6 +12,7 @@ import {
   renameProject,
   type ProjectSummary,
 } from "../api/projects";
+import { ConfirmDialog, useConfirmDialog } from "../ui";
 
 interface ProjectsPageProps {
   /** Called when the user opens a project — Job 006 has no canvas yet, so the caller renders a placeholder. */
@@ -56,6 +57,7 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
     onClose: () => setShowCreateDialog(false),
     initialFocusRef: newProjectInputRef,
   });
+  const { requestConfirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   useEffect(() => {
     let cancelled = false;
@@ -148,7 +150,12 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
   }
 
   async function handleDelete(project: ProjectSummary) {
-    if (!window.confirm(t("projects.confirmDelete", { title: project.title }))) {
+    const confirmed = await requestConfirm({
+      message: t("projects.confirmDelete", { title: project.title }),
+      confirmLabel: t("projects.delete"),
+      danger: true,
+    });
+    if (!confirmed) {
       return;
     }
     setActionError(null);
@@ -354,6 +361,8 @@ export function ProjectsPage({ onOpenProject }: ProjectsPageProps) {
           })}
         </ul>
       )}
+
+      <ConfirmDialog {...confirmDialogProps} />
     </div>
   );
 }

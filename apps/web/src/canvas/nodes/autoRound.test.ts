@@ -37,15 +37,13 @@ describe("computeAutoRoundClock", () => {
   });
 
   it("snaps to the NEAREST whole count, not a directional one", () => {
-    // 3.333 machines at 100% clock -> nearest is 3, not 4 (which is what
-    // the manual "-" button's roundUp direction would have picked).
+    // 3.333 machines at 100% clock -> nearest is 3, not 4.
     const result = computeAutoRoundClock(of(100), of(10, 3))!;
     expect(result).not.toBeNull();
     expect(equals(result.machineCount, of(3))).toBe(true);
     expect(result.clamped).toBe(false);
     // Cross-check against the shared core directly: this is exactly what
-    // `deriveClockForTargetCount(100, 10/3, 3)` computes — the whole point
-    // of sharing that helper with `snapClockToWholeMachineCount`.
+    // `deriveClockForTargetCount(100, 10/3, 3)` computes.
     expect(equals(result.clockPercent, deriveClockForTargetCount(of(100), of(10, 3), of(3)).clockPercent)).toBe(
       true,
     );

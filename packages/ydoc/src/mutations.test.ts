@@ -37,6 +37,7 @@ function baseNode(containerId: string): NewNodeInput {
     purity: null,
     beltTier: null,
     storageMode: null,
+    splurgerVariant: null,
   };
 }
 

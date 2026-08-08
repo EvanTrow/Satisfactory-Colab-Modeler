@@ -23,6 +23,9 @@ export {
   RoundingModeSchema,
   SettingsSchema,
   SolverModeSchema,
+  splurgerPortCaps,
+  SplurgerVariantSchema,
+  STORAGE_MODES,
   WaypointSchema,
   type Container,
   type ContainerKind,
@@ -38,6 +41,9 @@ export {
   type Purity,
   type Settings,
   type SolverMode,
+  type SplurgerPortCaps,
+  type SplurgerVariant,
+  type StorageMode,
   type Waypoint,
 } from "./schema.js";
 

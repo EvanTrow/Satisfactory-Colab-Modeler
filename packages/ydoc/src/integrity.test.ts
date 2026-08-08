@@ -25,6 +25,7 @@ function baseNode(containerId: string, overrides: Partial<Parameters<typeof addN
     purity: null,
     beltTier: null,
     storageMode: null,
+    splurgerVariant: null,
     ...overrides,
   };
 }

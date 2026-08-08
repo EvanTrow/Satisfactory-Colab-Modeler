@@ -133,13 +133,54 @@ describe("bezier", () => {
     expect(buildStyledPathD([a, b], "bezier")).not.toBe(buildStyledPathD([a, b], "straight"));
   });
 
-  it("bows around the vertical axis when the segment is taller than it is wide", () => {
+  /**
+   * Every node's handles are `Position.Left`/`Position.Right` only (see
+   * `connectionStyle.ts`'s `horizontalControlOffset` header comment) — so a
+   * curve must always leave the source and arrive at the target moving
+   * horizontally, even when the connection is far taller than it is wide.
+   * Previously this bowed around the *vertical* axis instead (control
+   * points sharing the endpoints' own x), which made a near-vertical
+   * connection point almost straight up/down out of the node instead of
+   * curving away sideways first.
+   */
+  it("still leaves/arrives horizontally when the segment is taller than it is wide", () => {
     const a: Point = { x: 0, y: 0 };
     const b: Point = { x: 40, y: 300 };
     const commands = buildStyledPath([a, b], "bezier");
     const { c1, c2 } = commands[1] as { c1: Point; c2: Point };
-    expect(c1).toEqual({ x: 0, y: 150 });
-    expect(c2).toEqual({ x: 40, y: 150 });
+    expect(c1.y).toBe(a.y);
+    expect(c2.y).toBe(b.y);
+    expect(c1.x).toBeGreaterThan(a.x);
+    expect(c2.x).toBeLessThan(b.x);
+  });
+
+  it("keeps a visible horizontal run even when the two points are directly stacked (dx = 0)", () => {
+    const a: Point = { x: 100, y: 0 };
+    const b: Point = { x: 100, y: 300 };
+    const commands = buildStyledPath([a, b], "bezier");
+    const { c1, c2 } = commands[1] as { c1: Point; c2: Point };
+    expect(c1).toEqual({ x: a.x + 30, y: a.y });
+    expect(c2).toEqual({ x: b.x - 30, y: b.y });
+  });
+
+  /**
+   * Regression test for "dragging the label a small amount looks more
+   * straight": adding a single waypoint just barely off the source-target
+   * line must not flatten the tangent leaving the source — it should still
+   * bow out horizontally, same as the plain 2-point case, because
+   * `points[0]` is the source NODE either way.
+   */
+  it("still leaves the source horizontally once a waypoint exists nearby", () => {
+    const source: Point = { x: 0, y: 0 };
+    const waypoint: Point = { x: 100, y: 2 }; // barely off the straight line to target
+    const target: Point = { x: 200, y: 0 };
+    const commands = buildStyledPath([source, waypoint, target], "bezier");
+    const first = commands[1] as { c1: Point; c2: Point };
+    expect(first.c1.y).toBe(source.y);
+    expect(first.c1.x).toBeGreaterThan(source.x + 10);
+    const last = commands[2] as { c1: Point; c2: Point };
+    expect(last.c2.y).toBe(target.y);
+    expect(last.c2.x).toBeLessThan(target.x - 10);
   });
 });
 

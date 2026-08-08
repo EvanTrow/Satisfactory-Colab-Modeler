@@ -56,8 +56,8 @@
 import { memo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 
 import { parseRational } from "@scm/rational";
-import { addWaypoint, getSettings, removeEdge, removeWaypoint, updateWaypoint } from "@scm/ydoc";
-import { BaseEdge, EdgeLabelRenderer, useReactFlow, type EdgeProps } from "@xyflow/react";
+import { addWaypoint, getNode, getSettings, removeEdge, removeWaypoint, updateWaypoint } from "@scm/ydoc";
+import { BaseEdge, EdgeLabelRenderer, useInternalNode, useReactFlow, type EdgeProps } from "@xyflow/react";
 
 import { getIconUrl } from "../../assets/icons";
 import { useCanvasDoc } from "../CanvasDocContext";
@@ -178,11 +178,46 @@ export const ConnectionEdge = memo(function ConnectionEdge({
   const lastWaypointContextClickRef = useRef<Map<number, ClickPoint>>(new Map());
 
   const record = data?.record;
+  // Live (per-frame, pre-commit) positions of this edge's two endpoint
+  // nodes — called unconditionally (hooks can't follow the `!record` early
+  // return below) with a harmless `""` fallback id on the defensive
+  // no-record path, which `nodeLookup.get("")` just resolves to `undefined`.
+  // This is what lets the waypoints below track a node drag live instead of
+  // jumping into place only once `onNodeDragStop` (`useYjsSync.ts`) commits
+  // the final position to the doc — see the `liveDelta` comment further
+  // down for why this only kicks in while *both* endpoints are dragging.
+  const fromNodeLive = useInternalNode(record?.fromNode ?? "");
+  const toNodeLive = useInternalNode(record?.toNode ?? "");
   if (!record) return null; // defensive: `edgeRecordToFlowEdge` always sets `data.record`, but don't crash the canvas if that ever drifts.
 
   const source: Point = { x: sourceX, y: sourceY };
   const target: Point = { x: targetX, y: targetY };
-  const storedWaypoints = record.waypoints;
+  // A waypoint is a fixed point in the container's coordinate space, not
+  // relative to either endpoint (mirrors `useYjsSync.ts`'s `onNodeDragStop`
+  // doc comment on the same point) — so it only needs to move at all when
+  // *both* of this edge's endpoints are mid-drag together (a multi-selection
+  // group drag, moving the whole edge as a rigid unit with nothing about its
+  // routing actually changing). `fromNodeLive`/`toNodeLive`'s `.position` is
+  // React Flow's own live (per-frame) node position, already what
+  // `sourceX`/`sourceY`/`targetX`/`targetY` above are derived from — diffing
+  // it against the *persisted* (pre-drag, since `moveNode` only commits at
+  // drag-stop) doc position gives exactly the on-screen delta the nodes have
+  // moved by so far, which every waypoint below rides along by too. Once the
+  // drag ends, `onNodeDragStop` commits both the final node positions *and*
+  // this same delta into the waypoints themselves, so `record.waypoints`
+  // already reflects it on the next render and this live offset naturally
+  // settles back to zero.
+  let liveDelta = { dx: 0, dy: 0 };
+  if (fromNodeLive?.dragging && toNodeLive?.dragging) {
+    const fromPersisted = getNode(sfmDoc, record.fromNode);
+    if (fromPersisted) {
+      liveDelta = { dx: fromNodeLive.position.x - fromPersisted.x, dy: fromNodeLive.position.y - fromPersisted.y };
+    }
+  }
+  const storedWaypoints =
+    liveDelta.dx !== 0 || liveDelta.dy !== 0
+      ? record.waypoints.map((w) => ({ x: w.x + liveDelta.dx, y: w.y + liveDelta.dy }))
+      : record.waypoints;
   // Existing-waypoint drag substitution only — this is what the per-waypoint
   // label `<div>`s below are rendered from, so it deliberately does NOT
   // include the bare-label drag-to-create preview point (that one isn't a

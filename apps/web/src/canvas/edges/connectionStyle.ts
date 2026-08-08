@@ -93,23 +93,51 @@ function straightPath(points: readonly Point[]): PathCommand[] {
 }
 
 /**
+ * Every node type on this canvas (`RecipeNode`, `SplurgerNode`,
+ * `OutpostNode`, `BlueprintNode`) wires its `<Handle>`s exclusively as
+ * `Position.Left` (input) / `Position.Right` (output) — never top/bottom.
+ * That means a curve leaving a source is ALWAYS leaving rightward, and a
+ * curve arriving at a target is ALWAYS arriving from the left, regardless of
+ * where the other end actually sits — a target above/below the source
+ * should still see the line leave horizontally before it curves up or down
+ * toward it. `horizontalControlOffset` is the magnitude of that
+ * forced-horizontal control-point displacement, derived from React Flow's
+ * own `getBezierPath` curvature formula (half the horizontal distance when
+ * the other point is ahead, a slower sqrt falloff when it's behind — so a
+ * target directly behind the source still loops outward instead of
+ * collapsing) — with `MIN_CONTROL_OFFSET` on top so a near-vertical
+ * connection (`dx` close to 0) still gets a visible horizontal run before it
+ * curves, instead of leaving the node pointed almost straight up/down.
+ */
+const CURVATURE = 0.25;
+const MIN_CONTROL_OFFSET = 30;
+
+function horizontalControlOffset(dx: number): number {
+  const magnitude = dx >= 0 ? dx / 2 : CURVATURE * 25 * Math.sqrt(-dx);
+  return Math.max(magnitude, MIN_CONTROL_OFFSET);
+}
+
+/** The control point leaving `from` on its way toward `to` — always horizontal, per `horizontalControlOffset`'s header comment. */
+function outgoingControlPoint(from: Point, to: Point): Point {
+  return { x: from.x + horizontalControlOffset(to.x - from.x), y: from.y };
+}
+
+/** The control point arriving at `to` from `from`'s direction — always horizontal, mirrored around `to`. */
+function incomingControlPoint(from: Point, to: Point): Point {
+  return { x: to.x - horizontalControlOffset(to.x - from.x), y: to.y };
+}
+
+/**
  * The common case: a fresh connection with no waypoints at all (exactly
  * `[source, target]`). Catmull-Rom (below) has nothing to derive curvature
  * from here — with only two real points, both of its "phantom" neighbor
  * points collapse onto the source/target themselves, so all four control
  * points end up collinear and the curve renders as a dead-straight line
  * indistinguishable from "Direct" (the bug this fixes). Instead, bow the
- * curve into the standard flowchart "S" shape: pull each control point to
- * the midpoint of whichever axis dominates the segment, leaving the other
- * axis untouched at its own endpoint.
+ * curve out horizontally from both ends (see `horizontalControlOffset`).
  */
 function twoPointBezier(a: Point, b: Point): PathCommand[] {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const horizontalDominant = Math.abs(dx) >= Math.abs(dy);
-  const c1: Point = horizontalDominant ? { x: a.x + dx / 2, y: a.y } : { x: a.x, y: a.y + dy / 2 };
-  const c2: Point = horizontalDominant ? { x: b.x - dx / 2, y: b.y } : { x: b.x, y: b.y - dy / 2 };
-  return [{ type: "M", point: a }, { type: "C", c1, c2, point: b }];
+  return [{ type: "M", point: a }, { type: "C", c1: outgoingControlPoint(a, b), c2: incomingControlPoint(a, b), point: b }];
 }
 
 /**
@@ -118,24 +146,43 @@ function twoPointBezier(a: Point, b: Point): PathCommand[] {
  * compatible with existing waypoints" (Job 011): a waypoint the user
  * dragged to a specific spot has to still visually sit ON the curve, not be
  * merely influential over its shape. Uniform parameterization, tension 1/6
- * (the standard uniform-Catmull-Rom-to-Bezier conversion) — endpoints are
+ * (the standard uniform-Catmull-Rom-to-Bezier conversion).
+ *
+ * The first and last segments are the exception: `points[0]`/`points[n-1]`
+ * are always the source/target NODE, never a waypoint, so (per
+ * `horizontalControlOffset`'s header comment) their tangent is forced
+ * horizontal instead of the plain Catmull-Rom formula — otherwise a
+ * waypoint dragged only slightly off the source-target line barely bends
+ * that formula's `(neighbor - node) / 6` tangent away from a straight line,
+ * which is what made a freshly-dragged waypoint look like it had flattened
+ * the curve near the node instead of smoothly bowing away from it. Interior
+ * segments (waypoint-to-waypoint) are untouched — genuine Catmull-Rom,
  * clamped by duplicating the first/last point rather than extrapolating
- * past them, so the curve doesn't overshoot outside the source/target
- * bounds at either end. The plain 2-point case is delegated to
- * `twoPointBezier` above, since this duplication degenerates fully (both
- * ends at once) when there are no waypoints to anchor curvature to.
+ * past them so the curve doesn't overshoot outside the source/target bounds
+ * at either end. The plain 2-point case is delegated to `twoPointBezier`
+ * above, since there's no waypoint-to-waypoint segment to speak of there.
  */
 function bezierPath(points: readonly Point[]): PathCommand[] {
   const n = points.length;
   if (n === 2) return twoPointBezier(points[0]!, points[1]!);
   const commands: PathCommand[] = [{ type: "M", point: points[0]! }];
   for (let i = 0; i < n - 1; i++) {
-    const p0 = points[Math.max(0, i - 1)]!;
     const p1 = points[i]!;
     const p2 = points[i + 1]!;
-    const p3 = points[Math.min(n - 1, i + 2)]!;
-    const c1: Point = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
-    const c2: Point = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
+    let c1: Point;
+    if (i === 0) {
+      c1 = outgoingControlPoint(p1, p2);
+    } else {
+      const p0 = points[i - 1]!;
+      c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
+    }
+    let c2: Point;
+    if (i === n - 2) {
+      c2 = incomingControlPoint(p1, p2);
+    } else {
+      const p3 = points[i + 2]!;
+      c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
+    }
     commands.push({ type: "C", c1, c2, point: p2 });
   }
   return commands;

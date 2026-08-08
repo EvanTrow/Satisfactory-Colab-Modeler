@@ -1,3 +1,4 @@
+import { ArrowLeft } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { LocaleSwitcher } from "../i18n";
@@ -34,7 +35,7 @@ export function UserSettingsPage({ onBack }: UserSettingsPageProps) {
           onClick={onBack}
           className="text-xs text-[var(--text-muted)] underline hover:text-[var(--text-primary)]"
         >
-          ← {t("settingsPage.back")}
+          <ArrowLeft className="inline h-3 w-3" aria-hidden /> {t("settingsPage.back")}
         </button>
         <h2 className="mt-1 text-xl font-semibold tracking-tight">{t("settingsPage.heading")}</h2>
       </div>

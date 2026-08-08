@@ -7,11 +7,13 @@
 // history browser with diffing is not") — no diffing, no rich version
 // management beyond a label field, styled as a `SettingsMenu.tsx`-style
 // dropdown rather than a full modal.
+import { History, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { useFocusTrap } from "../../a11y";
 import type { ProjectRole } from "../../api/projects";
-import { listProjectVersions, restoreProjectVersion, saveProjectVersion, type ProjectVersionInfo } from "./docApi";
+import { ConfirmDialog, useConfirmDialog } from "../../ui";
+import { deleteProjectVersion, listProjectVersions, restoreProjectVersion, saveProjectVersion, type ProjectVersionInfo } from "./docApi";
 
 export interface VersionPanelProps {
   projectId: string;
@@ -43,7 +45,13 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
   const [label, setLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // The version pending restore confirmation — shown as an inline prompt
+  // (rather than window.confirm) so the pre-restore-backup checkbox below
+  // can be offered alongside the yes/no decision.
+  const [restoreTarget, setRestoreTarget] = useState<ProjectVersionInfo | null>(null);
+  const [createBackupOnRestore, setCreateBackupOnRestore] = useState(true);
 
   const canEdit = role === "owner" || role === "editor";
 
@@ -52,6 +60,7 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
   // `SettingsMenu`/`SharingPanel`.
   const panelRef = useRef<HTMLDivElement>(null);
   useFocusTrap(panelRef, open, { onClose: () => setOpen(false) });
+  const { requestConfirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   async function refresh() {
     setList({ status: "loading" });
@@ -66,6 +75,7 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
   function toggleOpen() {
     setOpen((wasOpen) => {
       const willOpen = !wasOpen;
+      setRestoreTarget(null);
       if (willOpen) {
         setActionError(null);
         void refresh();
@@ -78,7 +88,10 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
     setSaving(true);
     setActionError(null);
     try {
-      await saveProjectVersion(projectId, label.trim() || undefined);
+      // Job 016 follow-up: "if no label is added, make the label the date
+      // and time" — a manual save with a blank label falls back to a
+      // human-readable timestamp instead of staying `null`/"(unlabeled)".
+      await saveProjectVersion(projectId, label.trim() || new Date().toLocaleString());
       setLabel("");
       await refresh();
     } catch (err) {
@@ -88,16 +101,26 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
     }
   }
 
-  async function handleRestore(version: ProjectVersionInfo) {
-    const when = formatTimestamp(version.createdAt);
-    const what = version.label ?? `${KIND_LABEL[version.kind]} version`;
-    if (!window.confirm(`Restore "${what}" from ${when}? Your current state will be saved as a new "Pre-restore" version first.`)) {
+  function beginRestore(version: ProjectVersionInfo) {
+    setActionError(null);
+    setCreateBackupOnRestore(true);
+    setRestoreTarget(version);
+  }
+
+  function cancelRestore() {
+    setRestoreTarget(null);
+  }
+
+  async function confirmRestore() {
+    const version = restoreTarget;
+    if (!version) {
       return;
     }
     setRestoringId(version.id);
     setActionError(null);
     try {
-      await restoreProjectVersion(projectId, version.id);
+      await restoreProjectVersion(projectId, version.id, createBackupOnRestore);
+      setRestoreTarget(null);
       onRestored();
       await refresh();
       setOpen(false);
@@ -105,6 +128,29 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
       setActionError(err instanceof Error ? err.message : "Failed to restore this version");
     } finally {
       setRestoringId(null);
+    }
+  }
+
+  async function handleDelete(version: ProjectVersionInfo) {
+    const when = formatTimestamp(version.createdAt);
+    const what = version.label ?? `${KIND_LABEL[version.kind]} version`;
+    const confirmed = await requestConfirm({
+      message: `Delete "${what}" from ${when}? This cannot be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!confirmed) {
+      return;
+    }
+    setDeletingId(version.id);
+    setActionError(null);
+    try {
+      await deleteProjectVersion(projectId, version.id);
+      await refresh();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to delete this version");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -119,13 +165,7 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
         aria-expanded={open}
         className="nodrag inline-flex h-7 items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 text-xs text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
       >
-        <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden>
-          <path
-            fillRule="evenodd"
-            d="M10 2a8 8 0 100 16 8 8 0 000-16zm.75 4a.75.75 0 00-1.5 0v4c0 .2.08.39.22.53l2.5 2.5a.75.75 0 101.06-1.06L10.75 9.69V6z"
-            clipRule="evenodd"
-          />
-        </svg>
+        <History className="h-3.5 w-3.5" aria-hidden />
         Versions
       </button>
       {open && (
@@ -167,6 +207,40 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
               </p>
             )}
 
+            {restoreTarget && (
+              <div className="mb-2 rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] p-2 text-xs text-[var(--text-secondary)]">
+                <p className="text-[var(--text-primary)]">
+                  Restore "{restoreTarget.label ?? `${KIND_LABEL[restoreTarget.kind]} version`}" from {formatTimestamp(restoreTarget.createdAt)}?
+                </p>
+                <label className="mt-2 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={createBackupOnRestore}
+                    onChange={(event) => setCreateBackupOnRestore(event.target.checked)}
+                  />
+                  Save current state as a new version first
+                </label>
+                <div className="mt-2 flex justify-end gap-1">
+                  <button
+                    type="button"
+                    onClick={cancelRestore}
+                    disabled={restoringId !== null}
+                    className="rounded-md border border-[var(--border-default)] px-2 py-1 text-[11px] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void confirmRestore()}
+                    disabled={restoringId !== null}
+                    className="rounded-md bg-[var(--accent)] px-2 py-1 text-[11px] font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
+                  >
+                    {restoringId === restoreTarget.id ? "Restoring…" : "Restore"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="max-h-72 overflow-y-auto">
               {list.status === "loading" && <p className="px-1 py-2 text-xs text-[var(--text-muted)]">Loading…</p>}
               {list.status === "error" && <p className="px-1 py-2 text-xs text-[var(--danger)]">{list.message}</p>}
@@ -186,14 +260,28 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
                       </div>
                     </div>
                     {canEdit && (
-                      <button
-                        type="button"
-                        onClick={() => void handleRestore(version)}
-                        disabled={restoringId !== null}
-                        className="shrink-0 rounded-md border border-[var(--border-default)] px-2 py-1 text-[11px] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:opacity-50"
-                      >
-                        {restoringId === version.id ? "Restoring…" : "Restore"}
-                      </button>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => beginRestore(version)}
+                          disabled={restoringId !== null || deletingId !== null}
+                          className="rounded-md border border-[var(--border-default)] px-2 py-1 text-[11px] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                        >
+                          Restore
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDelete(version)}
+                          disabled={restoringId !== null || deletingId !== null}
+                          title="Delete version"
+                          aria-label="Delete version"
+                          className="rounded-md border border-[var(--border-default)] px-1.5 py-1 text-[11px] text-[var(--text-muted)] hover:border-[var(--danger)] hover:text-[var(--danger)] disabled:opacity-50"
+                        >
+                          {deletingId === version.id ? "…" : (
+                            <Trash2 className="h-3 w-3" aria-hidden />
+                          )}
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -201,6 +289,7 @@ export function VersionPanel({ projectId, role, onRestored }: VersionPanelProps)
           </div>
         </>
       )}
+      <ConfirmDialog {...confirmDialogProps} />
     </div>
   );
 }

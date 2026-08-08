@@ -23,6 +23,7 @@
 // actually implements it (Job 023) and the worker host actually dispatches
 // it (Job 018/024's `solveScheduler.ts`/`useSolver.ts`) — see
 // `SOLVER_MODES` below.
+import { Settings as SettingsIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -31,6 +32,7 @@ import { updateSettings, type NumberFormats, type Settings, type SolverMode } fr
 import type { SfmDocument } from "@scm/ydoc";
 
 import { useFocusTrap } from "../a11y";
+import { PROGRESSION_PHASES, isValidProgressionSelection } from "../panels/recipeChooser/progression";
 import { CONNECTION_STYLE_OPTIONS } from "./edges";
 
 export interface SettingsMenuProps {
@@ -49,18 +51,19 @@ const selectClass =
  * `solveScheduler.ts`'s widened `SUPPORTED_MODES` and `useSolver.ts`'s
  * resync (Job 024) — so it's offered here alongside the other three.
  *
- * Job 028: the original tool's own `*_SOLVER`/`*_SOLVER_HELP` keys
- * (`en-US.json`) are just the bare mode name ("Basic") plus a paragraph
- * help text — neither matches this dropdown's own longer inline
- * descriptions ("Basic (entered values are limits)"), so these labels are
- * new `app` namespace keys rather than a forced reuse of `BASIC_SOLVER`
- * etc. (see jobs/028-i18n.md Handoff notes).
+ * These reuse the original tool's own `*_SOLVER` keys (`en-US.json`) — just
+ * the bare mode name ("Basic"), not the longer inline description this
+ * dropdown used to inline into the option text itself. That longer text
+ * (`*_SOLVER_HELP`) made the widest option ("Full (limits + even-split &
+ * priority routing)") wider than the settings popover, so it rendered
+ * overflowing the panel's right edge. It's still available, just as the
+ * select's `title` below rather than crammed into the visible label.
  */
-const SOLVER_MODES: readonly { value: SolverMode; labelKey: string }[] = [
-  { value: "none", labelKey: "settings.solverMode.none" },
-  { value: "manual", labelKey: "settings.solverMode.manual" },
-  { value: "basic", labelKey: "settings.solverMode.basic" },
-  { value: "full", labelKey: "settings.solverMode.full" },
+const SOLVER_MODES: readonly { value: SolverMode; labelKey: string; helpKey: string }[] = [
+  { value: "none", labelKey: "NONE_SOLVER", helpKey: "NONE_SOLVER_HELP" },
+  { value: "manual", labelKey: "MANUAL_SOLVER", helpKey: "MANUAL_SOLVER_HELP" },
+  { value: "basic", labelKey: "BASIC_SOLVER", helpKey: "BASIC_SOLVER_HELP" },
+  { value: "full", labelKey: "FULL_SOLVER", helpKey: "FULL_SOLVER_HELP" },
 ];
 
 const NUMBER_FORMAT_STYLES: readonly { value: NumberFormats["style"]; labelKey: string }[] = [
@@ -94,6 +97,9 @@ const ROUNDING_MODES: readonly { value: NumberFormats["rounding"]; labelKey: str
   { value: "truncate", labelKey: "DOWN", ns: "translation" },
 ];
 
+/** Tier `0`-`9` — the game's fixed range (every `Tier.raw` is `"0-0"`…`"9-5"`, see `@scm/gamedata`'s `indices.ts`). */
+const PROGRESSION_TIERS: readonly number[] = Array.from({ length: 10 }, (_, i) => i);
+
 export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
   const { t } = useTranslation("app");
   // Job 028: `tRaw` reaches into the default `translation` namespace for
@@ -121,13 +127,7 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
         aria-expanded={open}
         className="nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
       >
-        <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden>
-          <path
-            fillRule="evenodd"
-            d="M11.078 2.25c-.917 0-1.699.663-1.85 1.567L9.05 4.889c-.02.12-.115.26-.297.348a7.493 7.493 0 00-.986.57c-.166.115-.334.126-.45.083l-1.204-.444a1.875 1.875 0 00-2.279.83l-.222.383a1.875 1.875 0 00.42 2.404l.984.821c.093.078.16.213.147.409a7.55 7.55 0 000 1.139c.013.196-.054.331-.147.409l-.984.821a1.875 1.875 0 00-.42 2.404l.222.383c.454.782 1.42 1.113 2.279.83l1.204-.444c.116-.043.284-.032.45.083.312.216.642.406.985.57.183.088.278.228.298.348l.178 1.072c.151.904.933 1.567 1.85 1.567h.844c.917 0 1.699-.663 1.85-1.567l.178-1.072c.02-.12.114-.26.297-.348.343-.164.673-.354.985-.57.166-.115.334-.126.45-.083l1.204.444a1.875 1.875 0 002.28-.83l.222-.383a1.875 1.875 0 00-.421-2.404l-.984-.821c-.093-.078-.16-.213-.146-.409a7.53 7.53 0 000-1.139c-.014-.196.053-.331.146-.409l.984-.821a1.875 1.875 0 00.421-2.404l-.222-.383a1.875 1.875 0 00-2.28-.83l-1.204.444c-.116.043-.284.032-.45-.083a7.49 7.49 0 00-.985-.57c-.183-.088-.277-.228-.297-.348L12.772 3.817a1.875 1.875 0 00-1.85-1.567h-.844zM10 13.125a3.125 3.125 0 100-6.25 3.125 3.125 0 000 6.25z"
-            clipRule="evenodd"
-          />
-        </svg>
+        <SettingsIcon className="h-4 w-4" aria-hidden />
       </button>
       {open && (
         <>
@@ -199,13 +199,17 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
               <select
                 className={selectClass}
                 value={settings.solverMode}
+                title={tRaw(
+                  SOLVER_MODES.find((mode) => mode.value === settings.solverMode)?.helpKey ??
+                    "SOLVER_HELP",
+                )}
                 onChange={(event) =>
                   updateSettings(sfmDoc, { solverMode: event.target.value as SolverMode })
                 }
               >
                 {SOLVER_MODES.map((mode) => (
-                  <option key={mode.value} value={mode.value}>
-                    {t(mode.labelKey)}
+                  <option key={mode.value} value={mode.value} title={tRaw(mode.helpKey)}>
+                    {tRaw(mode.labelKey)}
                   </option>
                 ))}
               </select>
@@ -242,6 +246,78 @@ export function SettingsMenu({ sfmDoc, settings }: SettingsMenuProps) {
                 {CONNECTION_STYLE_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {tRaw(option.labelKey)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {/*
+              Adds a project-wide progression gate for the Recipe Chooser
+              search (`Settings.recipeTierFilter`/`recipePhaseFilter`) —
+              defaults to "None" on both, which does nothing (all recipes
+              show, same as today). When set, only recipes available by that
+              Tier and/or Space Elevator phase are shown — see
+              `recipeChooser/filters.ts`'s `RecipeProgressionFilter` for the
+              cumulative (`<=`) semantics and how the two AND together.
+
+              Each dropdown disables the options the OTHER field's current
+              value rules out — e.g. with Phase 1 selected (which only
+              unlocks Tiers 3-4 per `progression.ts`'s delivery-unlock
+              table), Tier 5-9 become unpickable here, and picking Tier 9 in
+              the other dropdown would likewise disable Phase 1-3. "None" is
+              never disabled on either side — an unset axis imposes no
+              constraint, so it's always a valid choice. This is UI-level
+              only (no auto-correction of an already-set value): a
+              same-instant edit from a different collaborator could still
+              land the two fields on an incompatible pair, but
+              `progressionMaxTier` in `filters.ts` degrades gracefully for
+              that case (see its own doc comment).
+            */}
+            <p className="mb-1 mt-3 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+              {t("settings.progression")}
+            </p>
+            <label className={rowClass}>
+              <span>{t("settings.progressionTier")}</span>
+              <select
+                className={selectClass}
+                value={settings.recipeTierFilter ?? ""}
+                onChange={(event) =>
+                  updateSettings(sfmDoc, {
+                    recipeTierFilter: event.target.value === "" ? null : Number(event.target.value),
+                  })
+                }
+              >
+                <option value="">{t("settings.progressionNone")}</option>
+                {PROGRESSION_TIERS.map((tier) => (
+                  <option
+                    key={tier}
+                    value={tier}
+                    disabled={!isValidProgressionSelection(tier, settings.recipePhaseFilter)}
+                  >
+                    {t("settings.progressionTierOption", { tier })}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={rowClass}>
+              <span>{t("settings.progressionPhase")}</span>
+              <select
+                className={selectClass}
+                value={settings.recipePhaseFilter ?? ""}
+                onChange={(event) =>
+                  updateSettings(sfmDoc, {
+                    recipePhaseFilter: event.target.value === "" ? null : Number(event.target.value),
+                  })
+                }
+              >
+                <option value="">{t("settings.progressionNone")}</option>
+                {PROGRESSION_PHASES.map((phase) => (
+                  <option
+                    key={phase}
+                    value={phase}
+                    disabled={!isValidProgressionSelection(settings.recipeTierFilter, phase)}
+                  >
+                    {t("settings.progressionPhaseOption", { phase })}
                   </option>
                 ))}
               </select>

@@ -3,8 +3,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   WILDCARD_PART,
+  WILDCARD_PART_BOTTOM,
+  WILDCARD_PART_TOP,
   connectPorts,
+  isValidDragCandidate,
   isValidPortConnection,
+  isWildcardPart,
   parsePortHandleId,
   reconnectEdge,
   resolveEdgeEndpoints,
@@ -37,6 +41,7 @@ function makeDoc(): { sfmDoc: SfmDocument; containerId: string; nodeA: string; n
     purity: null,
     beltTier: null,
     storageMode: null,
+    splurgerVariant: null,
   };
   const nodeA = addNode(sfmDoc, { ...baseNode, x: 0, title: "A" });
   const nodeB = addNode(sfmDoc, { ...baseNode, x: 200, title: "B" });
@@ -167,6 +172,61 @@ describe("resolveEdgeEndpoints", () => {
       }),
     ).toBeNull();
   });
+
+  // Later Splurger redesign: a tiered side's two real handles (`*top`/
+  // `*bottom` — `WILDCARD_PART_TOP`/`WILDCARD_PART_BOTTOM`) are wildcards
+  // too, just individually addressable ones.
+  it("resolves a tiered wildcard handle (*top/*bottom) against a concrete part, same as the plain wildcard", () => {
+    const top = resolveEdgeEndpoints({
+      source: "splurger1",
+      sourceHandle: `out:${WILDCARD_PART_TOP}`,
+      target: "n2",
+      targetHandle: "in:Iron Plate",
+    });
+    expect(top).toEqual({
+      fromNode: "splurger1",
+      fromPort: `out:${WILDCARD_PART_TOP}`,
+      toNode: "n2",
+      toPort: "in:Iron Plate",
+      part: "Iron Plate",
+    });
+
+    const bottom = resolveEdgeEndpoints({
+      source: "splurger1",
+      sourceHandle: `out:${WILDCARD_PART_BOTTOM}`,
+      target: "n2",
+      targetHandle: "in:Iron Plate",
+    });
+    expect(bottom?.fromPort).toBe(`out:${WILDCARD_PART_BOTTOM}`);
+  });
+
+  it("rejects two tiered wildcard handles, and a tiered wildcard against a plain wildcard", () => {
+    expect(
+      resolveEdgeEndpoints({
+        source: "splurger1",
+        sourceHandle: `out:${WILDCARD_PART_TOP}`,
+        target: "splurger2",
+        targetHandle: `in:${WILDCARD_PART_BOTTOM}`,
+      }),
+    ).toBeNull();
+    expect(
+      resolveEdgeEndpoints({
+        source: "splurger1",
+        sourceHandle: `out:${WILDCARD_PART_TOP}`,
+        target: "splurger2",
+        targetHandle: `in:${WILDCARD_PART}`,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("isWildcardPart", () => {
+  it("is true for the plain wildcard and both tiered sentinels, false for any real part name", () => {
+    expect(isWildcardPart(WILDCARD_PART)).toBe(true);
+    expect(isWildcardPart(WILDCARD_PART_TOP)).toBe(true);
+    expect(isWildcardPart(WILDCARD_PART_BOTTOM)).toBe(true);
+    expect(isWildcardPart("Iron Ore")).toBe(false);
+  });
 });
 
 describe("isValidPortConnection", () => {
@@ -176,6 +236,62 @@ describe("isValidPortConnection", () => {
     ).toBe(true);
     expect(
       isValidPortConnection({ source: "n1", sourceHandle: "out:Iron Ore", target: "n2", targetHandle: "in:Iron Ingot" }),
+    ).toBe(false);
+  });
+});
+
+describe("isValidDragCandidate", () => {
+  it("accepts a source handle dragged onto a matching-part target handle", () => {
+    expect(
+      isValidDragCandidate(
+        { nodeId: "n1", id: "out:Iron Plate", type: "source" },
+        { nodeId: "n2", id: "in:Iron Plate", type: "target" },
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts the drag starting from a target handle instead (either direction works)", () => {
+    expect(
+      isValidDragCandidate(
+        { nodeId: "n2", id: "in:Iron Plate", type: "target" },
+        { nodeId: "n1", id: "out:Iron Plate", type: "source" },
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a mismatched-part candidate", () => {
+    expect(
+      isValidDragCandidate(
+        { nodeId: "n1", id: "out:Iron Ore", type: "source" },
+        { nodeId: "n2", id: "in:Iron Ingot", type: "target" },
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects two handles of the same type without even considering their parts", () => {
+    expect(
+      isValidDragCandidate(
+        { nodeId: "n1", id: "out:Iron Plate", type: "source" },
+        { nodeId: "n2", id: "out:Iron Plate", type: "source" },
+      ),
+    ).toBe(false);
+  });
+
+  it("accepts a wildcard (Splurger) candidate regardless of the dragged part", () => {
+    expect(
+      isValidDragCandidate(
+        { nodeId: "n1", id: "out:Iron Plate", type: "source" },
+        { nodeId: "splurger1", id: `in:${WILDCARD_PART}`, type: "target" },
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects an unparseable candidate handle id (e.g. an outpost boundary handle)", () => {
+    expect(
+      isValidDragCandidate(
+        { nodeId: "n1", id: "out:Iron Plate", type: "source" },
+        { nodeId: "outpost1", id: "boundary:e1:in", type: "target" },
+      ),
     ).toBe(false);
   });
 });

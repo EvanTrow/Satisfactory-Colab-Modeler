@@ -39,6 +39,7 @@ function recipeNode(
     purity: null,
     beltTier: null,
     storageMode: null,
+    splurgerVariant: null,
     ...overrides,
   });
 }

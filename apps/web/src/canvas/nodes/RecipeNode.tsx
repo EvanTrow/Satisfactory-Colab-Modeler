@@ -16,43 +16,34 @@
 // `./computeValidity.ts`'s header) and why validity/rates are computed
 // locally here from `SolverResultContext` rather than threaded through
 // `CanvasNodeData.validityState` via `useYjsSync.ts`.
-import { memo, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import { memo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { defaultGameData, type Recipe, type RecipePart } from "@scm/gamedata";
+import { equals, formatRational, isNegative, of, parseRational, toFractionString, type Rational } from "@scm/rational";
 import {
-  equals,
-  formatRational,
-  isNegative,
-  isZero,
-  of,
-  parseRational,
-  toFractionString,
-  type Rational,
-} from "@scm/rational";
-import { listEdges, removeEdge, updateNode, type NodeRecord, type NumberFormats } from "@scm/ydoc";
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+  listEdges,
+  removeEdge,
+  setPriorityOrder,
+  updateNode,
+  type NodeRecord,
+  type NumberFormats,
+} from "@scm/ydoc";
+import { Handle, Position, useConnection, type NodeProps } from "@xyflow/react";
 
 import { getIconUrl } from "../../assets/icons";
 import { FieldPresenceRing, useRemotePresence, type RemotePresence } from "../../collab";
 import { useGameTerm } from "../../i18n";
 import { useCanvasDoc } from "../CanvasDocContext";
+import { isValidDragCandidate } from "../edges/connectionLogic";
 import { formatRate } from "../formatRate";
 import { useSolverResult } from "../SolverResultContext";
 import { useSettings } from "../useSettings";
 import type { CanvasNode } from "../useYjsSync";
 import { computeNodeValidityState } from "./computeValidity";
-import {
-  clampClockPercent,
-  clampShards,
-  computeMachineCount,
-  effectiveClockPercent,
-  effectiveLimitValue,
-  referenceRateAtFullClock,
-  snapClockToWholeMachineCount,
-  stopgapPartRate,
-  type ClockSnapDirection,
-} from "./recipeNodeMath";
+import { autoRoundFieldClass, fieldInputClass } from "./nodeFieldStyles";
+import { computeMachineCount, effectiveLimitValue, orderRecipeParts, partHandleId, stopgapPartRate } from "./recipeNodeMath";
+import { useCommittedTextField } from "./useCommittedTextField";
 import type { RecipeNodeValidity } from "./validityState";
 
 const gameData = defaultGameData;
@@ -65,82 +56,16 @@ function highlightBorderClass(state: RecipeNodeValidity | undefined): string | u
 }
 
 /**
- * Same mapping as `highlightBorderClass`, for elements (Handles, text
- * inputs, the shard readout) that highlight via a `ring` (box-shadow-based,
- * so it never fights the element's own `border-color` utility for
- * specificity the way overriding `border-[...]` a second time would).
+ * Same mapping as `highlightBorderClass`, for elements (Handles, the limit
+ * text input) that highlight via a `ring` (box-shadow-based, so it never
+ * fights the element's own `border-color` utility for specificity the way
+ * overriding `border-[...]` a second time would).
  */
 function highlightRingClass(state: RecipeNodeValidity | undefined): string | undefined {
   if (state === "invalid") return "ring-2 ring-[var(--danger)]";
   if (state === "mismatched") return "ring-2 ring-[var(--mismatch)]";
   return undefined;
 }
-
-// Job 014: visual pass — every color/spacing/radius value below reads from
-// `index.css`'s `@theme`-adjacent token block (`--surface-*`/`--border-*`/
-// `--text-*`/`--accent*`), characterized from Ferrumium's own light theme
-// (see that file's header comment) and mirrored for dark. No literal
-// `neutral-*`/`indigo-*` Tailwind color utility remains in this file —
-// every one of them only ever expressed *one* theme, which is exactly what
-// broke dark/light parity before this job.
-const stepperButtonClass =
-  "nodrag flex h-5 w-5 shrink-0 items-center justify-center rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] text-[var(--text-secondary)] hover:enabled:border-[var(--border-strong)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40";
-
-const fieldInputClass =
-  "nodrag w-16 rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] px-1.5 py-0.5 text-right text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none";
-
-/**
- * Job 027: "Signalled by black field backgrounds" (PLAN.md §2's Auto-round
- * row, verbatim) — deliberately a LITERAL black, not a themed
- * `--surface-*` token, the same "fixed regardless of theme" treatment
- * `index.css`'s `--node-header` already uses for a different reason (Job
- * 014's own comment on that token). Applied to both the limit and clock
- * fields (plural "field*s*" in PLAN.md's own wording) — the limit is what
- * actually determines the target rate auto-round is solving the clock
- * against, so both read as "under auto-round's control" together, not just
- * the one field this feature literally writes to.
- */
-const autoRoundFieldClass = "!bg-black !text-white placeholder:!text-white/60";
-
-/**
- * Binds a text input to a "committed" `Rational`-bearing string (`node.limit`
- * / `node.clock`), letting the user type freely without every keystroke
- * fighting a Yjs-driven re-render: local text only resyncs from the
- * committed value while the field isn't focused, and `commit` (parse +
- * `updateNode`) only runs on blur/Enter. `commit` returns whether the parse
- * succeeded; a failed parse reverts the field to the last committed display
- * text rather than leaving invalid text sitting in the input (red/orange
- * *highlighting* for that case is Job 019's job, not this one's — this is
- * just "don't leave garbage behind").
- */
-function useCommittedTextField(displayText: string, commit: (raw: string) => boolean) {
-  const [text, setText] = useState(displayText);
-  const focused = useRef(false);
-
-  useEffect(() => {
-    if (!focused.current) setText(displayText);
-  }, [displayText]);
-
-  return {
-    value: text,
-    onChange: (event: ChangeEvent<HTMLInputElement>) => setText(event.target.value),
-    onFocus: () => {
-      focused.current = true;
-    },
-    onBlur: () => {
-      focused.current = false;
-      if (!commit(text)) setText(displayText);
-    },
-    onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => {
-      if (event.key === "Enter") event.currentTarget.blur();
-      if (event.key === "Escape") {
-        setText(displayText);
-        event.currentTarget.blur();
-      }
-    },
-  };
-}
-
 
 interface PartRowProps {
   part: RecipePart;
@@ -158,9 +83,39 @@ interface PartRowProps {
    * double-right-click-to-delete gesture on `ConnectionEdge.tsx`).
    */
   onRemovePortEdges: (handleId: string) => void;
+  /** Row reorder (drag-and-drop) — see `RecipeNode`'s `handlePartDrop` for the persisted side. `isDragging`/`isDragOver` drive this row's own drag-affordance styling. */
+  isDragging: boolean;
+  isDragOver: boolean;
+  onRowDragStart: (handleId: string) => void;
+  onRowDragOver: (handleId: string) => void;
+  onRowDrop: (handleId: string) => void;
+  onRowDragEnd: () => void;
+  /**
+   * `true` while a connection is being dragged out from ELSEWHERE on the
+   * canvas and dropping it on this row's own port wouldn't produce a valid
+   * edge (wrong part, or wrong direction) — see `RecipeNode`'s own
+   * `fromHandle`/`isValidDragCandidate` for how this is computed. Dims this
+   * row's `Handle` so only legal drop targets stay at full opacity while a
+   * drag is in progress; `false` (the normal case, no drag in progress or
+   * this row IS a legal target) leaves the row untouched.
+   */
+  isFaded: boolean;
 }
 
-function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }: PartRowProps) {
+function PartRow({
+  part,
+  rate,
+  numberFormats,
+  portValidity,
+  onRemovePortEdges,
+  isDragging,
+  isDragOver,
+  onRowDragStart,
+  onRowDragOver,
+  onRowDrop,
+  onRowDragEnd,
+  isFaded,
+}: PartRowProps) {
   const { t } = useTranslation("app");
   const { t: tRaw } = useTranslation();
   const gameTerm = useGameTerm();
@@ -168,8 +123,11 @@ function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }:
   // Port handle id contract for Job 011 (connections & waypoints) — see
   // this job's Handoff notes for the full writeup. Format:
   // `${"in"|"out"}:${part name}`, direction matching `RecipePart.amount`'s
-  // sign (negative = input = "in", positive = output = "out").
-  const handleId = `${input ? "in" : "out"}:${part.part}`;
+  // sign (negative = input = "in", positive = output = "out"). Also this
+  // row's drag-reorder id (`partHandleId` in `recipeNodeMath.ts`) — the same
+  // id space, deliberately: a row's handle id already uniquely identifies it
+  // within this node, no reason for a second id scheme.
+  const handleId = partHandleId(part);
   const iconUrl = getIconUrl(part.part);
   const handleHighlight = highlightRingClass(portValidity);
   const rowTitle =
@@ -178,6 +136,13 @@ function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }:
       : portValidity === "mismatched"
         ? t("node.portTooltip.mismatched")
         : t("node.portTooltip.default", { direction: tRaw(input ? "INPUT" : "OUTPUT") });
+
+  // While a connection is in progress and this row's port isn't a legal drop
+  // target, fade the dot out and stop it from intercepting hover/drop —
+  // `isValidConnection` (wired globally in `useConnectionHandlers.ts`)
+  // already blocks an actual drop here regardless, so this is purely the
+  // visual half of that same rule; see `isFaded`'s own doc comment above.
+  const handleFadeClass = isFaded ? "opacity-20 pointer-events-none transition-opacity" : "transition-opacity";
 
   const icon = iconUrl ? (
     <img
@@ -189,11 +154,57 @@ function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }:
     <span className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)]" aria-hidden />
   );
 
+  // A mousedown that starts on the connection dot (`.react-flow__handle`
+  // below) must fall through to React Flow's own connection-drag handling,
+  // not become a native row-reorder drag — the two both want the same
+  // initial mousedown+move gesture, and once the browser's native DnD claims
+  // it, the mousemove/mouseup sequence React Flow's connection logic relies
+  // on never arrives, silently breaking "drag from the dot to wire up a
+  // connection." Checking `event.target` inside `onDragStart` itself doesn't
+  // work — verified against a live Chromium instance: once a drag is
+  // recognized, the browser rewrites the `dragstart` event's `target` to the
+  // nearest *draggable* ancestor (this row), discarding which nested
+  // descendant the gesture actually started on. `mousedown` fires first, on
+  // the real original target, so this ref captures the answer there instead
+  // and `onDragStart` only has to consult it.
+  const mouseDownOnHandleRef = useRef(false);
+
   return (
     <div
-      className={`group relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)] ${
+      // `nodrag`: without it, React Flow treats a mousedown-drag anywhere on
+      // this row as "drag the whole node" (the default absent a
+      // `dragHandle`/`nodrag` marker — only the header's `cursor-grab` was
+      // ever a deliberate affordance for that). This row now has its own,
+      // more specific drag gesture (native HTML5 DnD, reordering it among
+      // its same-direction siblings), so it opts out of the node-level one
+      // entirely rather than the two fighting over the same mousedown.
+      className={`group relative flex cursor-grab items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)] active:cursor-grabbing nodrag ${
         input ? "justify-start" : "justify-end"
+      } ${isDragging ? "opacity-40" : ""} ${
+        isDragOver ? "ring-1 ring-inset ring-[var(--accent)]" : ""
       }`}
+      draggable
+      onMouseDownCapture={(event) => {
+        mouseDownOnHandleRef.current = !!(event.target as HTMLElement).closest(".react-flow__handle");
+      }}
+      onDragStart={(event) => {
+        if (mouseDownOnHandleRef.current) {
+          event.preventDefault();
+          return;
+        }
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", handleId);
+        onRowDragStart(handleId);
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+        onRowDragOver(handleId);
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        onRowDrop(handleId);
+      }}
+      onDragEnd={onRowDragEnd}
       onContextMenu={(event) => {
         event.preventDefault();
         // Stop this from bubbling up to `<ReactFlow onPaneContextMenu>`,
@@ -210,7 +221,16 @@ function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }:
           type="target"
           position={Position.Left}
           id={handleId}
-          className={`!h-2.5 !w-2.5 !border-2 !border-[var(--surface-card)] !bg-[var(--text-secondary)] ${handleHighlight ?? ""}`}
+          // Declares this element isn't itself a drag source — correct on
+          // its own terms, but NOT what stops the row's native drag from
+          // claiming a gesture that starts here (verified against a live
+          // Chromium instance: an explicit `draggable={false}` on a nested
+          // element does not override a `draggable=true` ancestor once the
+          // ancestor's own drag session is already what ends up
+          // recognized). See the row's own `mouseDownOnHandleRef`/
+          // `onDragStart` above for the part that actually does the work.
+          draggable={false}
+          className={`!h-3.5 !w-3.5 !border-2 !border-[var(--surface-card)] !bg-[var(--text-secondary)] ${handleFadeClass} ${handleHighlight ?? ""}`}
         />
       )}
       {input && icon}
@@ -237,7 +257,10 @@ function PartRow({ part, rate, numberFormats, portValidity, onRemovePortEdges }:
           type="source"
           position={Position.Right}
           id={handleId}
-          className={`!h-2.5 !w-2.5 !border-2 !border-[var(--surface-card)] !bg-[var(--text-secondary)] ${handleHighlight ?? ""}`}
+          // See the target `Handle` above for why this is explicitly
+          // non-draggable.
+          draggable={false}
+          className={`!h-3.5 !w-3.5 !border-2 !border-[var(--surface-card)] !bg-[var(--text-secondary)] ${handleFadeClass} ${handleHighlight ?? ""}`}
         />
       )}
     </div>
@@ -269,6 +292,16 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
   // numberFormats)` instead of a hardcoded `toDecimalString`, so changing
   // the setting (`SettingsMenu.tsx`) re-renders every value immediately.
   const numberFormats = useSettings(sfmDoc).numberFormats;
+  // While ANY connection is being dragged out anywhere on the canvas (not
+  // necessarily from this node), every `PartRow` below dims its own `Handle`
+  // unless it's a legal drop target for that drag — see `isValidDragCandidate`.
+  // Selector-scoped to just `fromHandle` (not the whole `ConnectionState`):
+  // `fromHandle` is set once at drag start and only changes again at drag
+  // end, unlike `toHandle`/`to`/`isValid`, which update on every pointer
+  // move — reading the full state here would re-render every node on the
+  // canvas on every pixel of mouse movement during a drag, not just at its
+  // start/end.
+  const fromHandle = useConnection((connection) => connection.fromHandle);
   // Job 013: `CanvasNodeData.record` became optional (Job 013's outpost
   // boundary nodes don't have one) so this component — only ever mounted
   // for `type: "recipe"` nodes, which always do — needs a defensive guard
@@ -280,8 +313,8 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
   // control-flow narrowing of an optional property doesn't propagate into
   // a nested function declaration that TypeScript can't prove is only
   // ever invoked synchronously (confirmed by this job's own typecheck run:
-  // without this, `handleClockStep`/`handleShardStep` still saw `node` as
-  // possibly `undefined`).
+  // without this, this file's `function`-declared handlers still saw `node`
+  // as possibly `undefined`).
   const maybeNode = data.record;
   if (!maybeNode) return null;
   const node: NodeRecord = maybeNode;
@@ -304,9 +337,6 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
   const recipe: Recipe | undefined = node.recipe
     ? gameData.recipesByName.get(node.recipe)
     : undefined;
-  const machine = node.machine ? gameData.machinesByName.get(node.machine) : undefined;
-  const maxShards = machine?.maxProductionShards ?? 0;
-
   // Job 019: `nodeResult` is Job 018's real, graph-aware solve output for
   // THIS node — `undefined` only when no solve has ever produced anything
   // for it yet (None mode, or before the very first solve completes). Every
@@ -317,17 +347,14 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
   const nodeResult = nodeResultById.get(id);
 
   // `localMachineCount` is the Job 010 "limit/clock relationship, entirely
-  // local to this node" math — kept as-is and used ONLY to drive the ± clock
-  // snap buttons below (`handleClockStep`), which are inherently about "what
-  // does THIS node's own limit/clock imply," independent of graph
-  // propagation. `displayMachineCount` is what's actually shown to the user
-  // (the "≈ N machines" readout) and fed to `PartRow` as the stopgap's own
-  // fallback machine count — it prefers the solver's real, possibly
-  // graph-propagated count whenever one exists, since that's strictly more
-  // informative for an unpinned Basic-mode node (whose real count can't be
-  // derived from `localMachineCount`'s purely-local formula at all).
+  // local to this node" math — kept as-is, used as `PartRow`'s stopgap
+  // fallback machine count. `displayMachineCount` is what's actually shown
+  // to the user (the "≈ N machines" readout) — it prefers the solver's
+  // real, possibly graph-propagated count whenever one exists, since that's
+  // strictly more informative for an unpinned Basic-mode node (whose real
+  // count can't be derived from `localMachineCount`'s purely-local formula
+  // at all).
   const localMachineCount = recipe ? computeMachineCount(gameData, recipe, node) : undefined;
-  const canSnapClock = recipe ? !isZero(referenceRateAtFullClock(gameData, recipe, node)) : false;
   const displayMachineCount = nodeResult
     ? parseRational(nodeResult.machineCount)
     : localMachineCount;
@@ -367,7 +394,6 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
     ? formatRational(effectiveLimitValue(gameData, recipe, node), numberFormats)
     : "0";
   const limitDisplayText = limitIsBlank ? "" : limitEffectiveText;
-  const clockDisplayText = formatRational(effectiveClockPercent(node), numberFormats);
   // A blank field still hints at what it'll actually run as: the real,
   // graph-propagated machine count from the solver when one exists (the
   // same value the "≈ N machines" readout below shows), falling back to
@@ -379,17 +405,18 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
     : undefined;
 
   // Job 027: "Manually touching clock or limit switches [auto-round] off"
-  // (PLAN.md §2, verbatim) — every one of this card's three real-user-edit
-  // paths for these two fields (`commitLimit`, `commitClock`, and the ±
-  // buttons' `handleClockStep` below) clears `autoRound` in the SAME
-  // `updateNode` call as the value change, unconditionally (a no-op write
-  // when it was already `false`, cheap and simpler than a conditional).
-  // This call-site separation — not a Yjs transaction-origin check — is
-  // what makes "was this touch manual" unambiguous: `useAutoRound.ts`'s own
-  // automatic correction is the ONLY code path that ever writes `clock`
-  // WITHOUT also writing `autoRound: false`, and it lives in a completely
-  // different file that these three functions never call into. See
-  // `useAutoRound.ts`'s header for the other half of this contract.
+  // (PLAN.md §2, verbatim) — `commitLimit` here and `RecipeNodeQuickSettings`
+  // .tsx's own `commitClock`/`handleClockStep` (the clock field moved into
+  // the right-click quick settings menu — see this file's header) all clear
+  // `autoRound` in the SAME `updateNode` call as the value change,
+  // unconditionally (a no-op write when it was already `false`, cheap and
+  // simpler than a conditional). This call-site separation — not a Yjs
+  // transaction-origin check — is what makes "was this touch manual"
+  // unambiguous: `useAutoRound.ts`'s own automatic correction is the ONLY
+  // code path that ever writes `clock` WITHOUT also writing
+  // `autoRound: false`, and it lives in a completely different file none of
+  // these ever call into. See `useAutoRound.ts`'s header for the other half
+  // of this contract.
   function commitLimit(raw: string): boolean {
     const trimmed = raw.trim();
     if (!trimmed) {
@@ -411,48 +438,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
     }
   }
 
-  function commitClock(raw: string): boolean {
-    const trimmed = raw.trim();
-    if (!trimmed) return false;
-    try {
-      const parsed = parseRational(trimmed);
-      updateNode(sfmDoc, id, { clock: toFractionString(clampClockPercent(parsed)), autoRound: false });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   const limitField = useCommittedTextField(limitDisplayText, commitLimit);
-  const clockField = useCommittedTextField(clockDisplayText, commitClock);
-
-  function handleClockStep(direction: ClockSnapDirection) {
-    if (!recipe || !localMachineCount || isZero(localMachineCount)) return;
-    const result = snapClockToWholeMachineCount(
-      effectiveClockPercent(node),
-      localMachineCount,
-      direction,
-    );
-    updateNode(sfmDoc, id, { clock: toFractionString(result.clockPercent), autoRound: false });
-  }
-
-  /**
-   * The auto-round toggle itself — a direct, explicit field write, not a
-   * "manual touch" of clock/limit (toggling ON doesn't change either
-   * field's value; `useAutoRound.ts`'s effect picks up from wherever they
-   * currently sit and corrects the clock on its own next settled solve).
-   * Plain default origin (unlike `useAutoRound.ts`'s own writes) — this IS
-   * a real user action and belongs on the undo stack like any other field
-   * edit.
-   */
-  function handleAutoRoundToggle(checked: boolean) {
-    updateNode(sfmDoc, id, { autoRound: checked });
-  }
-
-  function handleShardStep(delta: number) {
-    const next = clampShards(node.shards + delta, maxShards);
-    if (next !== node.shards) updateNode(sfmDoc, id, { shards: next });
-  }
 
   /**
    * Job 011: right-click-on-part-label edge removal. Looks up every edge
@@ -475,6 +461,59 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
         removeEdge(sfmDoc, edge.id);
       }
     }
+  }
+
+  /**
+   * Row reorder (drag-to-reorder). `draggingPartId`/`dragOverPartId` are
+   * local-only UI state — which row is currently the drag source and which
+   * one it's hovering over; the actual order persists in
+   * `node.priorityOrder` (see `recipeNodeMath.ts`'s "Row order" section for
+   * the id encoding and `orderRecipeParts` for how it's re-applied on
+   * render). Reordering is scoped to same-direction rows only (an input row
+   * dropped onto an output row, or vice versa, is a no-op) — mixing the two
+   * groups would fight the card's own input-left/output-right layout.
+   */
+  const [draggingPartId, setDraggingPartId] = useState<string | null>(null);
+  const [dragOverPartId, setDragOverPartId] = useState<string | null>(null);
+
+  function samePartDirection(a: string, b: string): boolean {
+    return a.startsWith("in:") === b.startsWith("in:");
+  }
+
+  function handlePartDragStart(handleId: string) {
+    setDraggingPartId(handleId);
+  }
+
+  function handlePartDragOver(handleId: string) {
+    if (draggingPartId && handleId !== draggingPartId && samePartDirection(draggingPartId, handleId)) {
+      setDragOverPartId(handleId);
+    }
+  }
+
+  function handlePartDragEnd() {
+    setDraggingPartId(null);
+    setDragOverPartId(null);
+  }
+
+  function handlePartDrop(targetHandleId: string) {
+    if (
+      recipe &&
+      draggingPartId &&
+      draggingPartId !== targetHandleId &&
+      samePartDirection(draggingPartId, targetHandleId)
+    ) {
+      const currentIds = orderRecipeParts(recipe.parts, node.priorityOrder).map(partHandleId);
+      const fromIndex = currentIds.indexOf(draggingPartId);
+      const toIndex = currentIds.indexOf(targetHandleId);
+      if (fromIndex !== -1 && toIndex !== -1) {
+        const nextIds = [...currentIds];
+        nextIds.splice(fromIndex, 1);
+        nextIds.splice(toIndex, 0, draggingPartId);
+        setPriorityOrder(sfmDoc, id, nextIds);
+      }
+    }
+    setDraggingPartId(null);
+    setDragOverPartId(null);
   }
 
   const machineIconUrl = node.machine ? getIconUrl(node.machine) : undefined;
@@ -578,15 +617,27 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
             {recipe.isGenerator ? ` · ${t("node.generatorSuffix")}` : ""}
           </p>
         </div>
+        {/* User-set node name (right-click → quick settings — see
+            `RecipeNodeQuickSettings.tsx`), on the far side of the header
+            from the recipe/part name. Only shown once it's actually been
+            customized — it defaults to the recipe's own name at node
+            creation, which would otherwise just duplicate the label to its
+            left. */}
+        {node.title && node.title !== recipe.name && (
+          <p
+            className="max-w-[40%] shrink-0 truncate text-right text-[10px] font-medium text-[var(--node-header-text)]/70"
+            title={node.title}
+          >
+            {node.title}
+          </p>
+        )}
       </div>
 
       <div className="divide-y divide-[var(--border-subtle)] py-0.5">
         {recipe.parts.length === 0 ? (
           <p className="px-2 py-1.5 text-[11px] text-[var(--text-muted)]">{t("node.noParts")}</p>
         ) : (
-          [...recipe.parts]
-            .sort((a, b) => Number(isNegative(b.amount)) - Number(isNegative(a.amount)))
-            .map((part) => {
+          orderRecipeParts(recipe.parts, node.priorityOrder).map((part) => {
               // Job 019: prefer the solver's real per-part rate; fall back
               // to Job 010's stopgap only when there's no solver result for
               // this node yet (None mode, or pre-first-solve) — see this
@@ -597,6 +648,15 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
                 solverRateStr !== undefined
                   ? parseRational(solverRateStr)
                   : stopgapPartRate(gameData, recipe, node, part, localMachineCount);
+              const handleId = partHandleId(part);
+              const isFaded = fromHandle
+                ? !(fromHandle.nodeId === id && fromHandle.id === handleId) &&
+                  !isValidDragCandidate(fromHandle, {
+                    nodeId: id,
+                    id: handleId,
+                    type: isNegative(part.amount) ? "target" : "source",
+                  })
+                : false;
               return (
                 <PartRow
                   key={part.part}
@@ -605,6 +665,13 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
                   numberFormats={numberFormats}
                   portValidity={validityState?.ports?.[part.part]}
                   onRemovePortEdges={removeEdgesForPort}
+                  isDragging={draggingPartId === handleId}
+                  isDragOver={dragOverPartId === handleId}
+                  onRowDragStart={handlePartDragStart}
+                  onRowDragOver={handlePartDragOver}
+                  onRowDrop={handlePartDrop}
+                  onRowDragEnd={handlePartDragEnd}
+                  isFaded={isFaded}
                 />
               );
             })
@@ -654,131 +721,6 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
             <FieldPresenceRing editors={remoteEditorsFor("limit")} />
           </span>
         </label>
-
-        <div className="flex items-center justify-between gap-2">
-          {/* Job 028: reuses `CLOCKSPEED` ("Clock Speed") — close enough to
-              this card's own shorter "Clock" label to count as the same
-              concept, per this job's reuse-vs-new-key judgement call. */}
-          <span className="text-[var(--text-secondary)]">{tRaw("CLOCKSPEED")}</span>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              className={stepperButtonClass}
-              disabled={!canSnapClock}
-              // Job 028: both ± buttons share ONE tooltip, reusing the
-              // original string table's `CLOCKSPEED_HELP` verbatim — that
-              // help text already documents both buttons' behavior in one
-              // paragraph (minus lowers/rounds up, plus raises/rounds down,
-              // capped at 250%), so this job consolidates what used to be
-              // two separate hand-written per-button tooltips into that one
-              // shared, more complete original description rather than
-              // authoring a new key that would just re-describe the same
-              // thing less precisely.
-              title={tRaw("CLOCKSPEED_HELP")}
-              aria-label={t("node.clockStepDownLabel")}
-              onClick={() => handleClockStep("roundUp")}
-            >
-              −
-            </button>
-            <span className="relative inline-block">
-              <input
-                type="text"
-                inputMode="decimal"
-                className={`${fieldInputClass} ${node.autoRound ? autoRoundFieldClass : ""} ${highlightRingClass(validityState?.fields?.clock) ?? ""}`}
-                title={node.autoRound ? t("node.autoRoundEditTooltip") : undefined}
-                {...clockField}
-                onFocus={() => {
-                  clockField.onFocus();
-                  localPresence.setEditingField({ nodeId: id, field: "clock" });
-                }}
-                onBlur={() => {
-                  clockField.onBlur();
-                  localPresence.setEditingField(null);
-                }}
-              />
-              <FieldPresenceRing editors={remoteEditorsFor("clock")} />
-            </span>
-            <span className="text-[var(--text-muted)]">%</span>
-            <button
-              type="button"
-              className={stepperButtonClass}
-              disabled={!canSnapClock}
-              title={tRaw("CLOCKSPEED_HELP")}
-              aria-label={t("node.clockStepUpLabel")}
-              onClick={() => handleClockStep("roundDown")}
-            >
-              +
-            </button>
-          </div>
-        </div>
-
-        {/*
-          Job 027: the auto-round toggle — "near the clock field", per this
-          job's own Notes. Toggling ON does not itself touch `clock`/`limit`
-          (see `handleAutoRoundToggle`'s own comment) — `useAutoRound.ts`
-          picks up from wherever they currently sit on its own next settled
-          solve, which is what makes toggling this on for an
-          already-non-whole node visibly correct itself a beat later rather
-          than needing this handler to duplicate that math locally.
-        */}
-        <label className="flex items-center justify-between gap-2">
-          {/* Job 028: reuses the original `AUTO_ROUND` ("Auto Round") label
-              and, for the tooltip, `AUTO_ROUND_HELP`'s full original
-              paragraph verbatim in place of this card's previous
-              hand-written one-liner — the original text is a *better*,
-              more complete description of this exact feature (it even
-              documents the black-background treatment `autoRoundFieldClass`
-              above implements), so this is a clean value-level reuse, not
-              just a key-name coincidence. */}
-          <span className="text-[var(--text-secondary)]" title={tRaw("AUTO_ROUND_HELP")}>
-            {tRaw("AUTO_ROUND")}
-          </span>
-          <input
-            type="checkbox"
-            checked={node.autoRound}
-            onChange={(event) => handleAutoRoundToggle(event.target.checked)}
-            className="nodrag accent-[var(--accent)]"
-          />
-        </label>
-
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[var(--text-secondary)]">{t("node.somersloops")}</span>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              className={stepperButtonClass}
-              disabled={maxShards === 0 || node.shards <= 0}
-              aria-label={t("node.shardStepDownLabel")}
-              onClick={() => handleShardStep(-1)}
-              onFocus={() => localPresence.setEditingField({ nodeId: id, field: "shards" })}
-              onBlur={() => localPresence.setEditingField(null)}
-            >
-              −
-            </button>
-            <span className="relative inline-block">
-              <span
-                className={`w-8 rounded text-center tabular-nums text-[var(--text-primary)] ${highlightRingClass(validityState?.fields?.shards) ?? ""}`}
-                title={
-                  validityState?.fields?.shards === "invalid" ? t("node.shardsInvalidTooltip") : undefined
-                }
-              >
-                {node.shards}/{maxShards}
-              </span>
-              <FieldPresenceRing editors={remoteEditorsFor("shards")} />
-            </span>
-            <button
-              type="button"
-              className={stepperButtonClass}
-              disabled={maxShards === 0 || node.shards >= maxShards}
-              aria-label={t("node.shardStepUpLabel")}
-              onClick={() => handleShardStep(1)}
-              onFocus={() => localPresence.setEditingField({ nodeId: id, field: "shards" })}
-              onBlur={() => localPresence.setEditingField(null)}
-            >
-              +
-            </button>
-          </div>
-        </div>
 
         {displayMachineCount && (
           <p

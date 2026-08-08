@@ -4,8 +4,12 @@
 // `validityState` slot for Job 019).
 export { RecipeNode } from "./RecipeNode";
 export { SplurgerNode } from "./SplurgerNode";
+export { SinkNode } from "./SinkNode";
+export { StorageNode } from "./StorageNode";
+export { RecipeNodeQuickSettings, type RecipeNodeQuickSettingsProps } from "./RecipeNodeQuickSettings";
 
 export {
+  CLOCK_PRESETS,
   MAX_CLOCK_PERCENT,
   MIN_CLOCK_PERCENT,
   clampClockPercent,
@@ -20,11 +24,11 @@ export {
   primaryPart,
   ratePerMachineAtFullClock,
   referenceRateAtFullClock,
-  snapClockToWholeMachineCount,
+  stepClockToPreset,
   stopgapPartRate,
   type ClockNodeRef,
-  type ClockSnapDirection,
   type ClockSnapResult,
+  type ClockStepDirection,
   type LimitNodeRef,
   type MachineRef,
 } from "./recipeNodeMath";

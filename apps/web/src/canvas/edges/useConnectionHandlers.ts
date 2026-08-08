@@ -33,6 +33,20 @@ export interface ConnectionHandlers {
   onReconnectStart: () => void;
   onReconnect: (oldEdge: CanvasEdge, newConnection: Connection) => void;
   onReconnectEnd: (event: MouseEvent | TouchEvent, edge: CanvasEdge, handleType: HandleType) => void;
+  /**
+   * `true` while a re-drag of an EXISTING edge's endpoint is in flight —
+   * see `CanvasView.tsx`'s `onConnectEnd` wiring for why this needs to be
+   * exposed: React Flow's own `onConnectEnd` fires for BOTH a brand-new
+   * connection drag from a bare Handle AND a reconnect drag from an
+   * existing edge's endpoint (confirmed against `@xyflow/system`'s
+   * `XYHandle.onPointerDown`, which always calls the global `onConnectEnd`
+   * before also calling `onReconnectEnd` when the gesture started as a
+   * reconnect). Job 009's "open the Recipe Chooser on an empty-canvas
+   * drop" only applies to the first case — a reconnect dropped on empty
+   * canvas is already Job 011's own "remove by re-dragging elsewhere"
+   * gesture (handled by `onReconnectEnd` below), not a new-node request.
+   */
+  isReconnecting: () => boolean;
 }
 
 export function useConnectionHandlers(sfmDoc: SfmDocument, containerId: string): ConnectionHandlers {
@@ -40,6 +54,9 @@ export function useConnectionHandlers(sfmDoc: SfmDocument, containerId: string):
   // `lastPaneClickRef` uses) — this is drag-gesture bookkeeping, not
   // something whose change should trigger a render.
   const reconnectSuccessfulRef = useRef(true);
+  // Set for the duration of a reconnect drag only — see `isReconnecting`'s
+  // own doc comment above for why `CanvasFlow` needs this.
+  const reconnectInProgressRef = useRef(false);
 
   const isValidConnection = useCallback((connection: ConnectionLike) => isValidPortConnection(connection), []);
 
@@ -52,6 +69,7 @@ export function useConnectionHandlers(sfmDoc: SfmDocument, containerId: string):
 
   const onReconnectStart = useCallback(() => {
     reconnectSuccessfulRef.current = false;
+    reconnectInProgressRef.current = true;
   }, []);
 
   const onReconnect = useCallback(
@@ -68,9 +86,12 @@ export function useConnectionHandlers(sfmDoc: SfmDocument, containerId: string):
         removeEdgeRecord(sfmDoc, edge.id);
       }
       reconnectSuccessfulRef.current = true;
+      reconnectInProgressRef.current = false;
     },
     [sfmDoc],
   );
 
-  return { isValidConnection, onConnect, onReconnectStart, onReconnect, onReconnectEnd };
+  const isReconnecting = useCallback(() => reconnectInProgressRef.current, []);
+
+  return { isValidConnection, onConnect, onReconnectStart, onReconnect, onReconnectEnd, isReconnecting };
 }

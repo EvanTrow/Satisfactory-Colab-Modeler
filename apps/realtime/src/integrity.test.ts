@@ -200,6 +200,7 @@ describe("integrity reducer: server-side repair before persistence", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     const b = addNode(sfmDoc, {
       containerId: root.id,
@@ -218,6 +219,7 @@ describe("integrity reducer: server-side repair before persistence", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     const edge = addEdge(sfmDoc, {
       containerId: root.id,
@@ -321,6 +323,7 @@ describe("PLAN.md §8 Phase 5 exit criterion: concurrent delete-vs-connect conve
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     await waitUntil(() => providerB.document.getMap("nodes").has(shared.id));
     await waitUntil(() => providerB.document.getMap("containers").has(root.id));
@@ -347,6 +350,7 @@ describe("PLAN.md §8 Phase 5 exit criterion: concurrent delete-vs-connect conve
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     const racedEdge = addEdge(sfmDocB, {
       containerId: root.id,

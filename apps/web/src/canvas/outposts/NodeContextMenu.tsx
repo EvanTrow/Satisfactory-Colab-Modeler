@@ -9,9 +9,10 @@
 // anywhere on a node that isn't a part row.
 import { useRef } from "react";
 
-import { type Container } from "@scm/ydoc";
+import { type Container, type NodeRecord, type NumberFormats } from "@scm/ydoc";
 
 import { useFocusTrap } from "../../a11y";
+import { RecipeNodeQuickSettings } from "../nodes";
 
 export interface NodeContextMenuState {
   nodeId: string;
@@ -23,6 +24,14 @@ export interface NodeContextMenuState {
    * whichever kind it currently is.
    */
   containerKind: "outpost" | "blueprint" | null;
+  /**
+   * The right-clicked node's own record, when it's a `kind: "recipe"` node
+   * (`data.record`) — drives the quick settings section below (name, clock
+   * speed, auto-round, somersloops). `undefined` for a container boundary
+   * node or any other node kind that doesn't have these fields exposed on
+   * its own card.
+   */
+  recipeRecord?: NodeRecord;
   /** Viewport/screen coordinates to anchor the menu at — same convention `RecipeChooser.tsx` (Job 009) uses. */
   screenPosition: { x: number; y: number };
 }
@@ -38,6 +47,8 @@ export interface NodeContextMenuProps {
   onDeleteOutpost: (containerId: string) => void;
   /** Job 026: flips `Container.kind` between `"outpost"` and `"blueprint"` — the blueprint creation/conversion UI this job's own scope asks for ("an outpost can be marked/converted to `kind: 'blueprint'`"). */
   onConvertContainerKind: (containerId: string, kind: "outpost" | "blueprint") => void;
+  /** Only needed to render `state.recipeRecord`'s quick settings section — unused for a container boundary node. */
+  numberFormats: NumberFormats;
   onClose: () => void;
 }
 
@@ -51,6 +62,7 @@ export function NodeContextMenu({
   onOpenOutpost,
   onDeleteOutpost,
   onConvertContainerKind,
+  numberFormats,
   onClose,
 }: NodeContextMenuProps) {
   // Job 029: this menu's *trigger* (right-click a node) has no keyboard
@@ -67,7 +79,23 @@ export function NodeContextMenu({
 
   return (
     // Backdrop: click anywhere else closes the menu without acting — same pattern `RecipeChooser.tsx` uses.
-    <div className="fixed inset-0 z-50" onMouseDown={onClose} onContextMenu={(event) => event.preventDefault()}>
+    // The quick-settings name/clock fields (`useCommittedTextField`) only
+    // commit on blur, and a plain `onClose()` here would unmount the menu
+    // (and its focused input) on this same `mousedown` — before the browser
+    // gets to the focus-change step that would normally fire that blur — so
+    // any pending edit was silently dropped. Blurring the active element
+    // ourselves first forces that commit to run while the field is still
+    // mounted, then `onClose` proceeds as before.
+    <div
+      className="fixed inset-0 z-50"
+      onMouseDown={() => {
+        if (menuRef.current?.contains(document.activeElement)) {
+          (document.activeElement as HTMLElement).blur();
+        }
+        onClose();
+      }}
+      onContextMenu={(event) => event.preventDefault()}
+    >
       <div
         ref={menuRef}
         role="menu"
@@ -146,6 +174,12 @@ export function NodeContextMenu({
                 Move into {outpost.title || "Outpost"}
               </button>
             ))}
+            {state.recipeRecord && (
+              <>
+                <div className="my-1 border-t border-[var(--border-subtle)]" />
+                <RecipeNodeQuickSettings record={state.recipeRecord} numberFormats={numberFormats} />
+              </>
+            )}
           </>
         )}
       </div>

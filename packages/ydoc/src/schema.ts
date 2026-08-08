@@ -79,6 +79,16 @@ export const SettingsSchema = z.object({
   gridWaypoint: PointSchema,
   numberFormats: NumberFormatsSchema,
   connectionStyle: ConnectionStyleSchema,
+  // Progression filters for the Recipe Chooser search. `null` = unset, i.e.
+  // no filtering by that axis. `tier` is the game's Tier 0-9; `phase` is the
+  // Space Elevator ("Project Assembly") delivery phase 1-5 — see
+  // `apps/web/src/panels/recipeChooser/progression.ts` for the real
+  // phase-unlocks-which-tiers table and the cross-field validation that
+  // keeps these two from landing on a combination no real save could reach.
+  // Both are cumulative ("available by this point") when set, and AND
+  // together when both are set.
+  recipeTierFilter: z.number().int().min(0).max(9).nullable(),
+  recipePhaseFilter: z.number().int().min(1).max(5).nullable(),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
@@ -118,15 +128,39 @@ export type Container = z.infer<typeof ContainerSchema>;
  * ellipsis — more kinds are expected to be added by later jobs without
  * requiring a schema change here.
  */
-export const KNOWN_NODE_KINDS = ["recipe", "splurger", "storage", "outpost"] as const;
+export const KNOWN_NODE_KINDS = ["recipe", "splurger", "storage", "sink", "depot", "outpost"] as const;
 export type KnownNodeKind = (typeof KNOWN_NODE_KINDS)[number];
 export type NodeKind = KnownNodeKind | (string & {});
+
+/**
+ * `NodeRecord.storageMode`'s four documented values (PLAN.md §2's "Storage
+ * Container (four modes: Partially Full / Full / Empty / Input = Output)").
+ * Documentation/UI convenience only — the wire type stays the existing open
+ * `string | null` (no schema version bump); `apps/web`'s Storage Container
+ * card is the only consumer, and only `"partiallyFull"` has real solver
+ * behavior as of this addition (see `apps/web/src/canvas/nodes/StorageNode.tsx`).
+ */
+export const STORAGE_MODES = ["partiallyFull", "full", "empty", "inputEqualsOutput"] as const;
+export type StorageMode = (typeof STORAGE_MODES)[number];
 
 export const LimitModeSchema = z.enum(["machines", "ppm"]);
 export type LimitMode = z.infer<typeof LimitModeSchema>;
 
 export const PuritySchema = z.enum(["impure", "normal", "pure"]);
 export type Purity = z.infer<typeof PuritySchema>;
+
+/**
+ * Which of the 4 "Add a machine" Splurger buttons created a `kind:
+ * "splurger"` node — fixes its rendered port-slot count (see
+ * `splurgerPortCaps`), matching the real Satisfactory Modeler's own fixed
+ * per-variant card art rather than inferring a shape from current wiring.
+ * `null` on `NodeRecord.splurgerVariant` means either "not a splurger kind
+ * at all" or "a splurger created before this field existed" — both read the
+ * same way (`splurgerPortCaps`'s default case), so no migration/backfill is
+ * needed for pre-existing documents.
+ */
+export const SplurgerVariantSchema = z.enum(["splurger", "splitter", "merger", "prioritySplurger"]);
+export type SplurgerVariant = z.infer<typeof SplurgerVariantSchema>;
 
 export const NodeRecordSchema = z.object({
   id: z.string(),
@@ -150,10 +184,39 @@ export const NodeRecordSchema = z.object({
   purity: PuritySchema.nullable(),
   beltTier: z.string().nullable(),
   storageMode: z.string().nullable(),
+  splurgerVariant: SplurgerVariantSchema.nullable(),
   // Y.Array<portId> at the Yjs layer; a plain string[] once read out.
   priorityOrder: z.array(z.string()),
 });
 export type NodeRecord = z.infer<typeof NodeRecordSchema>;
+
+export interface SplurgerPortCaps {
+  readonly in: 1 | 2;
+  readonly out: 1 | 2;
+}
+
+/**
+ * How many port SLOTS (not wires — a slot is a priority TIER that can still
+ * hold any number of connections, see `SplurgerNode.tsx`'s header) each side
+ * of a `kind: "splurger"` node shows, per its `splurgerVariant`. `null`/
+ * `undefined` (no variant recorded — either a non-splurger node, or a
+ * splurger predating this field) falls through to the most permissive case,
+ * `"prioritySplurger"`'s 2-in/2-out, so an existing project's Splurger never
+ * appears to have silently lost a port or a connection.
+ */
+export function splurgerPortCaps(variant: SplurgerVariant | null | undefined): SplurgerPortCaps {
+  switch (variant) {
+    case "splitter":
+      return { in: 1, out: 2 };
+    case "merger":
+      return { in: 2, out: 1 };
+    case "splurger":
+      return { in: 1, out: 1 };
+    case "prioritySplurger":
+    default:
+      return { in: 2, out: 2 };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // edges

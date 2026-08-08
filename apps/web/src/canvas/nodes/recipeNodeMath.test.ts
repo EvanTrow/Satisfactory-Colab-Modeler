@@ -1,8 +1,9 @@
-import { defaultGameData } from "@scm/gamedata";
+import { defaultGameData, type RecipePart } from "@scm/gamedata";
 import { ONE, ZERO, equals, of, toFractionString, type Rational } from "@scm/rational";
 import { describe, expect, it } from "vitest";
 
 import {
+  CLOCK_PRESETS,
   MAX_CLOCK_PERCENT,
   MIN_CLOCK_PERCENT,
   clampClockPercent,
@@ -11,10 +12,12 @@ import {
   defaultLimitMode,
   effectiveClockPercent,
   effectiveLimitValue,
+  orderRecipeParts,
+  partHandleId,
   primaryPart,
   ratePerMachineAtFullClock,
   referenceRateAtFullClock,
-  snapClockToWholeMachineCount,
+  stepClockToPreset,
   stopgapPartRate,
 } from "./recipeNodeMath";
 
@@ -150,87 +153,49 @@ describe("computeMachineCount + stopgapPartRate (Iron Plate on a Constructor)", 
   });
 });
 
-describe("snapClockToWholeMachineCount — pure cases", () => {
-  it("'+' (roundDown) from a non-integer count lands exactly on the floor", () => {
-    const result = snapClockToWholeMachineCount(of(100), of(7, 2) /* 3.5 */, "roundDown");
-    expect(toFractionString(result.machineCount)).toBe("3");
-    expect(toFractionString(result.clockPercent)).toBe("350/3");
-    expect(result.clamped).toBe(false);
-  });
-
-  it("'-' (roundUp) from a non-integer count lands exactly on the ceiling", () => {
-    const result = snapClockToWholeMachineCount(of(100), of(7, 2) /* 3.5 */, "roundUp");
-    expect(toFractionString(result.machineCount)).toBe("4");
-    expect(toFractionString(result.clockPercent)).toBe("175/2");
-    expect(result.clamped).toBe(false);
-  });
-
-  it("'+' from an already-whole count moves to the next lower integer, not a no-op", () => {
-    const result = snapClockToWholeMachineCount(of(100), of(3), "roundDown");
-    expect(toFractionString(result.machineCount)).toBe("2");
-    expect(toFractionString(result.clockPercent)).toBe("150");
-  });
-
-  it("'-' from an already-whole count moves to the next higher integer", () => {
-    const result = snapClockToWholeMachineCount(of(100), of(3), "roundUp");
-    expect(toFractionString(result.machineCount)).toBe("4");
-    expect(toFractionString(result.clockPercent)).toBe("75");
-  });
-
-  it("caps the resulting clock at 250% and reports the genuine (non-integer) resulting count", () => {
-    // count=2 @ clock=240, "+": target=1 machine -> exact clock would be 480%.
-    const result = snapClockToWholeMachineCount(of(240), of(2), "roundDown");
-    expect(result.clamped).toBe(true);
-    expect(equals(result.clockPercent, MAX_CLOCK_PERCENT)).toBe(true);
-    // 2 * 240 / 250 = 48/25 = 1.92, not a whole number — the clamp means the
-    // snap couldn't fully land, and callers must display the real count.
-    expect(toFractionString(result.machineCount)).toBe("48/25");
-  });
-
-  it("floors the resulting clock at 1% and reports the genuine resulting count", () => {
-    // count=1 @ clock=1, "-": target=2 machines -> exact clock would be 0.5%.
-    const result = snapClockToWholeMachineCount(of(1), ONE, "roundUp");
-    expect(result.clamped).toBe(true);
-    expect(equals(result.clockPercent, MIN_CLOCK_PERCENT)).toBe(true);
-    expect(toFractionString(result.machineCount)).toBe("1");
-  });
-
-  it("holds steady (no division by zero) when the current machine count is zero", () => {
-    const result = snapClockToWholeMachineCount(of(100), ZERO, "roundDown");
-    expect(equals(result.machineCount, ZERO)).toBe(true);
-    expect(result.clamped).toBe(false);
+describe("CLOCK_PRESETS", () => {
+  it("spans [MIN_CLOCK_PERCENT, MAX_CLOCK_PERCENT] in ascending 25-point steps", () => {
+    expect(CLOCK_PRESETS.map((p) => toFractionString(p))).toEqual([
+      "1",
+      "25",
+      "50",
+      "75",
+      "100",
+      "125",
+      "150",
+      "175",
+      "200",
+      "225",
+      "250",
+    ]);
+    expect(equals(CLOCK_PRESETS[0], MIN_CLOCK_PERCENT)).toBe(true);
+    expect(equals(CLOCK_PRESETS[CLOCK_PRESETS.length - 1], MAX_CLOCK_PERCENT)).toBe(true);
   });
 });
 
-describe("snapClockToWholeMachineCount — end-to-end against real gamedata (Iron Plate, ppm mode)", () => {
-  const recipe = gameData.recipesByName.get("Iron Plate")!;
-  const baseNode = { machine: "Constructor", purity: null, limit: "50", limitMode: "ppm" as const, clock: "100" };
-
-  it("'+' (roundDown) from a non-integer 2.5-machine count re-derives to exactly 2 machines through the full pipeline", () => {
-    const currentCount = computeMachineCount(gameData, recipe, baseNode);
-    expect(toFractionString(currentCount)).toBe("5/2");
-
-    const snap = snapClockToWholeMachineCount(effectiveClockPercent(baseNode), currentCount, "roundDown");
-    expect(toFractionString(snap.clockPercent)).toBe("125");
-
-    // Re-derive machine count from scratch via computeMachineCount at the
-    // new clock — proves the whole pipeline round-trips exactly, not just
-    // the isolated snap function.
-    const newNode = { ...baseNode, clock: toFractionString(snap.clockPercent) };
-    const recount = computeMachineCount(gameData, recipe, newNode);
-    expect(recount.denominator).toBe(1n);
-    expect(toFractionString(recount)).toBe("2");
+describe("stepClockToPreset", () => {
+  it("'up' from an exact preset moves to the next preset", () => {
+    expect(toFractionString(stepClockToPreset(of(100), "up"))).toBe("125");
   });
 
-  it("'-' (roundUp) from the same starting point re-derives to exactly 3 machines", () => {
-    const currentCount = computeMachineCount(gameData, recipe, baseNode);
-    const snap = snapClockToWholeMachineCount(effectiveClockPercent(baseNode), currentCount, "roundUp");
-    expect(toFractionString(snap.clockPercent)).toBe("250/3");
+  it("'down' from an exact preset moves to the previous preset", () => {
+    expect(toFractionString(stepClockToPreset(of(100), "down"))).toBe("75");
+  });
 
-    const newNode = { ...baseNode, clock: toFractionString(snap.clockPercent) };
-    const recount = computeMachineCount(gameData, recipe, newNode);
-    expect(recount.denominator).toBe(1n);
-    expect(toFractionString(recount)).toBe("3");
+  it("'up' from a value between presets moves to the nearest preset above", () => {
+    expect(toFractionString(stepClockToPreset(of(137), "up"))).toBe("150");
+  });
+
+  it("'down' from a value between presets moves to the nearest preset below", () => {
+    expect(toFractionString(stepClockToPreset(of(137), "down"))).toBe("125");
+  });
+
+  it("'up' holds at the top preset once there's nothing further up", () => {
+    expect(toFractionString(stepClockToPreset(of(250), "up"))).toBe("250");
+  });
+
+  it("'down' holds at the bottom preset once there's nothing further down", () => {
+    expect(toFractionString(stepClockToPreset(of(1), "down"))).toBe("1");
   });
 });
 
@@ -251,5 +216,56 @@ describe("clampShards", () => {
     expect(clampShards(10, 4)).toBe(4);
     expect(clampShards(2, 0)).toBe(0);
     expect(clampShards(Number.NaN, 4)).toBe(0);
+  });
+});
+
+function part(name: string, amount: number): RecipePart {
+  return { part: name, amount: of(amount) };
+}
+
+describe("partHandleId", () => {
+  it("prefixes a consumed part (negative amount) with 'in:'", () => {
+    expect(partHandleId(part("Iron Ore", -30))).toBe("in:Iron Ore");
+  });
+
+  it("prefixes a produced part (positive amount) with 'out:'", () => {
+    expect(partHandleId(part("Iron Ingot", 30))).toBe("out:Iron Ingot");
+  });
+});
+
+describe("orderRecipeParts", () => {
+  const screw = part("Screw", -20);
+  const plate = part("Iron Plate", -10);
+  const rod = part("Iron Rod", -5);
+  const output = part("Reinforced Iron Plate", 5);
+  const parts = [screw, plate, rod, output];
+
+  it("with no priorityOrder, groups inputs before outputs and keeps each group's recipe-authored order", () => {
+    expect(orderRecipeParts(parts, [])).toEqual([screw, plate, rod, output]);
+  });
+
+  it("reorders within a group to match priorityOrder's rank", () => {
+    const result = orderRecipeParts(parts, ["in:Iron Rod", "in:Iron Plate", "in:Screw"]);
+    expect(result.map((p) => p.part)).toEqual(["Iron Rod", "Iron Plate", "Screw", "Reinforced Iron Plate"]);
+  });
+
+  it("appends parts absent from priorityOrder after the ranked ones, in their original relative order", () => {
+    // Only Screw has been explicitly placed (moved to the front of its
+    // group); Iron Plate/Iron Rod keep their recipe-authored relative order
+    // and sort after it.
+    const result = orderRecipeParts(parts, ["in:Screw"]);
+    expect(result.map((p) => p.part)).toEqual(["Screw", "Iron Plate", "Iron Rod", "Reinforced Iron Plate"]);
+  });
+
+  it("never mixes inputs and outputs regardless of priorityOrder's own ordering", () => {
+    // Even though the output is ranked *before* the inputs here, inputs
+    // still lead the outputs — the two groups are always kept separate.
+    const result = orderRecipeParts(parts, ["out:Reinforced Iron Plate", "in:Screw"]);
+    expect(result.map((p) => p.part)).toEqual(["Screw", "Iron Plate", "Iron Rod", "Reinforced Iron Plate"]);
+  });
+
+  it("ignores stale priorityOrder entries for parts no longer on the recipe", () => {
+    const result = orderRecipeParts(parts, ["in:Copper Ore", "in:Iron Rod"]);
+    expect(result.map((p) => p.part)).toEqual(["Iron Rod", "Screw", "Iron Plate", "Reinforced Iron Plate"]);
   });
 });

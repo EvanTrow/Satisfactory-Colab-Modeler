@@ -35,6 +35,7 @@ function node(containerId: string) {
     purity: null,
     beltTier: null,
     storageMode: null,
+    splurgerVariant: null,
   };
 }
 

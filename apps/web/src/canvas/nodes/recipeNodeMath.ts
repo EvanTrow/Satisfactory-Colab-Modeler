@@ -43,18 +43,15 @@ import {
   ONE,
   ZERO,
   abs,
-  add,
   compare,
   divide,
   equals,
-  fromBigInt,
+  isNegative,
   isPositive,
   isZero,
   multiply,
-  negate,
   of,
   parseRational,
-  subtract,
   type Rational,
 } from "@scm/rational";
 import type { LimitMode, NodeRecord } from "@scm/ydoc";
@@ -262,23 +259,66 @@ export function stopgapPartRate(
 }
 
 // ---------------------------------------------------------------------------
-// Clock ± snapping (PLAN.md §2: "± buttons that snap the clock so the
-// machine count lands on a whole number — minus rounds count up, plus
-// rounds it down, capped at 250%").
+// Clock ± presets — the manual ± buttons step the clock through a fixed list
+// of "sensible" percentages rather than solving for a whole machine count
+// (superseded the original PLAN.md §2 "snap so machine count lands on a
+// whole number" design — see this file's git history for that version).
 // ---------------------------------------------------------------------------
 
-/** `"roundUp"` = the **"−"** button (fewer machines is wrong; PLAN.md's exact wording is "minus rounds count *up*"). `"roundDown"` = the **"+"** button. */
-export type ClockSnapDirection = "roundUp" | "roundDown";
+/**
+ * The manual ± buttons' fixed stops. 25-point spacing across the full
+ * [1, 250] range, which conveniently lines up with Satisfactory's own Power
+ * Shard mechanic — each shard raises a machine's overclock ceiling by 50%
+ * (100% at 0 shards, 150% at 1, 200% at 2, 250% at 3) — so every shard-count
+ * breakpoint a player would actually reach for is one of these stops, with a
+ * quarter-step in between for finer adjustment. `1` (not `0`) is the floor
+ * to match `MIN_CLOCK_PERCENT`.
+ */
+export const CLOCK_PRESETS: readonly Rational[] = [1, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250].map((n) =>
+  of(n),
+);
+
+/** `"up"` = the **"+"** button (raises clock speed). `"down"` = the **"−"** button (lowers it). */
+export type ClockStepDirection = "up" | "down";
+
+/**
+ * The next/previous value in `CLOCK_PRESETS` from `currentClockPercent`, in
+ * the given direction. A value that isn't itself one of the presets
+ * (freehand-typed, or imported from other data) simply moves to the nearest
+ * preset in that direction — same as if it had started from there. Holds at
+ * the first/last preset once there's nothing further in that direction (the
+ * list's own endpoints already sit at `MIN_CLOCK_PERCENT`/`MAX_CLOCK_PERCENT`,
+ * so this never needs a separate clamp).
+ */
+export function stepClockToPreset(currentClockPercent: Rational, direction: ClockStepDirection): Rational {
+  if (direction === "up") {
+    for (const preset of CLOCK_PRESETS) {
+      if (compare(preset, currentClockPercent) > 0) return preset;
+    }
+    return CLOCK_PRESETS[CLOCK_PRESETS.length - 1];
+  }
+  for (let i = CLOCK_PRESETS.length - 1; i >= 0; i--) {
+    if (compare(CLOCK_PRESETS[i], currentClockPercent) < 0) return CLOCK_PRESETS[i];
+  }
+  return CLOCK_PRESETS[0];
+}
+
+// ---------------------------------------------------------------------------
+// Job 027's `autoRound.ts` still solves clock speed against a target whole
+// machine count (a background, click-less feature — see that file's header
+// for why it's genuinely different math from the ± buttons above). These
+// primitives back that, not the manual buttons.
+// ---------------------------------------------------------------------------
 
 export interface ClockSnapResult {
   clockPercent: Rational;
   /** The machine count that actually results from `clockPercent` — exactly a whole number unless `clamped` is `true`. */
   machineCount: Rational;
-  /** `true` when the exact snap target fell outside `[MIN_CLOCK_PERCENT, MAX_CLOCK_PERCENT]` and had to be clamped, in which case `machineCount` is the genuine (non-integer) count at the clamped clock, not the originally-targeted integer. */
+  /** `true` when the exact target fell outside `[MIN_CLOCK_PERCENT, MAX_CLOCK_PERCENT]` and had to be clamped, in which case `machineCount` is the genuine (non-integer) count at the clamped clock, not the originally-targeted integer. */
   clamped: boolean;
 }
 
-/** Exported for Job 027's `autoRound.ts` — nearest-integer rounding needs the same floor primitive. */
+/** Exported for `autoRound.ts` — nearest-integer rounding needs the same floor primitive. */
 export function isIntegerRational(value: Rational): boolean {
   return value.denominator === 1n;
 }
@@ -290,22 +330,13 @@ export function floorToBigInt(value: Rational): bigint {
   return remainder === 0n || value.numerator >= 0n ? quotient : quotient - 1n;
 }
 
-/** Ceil toward +∞, via `ceil(x) = −floor(−x)`. */
-function ceilToBigInt(value: Rational): bigint {
-  return -floorToBigInt(negate(value));
-}
-
 /**
- * The shared clock-solving core behind both `snapClockToWholeMachineCount`
- * (the manual ± buttons, which pick `targetCount` directionally) and Job
- * 027's `autoRound.ts` (which picks `targetCount` via nearest-integer
- * rounding instead — there's no "+"/"-" click to imply a preferred
- * direction for a background process). Given the node's current
- * `(clockPercent, machineCount)` pair and a desired whole-number
- * `targetCount`, solves `targetCount × newClock = currentMachineCount ×
- * currentClockPercent` for `newClock` (the same clock/count-invariance
- * argument `snapClockToWholeMachineCount`'s own doc comment explains),
- * clamped to `[MIN_CLOCK_PERCENT, MAX_CLOCK_PERCENT]`.
+ * Given the node's current `(clockPercent, machineCount)` pair and a desired
+ * whole-number `targetCount`, solves `targetCount × newClock =
+ * currentMachineCount × currentClockPercent` for `newClock`, clamped to
+ * `[MIN_CLOCK_PERCENT, MAX_CLOCK_PERCENT]`. Used only by `autoRound.ts` now
+ * (which picks `targetCount` via nearest-integer rounding) — the manual ±
+ * buttons use the fixed `CLOCK_PRESETS` list above instead.
  */
 export function deriveClockForTargetCount(
   currentClockPercent: Rational,
@@ -321,57 +352,6 @@ export function deriveClockForTargetCount(
   return { clockPercent: clampedClock, machineCount, clamped };
 }
 
-/**
- * Given the node's current (clock, machine count) pair, finds the new clock
- * that lands the machine count on the next whole number in the requested
- * direction, clamped to `[MIN_CLOCK_PERCENT, MAX_CLOCK_PERCENT]`.
- *
- * Deliberately takes the already-derived `(currentClockPercent,
- * currentMachineCount)` pair rather than a `GameData`/`Recipe`/`NodeRecord`
- * triple: `machineCount × clockPercent` is invariant as long as
- * `limit`/`limitMode` don't change (both scale the same way through
- * `computeMachineCount`'s formula), so solving `targetCount × newClock =
- * currentMachineCount × currentClockPercent` for `newClock` never needs to
- * touch the recipe/limit at all. That keeps this function — the one the job
- * explicitly asks to unit-test against "known cases" — trivially testable
- * with bare numbers, with no `GameData` fixture required.
- *
- * If already at a whole number, "−" moves to the next integer *up*
- * (`count + 1`) and "+" to the next integer *down* (`count − 1`) rather than
- * doing nothing — matching the ± buttons' job of always moving by exactly
- * one machine, not just "the nearest integer" (which would be a no-op when
- * already integral).
- */
-export function snapClockToWholeMachineCount(
-  currentClockPercent: Rational,
-  currentMachineCount: Rational,
-  direction: ClockSnapDirection,
-): ClockSnapResult {
-  if (isZero(currentClockPercent) || isZero(currentMachineCount)) {
-    // Nothing to anchor the count∝1/clock relationship on (no reference
-    // rate, or the node is otherwise degenerate) — hold steady rather than
-    // dividing by zero.
-    return {
-      clockPercent: clampClockPercent(currentClockPercent),
-      machineCount: currentMachineCount,
-      clamped: false,
-    };
-  }
-
-  let targetCount: Rational;
-  if (isIntegerRational(currentMachineCount)) {
-    targetCount = direction === "roundUp" ? add(currentMachineCount, ONE) : subtract(currentMachineCount, ONE);
-  } else {
-    targetCount =
-      direction === "roundUp"
-        ? fromBigInt(ceilToBigInt(currentMachineCount))
-        : fromBigInt(floorToBigInt(currentMachineCount));
-  }
-  if (compare(targetCount, ONE) < 0) targetCount = ONE; // never solve for 0 or negative machines
-
-  return deriveClockForTargetCount(currentClockPercent, currentMachineCount, targetCount);
-}
-
 // ---------------------------------------------------------------------------
 // Somersloop clamping.
 // ---------------------------------------------------------------------------
@@ -381,4 +361,51 @@ export function clampShards(shards: number, maxShards: number): number {
   if (!Number.isFinite(shards)) return 0;
   const rounded = Math.round(shards);
   return Math.min(Math.max(rounded, 0), Math.max(maxShards, 0));
+}
+
+// ---------------------------------------------------------------------------
+// Row order (drag-to-reorder).
+//
+// Persisted via `NodeRecord.priorityOrder` — the same generic
+// `Y.Array<portId>` field Job 024's Splurger repurposes for its own
+// top/bottom-tier encoding (`splurgerPassthrough.ts`'s
+// `encode`/`decodePriorityOrder`). Here it's read as a flat list of this
+// node's own `PartRow` handle ids (`"in:<part>"`/`"out:<part>"` — the exact
+// ids `RecipeNode.tsx`'s `PartRow` already assigns its `Handle`s) in display
+// order, ungrouped — `orderRecipeParts` is what re-splits it back into an
+// inputs-then-outputs layout.
+// ---------------------------------------------------------------------------
+
+/** The `Handle`/drag id for `part` — `"in:<name>"` for a consumed part, `"out:<name>"` for a produced one, matching `RecipePart.amount`'s sign. */
+export function partHandleId(part: Pick<RecipePart, "part" | "amount">): string {
+  return `${isNegative(part.amount) ? "in" : "out"}:${part.part}`;
+}
+
+/**
+ * `parts`, split into inputs/outputs (inputs first, matching the card's
+ * left-input/right-output layout) and ordered within each group by
+ * `priorityOrder`'s rank for that part's `partHandleId`. Parts absent from
+ * `priorityOrder` (a fresh node, or a part added by a later `game_data.json`
+ * update) keep their recipe-authored relative order and sort after every
+ * part `priorityOrder` *does* rank — i.e. "explicitly placed rows first, new
+ * rows appended at the end of their group." Stale `priorityOrder` entries
+ * (a part no longer on this recipe) are simply never looked up, so they're
+ * harmless dead weight rather than something this needs to filter out.
+ */
+export function orderRecipeParts(
+  parts: readonly RecipePart[],
+  priorityOrder: readonly string[],
+): RecipePart[] {
+  const rank = new Map(priorityOrder.map((id, index) => [id, index]));
+  function byRank(a: RecipePart, b: RecipePart): number {
+    const aRank = rank.get(partHandleId(a));
+    const bRank = rank.get(partHandleId(b));
+    if (aRank !== undefined && bRank !== undefined) return aRank - bRank;
+    if (aRank !== undefined) return -1;
+    if (bRank !== undefined) return 1;
+    return 0;
+  }
+  const inputs = parts.filter((part) => isNegative(part.amount)).sort(byRank);
+  const outputs = parts.filter((part) => !isNegative(part.amount)).sort(byRank);
+  return [...inputs, ...outputs];
 }

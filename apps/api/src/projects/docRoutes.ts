@@ -14,6 +14,7 @@ import type { FastifyPluginAsync } from "fastify";
 import {
   appendUpdate,
   createProjectVersion,
+  deleteProjectVersion,
   listProjectVersions,
   loadProjectDocUpdate,
   restoreProjectVersion,
@@ -195,8 +196,13 @@ export const projectDocRoutes: FastifyPluginAsync = async (fastify) => {
    * snapshot it takes first. Responds with the safety snapshot's metadata so
    * the client can show "a pre-restore checkpoint was saved" without a
    * second round-trip.
+   *
+   * `createPreRestoreVersion` (body, default `true`) lets the client opt out
+   * of that safety snapshot — the version-history UI asks the user each
+   * restore, rather than forcing it unconditionally. `preRestoreVersion` in
+   * the response is `null` when it was skipped.
    */
-  fastify.post<{ Params: { id: string; versionId: string } }>(
+  fastify.post<{ Params: { id: string; versionId: string }; Body: { createPreRestoreVersion?: boolean } }>(
     "/api/projects/:id/versions/:versionId/restore",
     { preHandler: fastify.authenticate },
     async (request, reply) => {
@@ -215,15 +221,50 @@ export const projectDocRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(403).send({ error: "forbidden", detail: "viewer cannot restore a version" });
       }
 
-      const result = await restoreProjectVersion(id, versionId, user.id);
+      const createPreRestoreVersion = request.body?.createPreRestoreVersion !== false;
+      const result = await restoreProjectVersion(id, versionId, user.id, { createPreRestoreVersion });
       if (result === null) {
         return reply.code(404).send({ error: "version_not_found" });
       }
 
       return reply.send({
         restoredVersionId: result.restoredVersionId,
-        preRestoreVersion: serializeVersion(result.preRestoreVersion),
+        preRestoreVersion: result.preRestoreVersion ? serializeVersion(result.preRestoreVersion) : null,
       });
+    },
+  );
+
+  /**
+   * Deletes one version from a project's history. Owner/editor only, same
+   * write-gate as saving/restoring a version. Purely a version-history
+   * housekeeping op — never touches the project's current live document
+   * state (`docStorage.ts`'s `deleteProjectVersion`).
+   */
+  fastify.delete<{ Params: { id: string; versionId: string } }>(
+    "/api/projects/:id/versions/:versionId",
+    { preHandler: fastify.authenticate },
+    async (request, reply) => {
+      const user = request.user!;
+      const { id, versionId } = request.params;
+
+      const role = await resolveRole(id, user.id);
+      if (role === null) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+      const project = await findActiveProjectById(id);
+      if (!project) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+      if (!canEdit(role)) {
+        return reply.code(403).send({ error: "forbidden", detail: "viewer cannot delete a version" });
+      }
+
+      const deleted = await deleteProjectVersion(id, versionId);
+      if (!deleted) {
+        return reply.code(404).send({ error: "version_not_found" });
+      }
+
+      return reply.code(204).send();
     },
   );
 };

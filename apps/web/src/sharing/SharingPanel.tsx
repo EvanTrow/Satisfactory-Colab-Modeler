@@ -8,14 +8,24 @@
 // Two sections:
 //   - Invite links: owner-only creation (role + optional expiry/max-uses),
 //     a copy-to-clipboard button for the freshly minted link, and a list of
-//     currently-active invites with a revoke button.
+//     currently-active invites with a revoke button. Since `invites.ts`
+//     (API-side) only ever hands back a raw token at creation time — the
+//     server stores nothing but its hash, same as a session token, so it's
+//     not retrievable later — re-copying an *existing* link only works for
+//     invites created earlier in this same browser tab: their tokens are
+//     cached client-side in `sessionStorage`, keyed by invite id (see
+//     `loadCachedTokens`/`saveCachedTokens` below). An invite with no cached
+//     token (created in another tab/session, or before this cache existed)
+//     shows no Copy button — there's nothing to recover, only Revoke.
 //   - Members: visible to every role (`memberRoutes.ts`'s own "any member
 //     can view the list" rule), but role-change/remove controls only render
 //     for the owner — the server enforces this regardless, this is just UX.
+import { Share2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useFocusTrap } from "../a11y";
 import type { ProjectRole } from "../api/projects";
+import { ConfirmDialog, useConfirmDialog } from "../ui";
 import {
   buildInviteLink,
   createProjectInvite,
@@ -63,6 +73,32 @@ function formatUses(invite: ProjectInviteInfo): string {
   return invite.maxUses === null ? `${invite.uses} use${invite.uses === 1 ? "" : "s"}` : `${invite.uses}/${invite.maxUses} uses`;
 }
 
+/** sessionStorage key for a project's cached invite tokens — per-tab, cleared on tab close (matches the "only recoverable in the session that created it" scope of the cache itself). */
+function tokenCacheKey(projectId: string): string {
+  return `scm-invite-tokens:${projectId}`;
+}
+
+function loadCachedTokens(projectId: string): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.sessionStorage.getItem(tokenCacheKey(projectId));
+    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+  } catch {
+    // Storage can throw in locked-down/private-browsing contexts, or hold
+    // malformed JSON — either way, falling back to "no cached links" just
+    // means Copy buttons don't show up, not a crash.
+    return {};
+  }
+}
+
+function saveCachedTokens(projectId: string, tokens: Record<string, string>): void {
+  try {
+    window.sessionStorage.setItem(tokenCacheKey(projectId), JSON.stringify(tokens));
+  } catch {
+    // Best-effort persistence — see loadCachedTokens.
+  }
+}
+
 export function SharingPanel({ projectId, role, currentUserId }: SharingPanelProps) {
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<MembersState>({ status: "idle" });
@@ -74,7 +110,12 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
   const [newInviteExpiryDays, setNewInviteExpiryDays] = useState<string>("");
   const [newInviteMaxUses, setNewInviteMaxUses] = useState<string>("");
   const [creating, setCreating] = useState(false);
-  const [freshLink, setFreshLink] = useState<{ url: string; copied: boolean } | null>(null);
+  // Invite id -> raw token, for invites created in this browser tab (see this
+  // file's header comment). `justCreatedId` picks out the one to show in the
+  // highlighted "just created" box; the rest only get a Copy button in the list.
+  const [knownTokens, setKnownTokens] = useState<Record<string, string>>({});
+  const [justCreatedId, setJustCreatedId] = useState<string | null>(null);
+  const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
 
   const isOwner = role === "owner";
 
@@ -83,6 +124,7 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
   // `SettingsMenu`/`VersionPanel`.
   const panelRef = useRef<HTMLDivElement>(null);
   useFocusTrap(panelRef, open, { onClose: () => setOpen(false) });
+  const { requestConfirm, dialogProps: confirmDialogProps } = useConfirmDialog();
 
   async function refreshMembers() {
     setMembers({ status: "loading" });
@@ -100,6 +142,24 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
     try {
       const list = await listProjectInvites(projectId);
       setInvites({ status: "loaded", invites: list });
+      // Prune cached tokens for invites that no longer exist (revoked —
+      // possibly from another tab — or expired off the list) so the cache
+      // doesn't grow unboundedly and never offers a Copy button for a dead invite.
+      setKnownTokens((current) => {
+        const validIds = new Set(list.map((invite) => invite.id));
+        const next: Record<string, string> = {};
+        let changed = false;
+        for (const [id, token] of Object.entries(current)) {
+          if (validIds.has(id)) {
+            next[id] = token;
+          } else {
+            changed = true;
+          }
+        }
+        if (!changed) return current;
+        saveCachedTokens(projectId, next);
+        return next;
+      });
     } catch (err) {
       setInvites({ status: "error", message: describeError(err) });
     }
@@ -108,7 +168,9 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
   useEffect(() => {
     if (!open) return;
     setActionError(null);
-    setFreshLink(null);
+    setJustCreatedId(null);
+    setCopiedInviteId(null);
+    setKnownTokens(loadCachedTokens(projectId));
     void refreshMembers();
     void refreshInvites();
     // refreshMembers/refreshInvites close over stable props (projectId/isOwner) — re-running on `open` alone matches VersionPanel.tsx's identical pattern.
@@ -128,7 +190,13 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
         options.maxUses = maxUses;
       }
       const created = await createProjectInvite(projectId, options);
-      setFreshLink({ url: buildInviteLink(created.token), copied: false });
+      setKnownTokens((current) => {
+        const next = { ...current, [created.id]: created.token };
+        saveCachedTokens(projectId, next);
+        return next;
+      });
+      setJustCreatedId(created.id);
+      setCopiedInviteId(null);
       setNewInviteExpiryDays("");
       setNewInviteMaxUses("");
       await refreshInvites();
@@ -139,10 +207,12 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
     }
   }
 
-  async function handleCopy(url: string) {
+  async function handleCopyInviteLink(inviteId: string) {
+    const token = knownTokens[inviteId];
+    if (!token) return;
     try {
-      await navigator.clipboard.writeText(url);
-      setFreshLink((current) => (current && current.url === url ? { ...current, copied: true } : current));
+      await navigator.clipboard.writeText(buildInviteLink(token));
+      setCopiedInviteId(inviteId);
     } catch {
       // Clipboard permission denied or unavailable — the link is still
       // visible/selectable as plain text in the input below, so this isn't
@@ -151,11 +221,24 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
   }
 
   async function handleRevokeInvite(invite: ProjectInviteInfo) {
-    if (!window.confirm("Revoke this invite link? It can no longer be used to join once revoked.")) return;
+    const confirmed = await requestConfirm({
+      message: "Revoke this invite link? It can no longer be used to join once revoked.",
+      confirmLabel: "Revoke",
+      danger: true,
+    });
+    if (!confirmed) return;
     setBusyKey(`invite:${invite.id}`);
     setActionError(null);
     try {
       await revokeProjectInvite(projectId, invite.id);
+      setKnownTokens((current) => {
+        if (!(invite.id in current)) return current;
+        const next = { ...current };
+        delete next[invite.id];
+        saveCachedTokens(projectId, next);
+        return next;
+      });
+      setJustCreatedId((current) => (current === invite.id ? null : current));
       await refreshInvites();
     } catch (err) {
       setActionError(describeError(err));
@@ -178,7 +261,12 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
   }
 
   async function handleRemoveMember(member: ProjectMemberInfo) {
-    if (!window.confirm(`Remove ${member.username} from this project?`)) return;
+    const confirmed = await requestConfirm({
+      message: `Remove ${member.username} from this project?`,
+      confirmLabel: "Remove",
+      danger: true,
+    });
+    if (!confirmed) return;
     setBusyKey(`member:${member.userId}`);
     setActionError(null);
     try {
@@ -202,9 +290,7 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
         aria-expanded={open}
         className="nodrag inline-flex h-7 items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 text-xs text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
       >
-        <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden>
-          <path d="M13 6a3 3 0 10-2.83-4H10a3 3 0 000 6c.35 0 .68-.06 1-.17l-3.02 2.62A3 3 0 105 12c0 .2.02.4.05.6l3.1-2.7A3 3 0 108 12a3 3 0 002.83-4h.17c.35 0 .68.06 1 .17L15 5.83A3 3 0 0013 6z" />
-        </svg>
+        <Share2 className="h-3.5 w-3.5" aria-hidden />
         Share
       </button>
       {open && (
@@ -228,20 +314,20 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
               <div className="mb-3">
                 <p className="mb-1 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Invite link</p>
 
-                {freshLink && (
+                {justCreatedId && knownTokens[justCreatedId] && (
                   <div className="mb-2 flex items-center gap-1 rounded-md border border-[var(--outpost-border)] bg-[var(--outpost-soft)] px-2 py-1.5">
                     <input
                       readOnly
-                      value={freshLink.url}
+                      value={buildInviteLink(knownTokens[justCreatedId])}
                       onFocus={(event) => event.currentTarget.select()}
                       className="min-w-0 flex-1 bg-transparent text-xs text-[var(--outpost)] focus:outline-none"
                     />
                     <button
                       type="button"
-                      onClick={() => void handleCopy(freshLink.url)}
+                      onClick={() => void handleCopyInviteLink(justCreatedId)}
                       className="shrink-0 rounded-md bg-[var(--accent)] px-2 py-1 text-[11px] font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]"
                     >
-                      {freshLink.copied ? "Copied!" : "Copy"}
+                      {copiedInviteId === justCreatedId ? "Copied!" : "Copy"}
                     </button>
                   </div>
                 )}
@@ -288,25 +374,40 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
                     <p className="px-1 py-1 text-xs text-[var(--text-muted)]">No active invite links.</p>
                   )}
                   {invites.status === "loaded" &&
-                    invites.invites.map((invite) => (
-                      <div
-                        key={invite.id}
-                        className="flex items-center justify-between gap-2 rounded-md px-1 py-1 text-xs text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
-                      >
-                        <div className="min-w-0">
-                          <span className="text-[var(--text-primary)]">{invite.role}</span> ·{" "}
-                          {formatUses(invite)} · {formatExpiry(invite.expiresAt)}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void handleRevokeInvite(invite)}
-                          disabled={busyKey === `invite:${invite.id}`}
-                          className="shrink-0 rounded-md border border-[var(--border-default)] px-2 py-0.5 text-[11px] text-[var(--danger)] hover:border-[var(--danger)] disabled:opacity-50"
+                    invites.invites.map((invite) => {
+                      const token = knownTokens[invite.id];
+                      return (
+                        <div
+                          key={invite.id}
+                          className="flex items-center justify-between gap-2 rounded-md px-1 py-1 text-xs text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
                         >
-                          Revoke
-                        </button>
-                      </div>
-                    ))}
+                          <div className="min-w-0">
+                            <span className="text-[var(--text-primary)]">{invite.role}</span> ·{" "}
+                            {formatUses(invite)} · {formatExpiry(invite.expiresAt)}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            {token && (
+                              <button
+                                type="button"
+                                onClick={() => void handleCopyInviteLink(invite.id)}
+                                title="Copy this invite link again"
+                                className="rounded-md border border-[var(--border-default)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+                              >
+                                {copiedInviteId === invite.id ? "Copied!" : "Copy"}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void handleRevokeInvite(invite)}
+                              disabled={busyKey === `invite:${invite.id}`}
+                              className="rounded-md border border-[var(--border-default)] px-2 py-0.5 text-[11px] text-[var(--danger)] hover:border-[var(--danger)] disabled:opacity-50"
+                            >
+                              Revoke
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                 </div>
               </div>
             )}
@@ -361,6 +462,7 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
           </div>
         </>
       )}
+      <ConfirmDialog {...confirmDialogProps} />
     </div>
   );
 }

@@ -2,8 +2,11 @@
 export { ConnectionEdge } from "./ConnectionEdge";
 export {
   WILDCARD_PART,
+  WILDCARD_PART_BOTTOM,
+  WILDCARD_PART_TOP,
   connectPorts,
   isValidPortConnection,
+  isWildcardPart,
   parsePortHandleId,
   reconnectEdge,
   resolveEdgeEndpoints,

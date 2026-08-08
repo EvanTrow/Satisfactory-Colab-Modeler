@@ -59,32 +59,58 @@ export interface ResolvedEndpoints {
 }
 
 /**
- * Job 024: the part name a Splurger's two generic handles (`in:*`/`out:*` —
- * see `canvas/nodes/SplurgerNode.tsx`) use. A Splurger has no recipe, so it
- * has no fixed part list to build real `${dir}:${part}` handles from ahead
- * of time the way `RecipeNode.tsx`'s `PartRow` does — its two handles accept
- * ANY part, and the connection's real part name comes from whichever real
- * recipe port is on the other end. See `reconcilePart` below for exactly how
- * this interacts with the existing exact-part-match rule.
+ * Job 024: the part name a Splurger's generic handles (`in:*`/`out:*` — see
+ * `canvas/nodes/SplurgerNode.tsx`) use. A Splurger has no recipe, so it has
+ * no fixed part list to build real `${dir}:${part}` handles from ahead of
+ * time the way `RecipeNode.tsx`'s `PartRow` does — its handles accept ANY
+ * part, and the connection's real part name comes from whichever real
+ * recipe port is on the other end. See `reconcilePart`/`isWildcardPart`
+ * below for exactly how this interacts with the existing exact-part-match
+ * rule.
  */
 export const WILDCARD_PART = "*";
 
 /**
+ * Later Splurger redesign: when a node's `splurgerPortCaps` side is 2 (a
+ * Priority Splitter/Merger/Splurger's tiered side), that side renders TWO
+ * real, independently-draggable `Handle`s instead of one — the reference
+ * Satisfactory Modeler's own "drag straight to the priority port, or straight
+ * to the overflow port" interaction, replacing an earlier pass that kept one
+ * shared handle plus a manual "flip tier" button. Each of these two handles
+ * needs its own unique id (React Flow requires unique ids among handles of
+ * the same type on one node — plain `in:*`/`out:*` duplicated wouldn't work),
+ * so each is its own wildcard SENTINEL — still a wildcard for part-matching
+ * purposes (see `isWildcardPart`), but distinguishable from its sibling.
+ * `SplurgerNode.tsx` derives which physical handle an edge is anchored to
+ * (and therefore its tier) straight from `EdgeRecord.fromPort`/`.toPort`
+ * itself — see `workers/splurgerPassthrough.ts`'s `tierFromPort`.
+ */
+export const WILDCARD_PART_TOP = "*top";
+export const WILDCARD_PART_BOTTOM = "*bottom";
+
+/** True for `WILDCARD_PART` itself or either tiered sentinel — anything that defers to the OTHER side's real part name rather than naming one of its own. */
+export function isWildcardPart(part: string): boolean {
+  return part.startsWith(WILDCARD_PART);
+}
+
+/**
  * Job 024: reconciles two ports' part names for a connection, with one new
- * case beyond Job 011's original exact-match rule — a wildcard
- * (`WILDCARD_PART`) side defers to the other side's real part name. Two
- * wildcard sides (a direct Splurger-to-Splurger wire, with neither end
- * anchored to a real part) has no real part to assign and is rejected —
- * `EdgeRecord.part` is a required, non-nullable string, so there is no
- * "unknown part" value to fall back to; this also matches this job's
- * documented decision that chained/adjacent Splurgers aren't a supported
- * shape (see `workers/splurgerPassthrough.ts`'s header).
+ * case beyond Job 011's original exact-match rule — a wildcard side (see
+ * `isWildcardPart`) defers to the other side's real part name. Two wildcard
+ * sides (a direct Splurger-to-Splurger wire, with neither end anchored to a
+ * real part) has no real part to assign and is rejected — `EdgeRecord.part`
+ * is a required, non-nullable string, so there is no "unknown part" value to
+ * fall back to; this also matches this job's documented decision that
+ * chained/adjacent Splurgers aren't a supported shape (see
+ * `workers/splurgerPassthrough.ts`'s header).
  */
 function reconcilePart(a: string, b: string): string | null {
-  if (a === b) return a === WILDCARD_PART ? null : a;
-  if (a === WILDCARD_PART) return b;
-  if (b === WILDCARD_PART) return a;
-  return null;
+  const aWild = isWildcardPart(a);
+  const bWild = isWildcardPart(b);
+  if (aWild && bWild) return null;
+  if (aWild) return b;
+  if (bWild) return a;
+  return a === b ? a : null;
 }
 
 /**
@@ -146,6 +172,50 @@ export function resolveEdgeEndpoints(connection: ConnectionLike): ResolvedEndpoi
 /** Wired to `<ReactFlow isValidConnection={...} />` — accepts a `Connection` mid-drag or a full `Edge` (React Flow calls it with either). */
 export function isValidPortConnection(connection: ConnectionLike): boolean {
   return resolveEdgeEndpoints(connection) !== null;
+}
+
+/**
+ * A minimal, structural description of a rendered `<Handle>` — the subset of
+ * React Flow's own `useConnection()` `fromHandle` shape `isValidDragCandidate`
+ * needs. Kept local (not imported from `@xyflow/react`) for the same reason
+ * `ConnectionLike` is: this file stays usable from plain unit tests with no
+ * React Flow provider.
+ */
+export interface HandleRef {
+  nodeId: string;
+  id?: string | null;
+  type: "source" | "target";
+}
+
+/**
+ * While a connection is being dragged out from `from`, would dropping it on
+ * `candidate` produce a valid edge? Every node component's Handle-rendering
+ * code calls this (via `useConnection()`'s live `fromHandle`) to dim every
+ * handle that isn't a legal drop target, so only the ones a drag could
+ * actually land on stay at full opacity — PLAN.md's connection-drag
+ * affordance improvement.
+ *
+ * Two handles of the same `type` (both `"source"` or both `"target"`) are
+ * rejected up front without touching `isValidPortConnection` at all — this
+ * app's default `connectionMode="strict"` never treats same-type handles as
+ * a valid pair regardless of part, the same rule `resolveEdgeEndpoints`
+ * itself enforces via its direction check, just phrased here in terms of
+ * React Flow's `type` rather than this app's own `"in"`/`"out"` port
+ * direction (the two aren't the same axis: a user can start a drag from
+ * either a `"target"` or a `"source"` handle, so `from.type` alone doesn't
+ * tell you which side of the eventual `ConnectionLike` it belongs on — the
+ * source/target assignment below does that).
+ */
+export function isValidDragCandidate(from: HandleRef, candidate: HandleRef): boolean {
+  if (from.type === candidate.type) return false;
+  const sourceSide = from.type === "source" ? from : candidate;
+  const targetSide = from.type === "source" ? candidate : from;
+  return isValidPortConnection({
+    source: sourceSide.nodeId,
+    sourceHandle: sourceSide.id,
+    target: targetSide.nodeId,
+    targetHandle: targetSide.id,
+  });
 }
 
 /**

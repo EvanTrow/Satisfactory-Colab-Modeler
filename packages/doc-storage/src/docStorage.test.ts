@@ -8,6 +8,7 @@ import {
   appendUpdate,
   compactProject,
   createProjectVersion,
+  deleteProjectVersion,
   duplicateDocState,
   getProjectVersionBytes,
   listProjectVersions,
@@ -497,7 +498,8 @@ describe("restoreProjectVersion", () => {
     const result = await restoreProjectVersion(project.id, versionA.id, owner.id);
     expect(result).not.toBeNull();
     expect(result!.restoredVersionId).toBe(versionA.id);
-    expect(result!.preRestoreVersion.kind).toBe("pre_restore");
+    expect(result!.preRestoreVersion).not.toBeNull();
+    expect(result!.preRestoreVersion!.kind).toBe("pre_restore");
 
     // The canvas (a fresh load) shows state A again.
     const { doc: afterRestore, appliedLogRows } = await loadProjectDoc(project.id);
@@ -511,7 +513,7 @@ describe("restoreProjectVersion", () => {
     expect(versions).toHaveLength(2);
     const preRestore = versions.find((v) => v.kind === "pre_restore");
     expect(preRestore).toBeDefined();
-    expect(preRestore!.id).toBe(result!.preRestoreVersion.id);
+    expect(preRestore!.id).toBe(result!.preRestoreVersion!.id);
 
     const preRestoreBytes = await getProjectVersionBytes(project.id, preRestore!.id);
     const preRestoreDoc = new Y.Doc();
@@ -570,9 +572,80 @@ describe("restoreProjectVersion", () => {
     expect(afterFirstRestore.getMap("meta").get("marker")).toBe("state-A");
 
     // Restore back to the pre_restore snapshot of state B taken by the first restore.
-    await restoreProjectVersion(project.id, firstRestore!.preRestoreVersion.id, owner.id);
+    await restoreProjectVersion(project.id, firstRestore!.preRestoreVersion!.id, owner.id);
     const { doc: afterSecondRestore } = await loadProjectDoc(project.id);
     expect(afterSecondRestore.getMap("meta").get("marker")).toBe("state-B");
+  });
+
+  it("skips the pre_restore safety snapshot when createPreRestoreVersion: false is passed", async () => {
+    const owner = await createTestUser("docstorage-restore-nobackup-owner");
+    const project = await createTestProject(owner.id);
+
+    const editor = createMarkerEditor();
+    await appendUpdate(project.id, editor.setMarker("state-A"), owner.id);
+    const versionA = await createProjectVersion(project.id, { kind: "manual", createdBy: owner.id });
+
+    await appendUpdate(project.id, editor.setMarker("state-B"), owner.id);
+
+    const result = await restoreProjectVersion(project.id, versionA.id, owner.id, { createPreRestoreVersion: false });
+    expect(result).not.toBeNull();
+    expect(result!.preRestoreVersion).toBeNull();
+
+    // The restore itself still happened...
+    const { doc } = await loadProjectDoc(project.id);
+    expect(doc.getMap("meta").get("marker")).toBe("state-A");
+
+    // ...but state B was never snapshotted, so only versionA exists.
+    const versions = await listProjectVersions(project.id);
+    expect(versions).toHaveLength(1);
+    expect(versions[0]!.id).toBe(versionA.id);
+  });
+});
+
+describe("deleteProjectVersion", () => {
+  it("deletes a version and returns true", async () => {
+    const owner = await createTestUser("docstorage-delete-owner");
+    const project = await createTestProject(owner.id);
+    const version = await createProjectVersion(project.id, { kind: "manual", label: "To delete", createdBy: owner.id });
+
+    const deleted = await deleteProjectVersion(project.id, version.id);
+    expect(deleted).toBe(true);
+
+    const versions = await listProjectVersions(project.id);
+    expect(versions).toHaveLength(0);
+  });
+
+  it("returns false for a nonexistent version id", async () => {
+    const owner = await createTestUser("docstorage-delete-missing-owner");
+    const project = await createTestProject(owner.id);
+
+    const deleted = await deleteProjectVersion(project.id, crypto.randomUUID());
+    expect(deleted).toBe(false);
+  });
+
+  it("does not delete a version belonging to a different project (scoped)", async () => {
+    const owner = await createTestUser("docstorage-delete-crossproject-owner");
+    const projectA = await createTestProject(owner.id);
+    const projectB = await createTestProject(owner.id);
+    const version = await createProjectVersion(projectA.id, { kind: "manual", createdBy: owner.id });
+
+    const deleted = await deleteProjectVersion(projectB.id, version.id);
+    expect(deleted).toBe(false);
+
+    const versions = await listProjectVersions(projectA.id);
+    expect(versions).toHaveLength(1);
+  });
+
+  it("deleting a version does not affect the project's live document state", async () => {
+    const owner = await createTestUser("docstorage-delete-livestate-owner");
+    const project = await createTestProject(owner.id);
+    await appendUpdate(project.id, singleMarkerUpdate("still-here"), owner.id);
+    const version = await createProjectVersion(project.id, { kind: "manual", createdBy: owner.id });
+
+    await deleteProjectVersion(project.id, version.id);
+
+    const { doc } = await loadProjectDoc(project.id);
+    expect(doc.getMap("meta").get("marker")).toBe("still-here");
   });
 });
 

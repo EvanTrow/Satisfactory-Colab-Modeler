@@ -29,6 +29,11 @@ function extractInviteTokenFromPath(pathname: string): string | null {
   return match ? decodeURIComponent(match[1]!) : null;
 }
 
+function extractProjectShortIdFromPath(pathname: string): string | null {
+  const match = /^\/p\/([^/]+)\/edit\/?$/.exec(pathname);
+  return match ? decodeURIComponent(match[1]!) : null;
+}
+
 // Minimal shape of GET /auth/me's response body (apps/api/src/auth/routes.ts).
 interface CurrentUser {
   id: string;
@@ -45,33 +50,44 @@ type AuthState = { status: "loading" } | { status: "anonymous" } | { status: "au
  * still no router library in `apps/web` (none of the key libraries in
  * PLAN.md §7 name one, and nothing so far has needed real URL-based
  * routing) — this is plain React state, not URL-addressable via React
- * Router or similar. `routes/index.ts`'s placeholder comment ("Job-later
- * work") is about a real router, which a future job can layer over this if
- * project URLs need to be shareable/bookmarkable.
+ * Router or similar.
  *
- * Job 008 pushes a `/p/:shortId/edit` URL into the address bar (via the
- * History API directly, see `enterCanvas`/`leaveCanvas` below) purely so
- * the browser's address bar reflects what's on screen and the back button
- * works — it is NOT a real deep link. Loading that URL fresh (or
- * refreshing) does not reconstruct this view: `App` always boots into
- * `{ name: "projects" }` and only gets to `"canvas"` by clicking a project,
- * same as Job 006 did with the placeholder this replaces. Wiring an actual
- * deep link would need a `GET /api/projects/by-short-id/:shortId`-style
- * endpoint that doesn't exist yet — explicitly out of this job's scope
- * (no backend/API changes).
+ * `enterCanvas` pushes a `/p/:shortId/edit` URL into the address bar (via
+ * the History API directly) so the browser's address bar reflects what's
+ * on screen and the back button works. It IS also a real deep link: on
+ * mount, `App` checks the current pathname (see the
+ * `extractProjectShortIdFromPath` effect below) and, once authenticated,
+ * resolves the `shortId` back to a project via `listProjects` so a
+ * hard refresh (or a bookmarked/shared `/p/:shortId/edit` URL) lands back
+ * in the canvas instead of bouncing to the project list. There's no
+ * dedicated `GET /api/projects/by-short-id/:id` endpoint for this — it
+ * reuses the same `listProjects` call the project list itself already
+ * makes, filtering client-side, same spirit as `handleInviteRedeemed`
+ * below.
  */
 type View =
   | { name: "projects" }
   | { name: "canvas"; project: ProjectSummary }
   // Account-level settings (`routes/UserSettingsPage.tsx`) — only reachable
   // from the project list's own header, not from inside a project (no
-  // `CanvasView` entry point), so it always closes back to "projects".
+  // `CanvasView` entry point), so it always closes back to "projects". Has
+  // its own `/settings` URL (see `openSettings`/`closeSettings` below), same
+  // as `"canvas"` does — a fresh load or refresh on `/settings` lands here
+  // directly rather than on the project list, and the browser back button
+  // pops out of it instead of leaving the SPA (see the `popstate` handler).
   | { name: "settings" };
 
 function App() {
   const { t } = useTranslation("app");
   const [auth, setAuth] = useState<AuthState>({ status: "loading" });
-  const [view, setView] = useState<View>({ name: "projects" });
+  // Lazy initializer: `/settings` is the one `View` that's resolvable from
+  // the URL alone, with no auth/network round trip needed first (see the
+  // `View` comment above) — everything else (`"canvas"`) needs the
+  // `initialProjectShortId` effect below because it needs a project fetched
+  // by shortId first.
+  const [view, setView] = useState<View>(() =>
+    window.location.pathname === "/settings" ? { name: "settings" } : { name: "projects" },
+  );
   // Job 014: mounted once here (not just inside `CanvasView.tsx`) precisely
   // because "app-level, not canvas-only" is the whole point — see
   // `theme/useTheme.ts`'s header comment. Both mounts share the same
@@ -102,21 +118,76 @@ function App() {
     window.history.pushState({ shortId: project.shortId }, "", `/p/${project.shortId}/edit`);
   }, []);
 
+  // Deep-link resolution: if the page loaded (or was refreshed) on
+  // `/p/:shortId/edit`, recover which project that is once we know who's
+  // logged in, and jump straight into its canvas — see the `View` comment
+  // above. Captured once at mount via a lazy initializer (not an effect)
+  // since `window.location.pathname` won't change under us before this
+  // runs; `enterCanvas` itself keeps the URL in sync from here on.
+  const [initialProjectShortId] = useState<string | null>(() =>
+    extractProjectShortIdFromPath(window.location.pathname),
+  );
+  const [resolvingProjectLink, setResolvingProjectLink] = useState(initialProjectShortId !== null);
+
+  useEffect(() => {
+    if (!initialProjectShortId || auth.status === "loading") return;
+    if (auth.status !== "authenticated") {
+      // Anonymous on a deep link: the login prompt below takes over, same
+      // as any other authenticated-only route. There's no redirect-target
+      // plumbing through `/auth/discord/login` (see the `/i/:token` header
+      // comment above) to pick this back up post-login.
+      setResolvingProjectLink(false);
+      return;
+    }
+
+    let cancelled = false;
+    listProjects()
+      .then((projects) => {
+        if (cancelled) return;
+        const match = projects.find((p) => p.shortId === initialProjectShortId);
+        if (match) {
+          setView({ name: "canvas", project: match });
+        } else {
+          // Deleted, never existed, or the user lost access: fall back to
+          // the project list and drop the stale URL rather than getting
+          // stuck re-resolving it.
+          window.history.replaceState({}, "", "/");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) window.history.replaceState({}, "", "/");
+      })
+      .finally(() => {
+        if (!cancelled) setResolvingProjectLink(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialProjectShortId, auth.status]);
+
   const leaveCanvas = useCallback(() => {
     setView({ name: "projects" });
     window.history.pushState({}, "", "/");
   }, []);
 
-  const openSettings = useCallback(() => setView({ name: "settings" }), []);
+  const openSettings = useCallback(() => {
+    setView({ name: "settings" });
+    window.history.pushState({}, "", "/settings");
+  }, []);
 
-  const closeSettings = useCallback(() => setView({ name: "projects" }), []);
+  const closeSettings = useCallback(() => {
+    setView({ name: "projects" });
+    window.history.pushState({}, "", "/");
+  }, []);
 
-  // Browser back button while the canvas is open: pop out to the project
-  // list instead of leaving the SPA (there's nowhere else for this History
-  // entry to go, since `enterCanvas` never pushed more than one level).
+  // Browser back button while the canvas or settings is open: pop out to
+  // the project list instead of leaving the SPA (there's nowhere else for
+  // this History entry to go, since neither `enterCanvas` nor
+  // `openSettings` ever pushes more than one level).
   useEffect(() => {
     function onPopState() {
-      setView((current) => (current.name === "canvas" ? { name: "projects" } : current));
+      setView((current) => (current.name !== "projects" ? { name: "projects" } : current));
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -275,6 +346,14 @@ function App() {
           gated behind it. */}
       {!pendingInviteToken && view.name === "settings" && <UserSettingsPage onBack={closeSettings} />}
 
+      {/* While a `/p/:shortId/edit` deep link (e.g. a page refresh mid-project)
+          is being resolved back to a project, show the same loading state
+          as the initial auth check rather than flashing the project list
+          first — see the `initialProjectShortId` effect above. */}
+      {!pendingInviteToken && view.name !== "settings" && auth.status === "authenticated" && resolvingProjectLink && (
+        <div className="mx-auto max-w-3xl px-4 py-16 text-center text-[var(--text-muted)]">{t("app.loading")}</div>
+      )}
+
       {/* Route guard: only an authenticated user gets past this point to
           the project list / canvas. Anonymous and loading states render the
           login prompt above with no project content underneath — the
@@ -286,7 +365,7 @@ function App() {
         </div>
       )}
 
-      {!pendingInviteToken && auth.status === "authenticated" && view.name === "projects" && (
+      {!pendingInviteToken && auth.status === "authenticated" && view.name === "projects" && !resolvingProjectLink && (
         <ProjectsPage onOpenProject={enterCanvas} />
       )}
     </main>

@@ -11,7 +11,9 @@
 // breadcrumb trail, and a node-level context menu for moving nodes
 // into/out of an outpost and deleting one (reparenting its contents rather
 // than destroying them).
+import { Lock, Map as MapIcon, Maximize, Redo2, Undo2, Unlock, ZoomIn, ZoomOut } from "lucide-react";
 import {
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
   useCallback,
@@ -25,11 +27,13 @@ import { updateContainer, type SfmDocument, type Settings } from "@scm/ydoc";
 import {
   Background,
   BackgroundVariant,
+  ControlButton,
   Controls,
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  type FinalConnectionState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -42,13 +46,14 @@ import {
   useSelectionPublisher,
   type LocalUserIdentity,
 } from "../collab";
+import { RecipeChooser, type PendingConnectionInfo } from "../panels";
 import { SummaryPanel } from "../panels";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
 import { SettingsMenu } from "./SettingsMenu";
 import { SolverResultContext } from "./SolverResultContext";
 import { type ClickPoint, isDoubleClick } from "./doubleClick";
-import { ConnectionEdge, useConnectionHandlers } from "./edges";
+import { ConnectionEdge, parsePortHandleId, useConnectionHandlers } from "./edges";
 import { RecipeNode, useAutoRound } from "./nodes";
 import {
   BlueprintNode,
@@ -65,7 +70,6 @@ import { SaveStatusIndicator } from "./persistence/SaveStatusIndicator";
 import { type SaveStatus } from "./persistence/updateQueue";
 import { useProjectDocument, type StaticCanvasDoc } from "./persistence/useProjectDocument";
 import { VersionPanel } from "./persistence/VersionPanel";
-import { RecipeChooser } from "../panels";
 import { SharingPanel } from "../sharing";
 import {
   MarqueeOverlay,
@@ -78,7 +82,7 @@ import { useSettings } from "./useSettings";
 import { useSolver } from "../workers";
 import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
 import { SolveStatusIndicator } from "./SolveStatusIndicator";
-import { SplurgerNode } from "./nodes";
+import { SinkNode, SplurgerNode, StorageNode } from "./nodes";
 
 // Module-level constants (not created inside the component) so React Flow
 // never sees a new `nodeTypes`/`edgeTypes` object identity on every render
@@ -91,8 +95,28 @@ import { SplurgerNode } from "./nodes";
 // what `useYjsSync.ts` assigns to a normal direct edge (Job 011's
 // `ConnectionEdge`); `"boundary"` (Job 013) matches a boundary-crossing
 // projected edge (`outposts/BoundaryEdge.tsx`).
-const nodeTypes = { recipe: RecipeNode, outpost: OutpostNode, blueprint: BlueprintNode, splurger: SplurgerNode };
+const nodeTypes = {
+  recipe: RecipeNode,
+  outpost: OutpostNode,
+  blueprint: BlueprintNode,
+  splurger: SplurgerNode,
+  sink: SinkNode,
+  depot: SinkNode,
+  storage: StorageNode,
+};
 const edgeTypes = { part: ConnectionEdge, boundary: BoundaryEdge };
+
+/** Node kinds whose right-click menu shows `RecipeNodeQuickSettings.tsx` (at minimum the Name field, plus recipe-only fields it gates itself). */
+const QUICK_SETTINGS_KINDS = new Set(["recipe", "splurger", "sink", "depot", "storage"]);
+
+// `@xyflow/react/dist/style.css`'s `.react-flow__controls-button svg` rule
+// hard-codes `fill: currentColor` and `max-width/max-height: 12px` — fine for
+// react-flow's own built-in (filled-shape) control icons, but it clobbers
+// lucide's stroke-based outline icons into solid blobs and squashes them.
+// Inline styles beat an external stylesheet's element selector (no
+// `!important` needed), so this re-asserts `fill: none` and a real size on
+// every custom `ControlButton` icon below.
+const controlButtonIconStyle: CSSProperties = { fill: "none", width: 16, height: 16, maxWidth: "none", maxHeight: "none" };
 
 /**
  * How close together (in ms) and how close together (in screen px) two
@@ -406,7 +430,7 @@ function CanvasViewReady({
                   title={t("canvas.undo", { label: tRaw("UNDO") })}
                   className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  ↶ {tRaw("UNDO")}
+                  <Undo2 className="inline h-3.5 w-3.5" aria-hidden /> {tRaw("UNDO")}
                 </button>
                 <button
                   type="button"
@@ -415,7 +439,7 @@ function CanvasViewReady({
                   title={t("canvas.redo", { label: tRaw("REDO") })}
                   className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  ↷ {tRaw("REDO")}
+                  <Redo2 className="inline h-3.5 w-3.5" aria-hidden /> {tRaw("REDO")}
                 </button>
               </div>
               {/* Job 024: "Solving… [STOP]" — visible only while a Full-mode solve is genuinely in flight. */}
@@ -441,7 +465,7 @@ function CanvasViewReady({
                     : "border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
                 }`}
               >
-                🗺
+                <MapIcon className="h-4 w-4" aria-hidden />
               </button>
               {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. Job 019 added the solver-mode/number-format sections. */}
               <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
@@ -509,6 +533,15 @@ interface ChooserState {
   flowPosition: { x: number; y: number };
   /** Viewport/screen coordinates — where the modal opens, per PLAN.md §2 ("Recipe Chooser opens" at the click point). */
   screenPosition: { x: number; y: number };
+  /** Set when this chooser was opened by dragging a connection out to empty canvas — see `handleConnectEnd` below. */
+  pendingConnection?: PendingConnectionInfo | null;
+}
+
+/** Reads a native pointer event's client coordinates — `onConnectEnd`'s `event` is typed `MouseEvent | TouchEvent`, unlike every other click handler in this file which only ever sees a `MouseEvent`. */
+function eventClientPoint(event: MouseEvent | TouchEvent): { x: number; y: number } {
+  if ("clientX" in event) return { x: event.clientX, y: event.clientY };
+  const touch = event.changedTouches[0];
+  return touch ? { x: touch.clientX, y: touch.clientY } : { x: 0, y: 0 };
 }
 
 /**
@@ -518,10 +551,18 @@ interface ChooserState {
  * `<ReactFlowProvider>` and call `useReactFlow()`.
  */
 function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
+  const { t } = useTranslation("app");
   const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = sync;
   const { sfmDoc, containerId, undoManager, navigateToContainer, awareness, localPresence } = useCanvasDoc();
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
   const [chooser, setChooser] = useState<ChooserState | null>(null);
+  // Job (icon migration): backs the custom lock/unlock `ControlButton` below —
+  // `<Controls>`'s own built-in interactive-toggle button has no icon-swap
+  // prop, so its zoom/fit-view/interactive buttons are disabled via
+  // `showZoom`/`showFitView`/`showInteractive` and rebuilt as `ControlButton`
+  // children with lucide icons instead, wired straight to `<ReactFlow>`'s
+  // `nodesDraggable`/`nodesConnectable`/`elementsSelectable` props.
+  const [interactive, setInteractive] = useState(true);
 
   // Job 021: local cursor publishing (throttled mousemove → Awareness) and
   // local selection publishing (React Flow's own `node.selected`, Job 012 —
@@ -541,7 +582,7 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
   // Job 011: drag-to-connect, edge removal via re-drag, and mismatched-part
   // rejection. See `useConnectionHandlers.ts`'s header comment for exactly
   // how the reconnect-vs-remove-by-drag split works.
-  const { isValidConnection, onConnect, onReconnectStart, onReconnect, onReconnectEnd } =
+  const { isValidConnection, onConnect, onReconnectStart, onReconnect, onReconnectEnd, isReconnecting } =
     useConnectionHandlers(sfmDoc, containerId);
 
   // Job 012: right-click-drag marquee multi-select. `enabled` also gates
@@ -571,12 +612,39 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
     enabled: chooser === null && nodeMenu === null,
   });
 
-  function openChooserAt(clientX: number, clientY: number) {
+  function openChooserAt(clientX: number, clientY: number, pendingConnection?: PendingConnectionInfo) {
     setChooser({
       flowPosition: screenToFlowPosition({ x: clientX, y: clientY }),
       screenPosition: { x: clientX, y: clientY },
+      pendingConnection,
     });
   }
+
+  /**
+   * A connection dragged out from a port handle and released — fires for
+   * EVERY drag-to-connect gesture, successful or not (React Flow's
+   * `onConnectEnd` contract), including a reconnect drag of an existing
+   * edge's endpoint (see `isReconnecting`'s own doc comment for why that
+   * case is explicitly excluded here — Job 011's own "remove by re-dragging
+   * elsewhere" already owns it via `onReconnectEnd`). Opens the Recipe
+   * Chooser, pre-filtered to the dragged-from port's complementary parts
+   * (`RecipeChooser`'s `pendingConnection` prop), only when the drag ended
+   * on empty canvas (`connectionState.toHandle` is `null` — a successful
+   * drop onto a real handle already went through `onConnect` above).
+   */
+  const handleConnectEnd = (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
+    if (isReconnecting()) return;
+    if (connectionState.toHandle || !connectionState.fromHandle || !connectionState.fromNode) return;
+    const portInfo = parsePortHandleId(connectionState.fromHandle.id);
+    if (!portInfo) return;
+    const point = eventClientPoint(event);
+    openChooserAt(point.x, point.y, {
+      nodeId: connectionState.fromHandle.nodeId,
+      handleId: connectionState.fromHandle.id ?? "",
+      direction: portInfo.direction,
+      part: portInfo.part,
+    });
+  };
 
   // `onPaneClick` only fires for clicks that land on the empty background
   // (React Flow doesn't call it for clicks on a node), so this already
@@ -623,6 +691,13 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
       // `type: "outpost" | "blueprint"` flow nodes (`useYjsSync.ts`), never
       // a real recipe node's own container menu.
       containerKind: node.data.container ? (node.data.container.kind === "blueprint" ? "blueprint" : "outpost") : null,
+      // Right-clicking a node whose kind has quick settings (a real
+      // `"recipe"` node's clock/auto-round/somersloops, or just the Name
+      // field every other real node kind still gets — see
+      // `RecipeNodeQuickSettings.tsx`'s own `hasMachineFields` guard)
+      // surfaces them in the same menu, below the move-to-container actions
+      // above.
+      recipeRecord: node.data.record && QUICK_SETTINGS_KINDS.has(node.data.record.kind) ? node.data.record : undefined,
       screenPosition: { x: event.clientX, y: event.clientY },
     });
   };
@@ -634,6 +709,22 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
   const siblingOutposts = sync.containers.filter(
     (container) => container.parentId === containerId && container.id !== nodeMenu?.nodeId,
   );
+
+  // `nodeMenu.recipeRecord` is a one-time snapshot taken at right-click time
+  // (`handleNodeContextMenu` below) and never updates again on its own — so
+  // the quick settings section re-derives the *live* record from `nodes`
+  // (which does update reactively via `sync`) on every render instead of
+  // trusting the stale copy sitting in `nodeMenu` state. Without this, the
+  // clock/auto-round/somersloop controls would keep showing whatever the
+  // record looked like at the moment the menu opened even though the
+  // underlying node (and its own card) had since moved on.
+  const liveNodeMenuRecord = nodeMenu
+    ? nodes.find((node) => node.id === nodeMenu.nodeId)?.data.record
+    : undefined;
+  const nodeMenuState = nodeMenu && {
+    ...nodeMenu,
+    recipeRecord: liveNodeMenuRecord && QUICK_SETTINGS_KINDS.has(liveNodeMenuRecord.kind) ? liveNodeMenuRecord : undefined,
+  };
 
   return (
     // Job 012: the marquee's own pointer handlers live on this wrapper
@@ -657,6 +748,7 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
         onEdgesChange={onEdgesChange}
         onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}
+        onConnectEnd={handleConnectEnd}
         isValidConnection={isValidConnection}
         onReconnectStart={onReconnectStart}
         onReconnect={onReconnect}
@@ -668,6 +760,9 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
         fitView
         proOptions={{ hideAttribution: true }}
         colorMode={theme}
+        nodesDraggable={interactive}
+        nodesConnectable={interactive}
+        elementsSelectable={interactive}
       >
         {/*
           Job 014: the dot grid's spacing now mirrors `Settings.gridMachine`
@@ -689,7 +784,28 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
           size={1.5}
           color="var(--grid-dot)"
         />
-        <Controls />
+        <Controls showZoom={false} showFitView={false} showInteractive={false}>
+          <ControlButton onClick={() => zoomIn()} title={t("canvas.zoomIn")} aria-label={t("canvas.zoomIn")}>
+            <ZoomIn aria-hidden style={controlButtonIconStyle} />
+          </ControlButton>
+          <ControlButton onClick={() => zoomOut()} title={t("canvas.zoomOut")} aria-label={t("canvas.zoomOut")}>
+            <ZoomOut aria-hidden style={controlButtonIconStyle} />
+          </ControlButton>
+          <ControlButton onClick={() => fitView()} title={t("canvas.fitView")} aria-label={t("canvas.fitView")}>
+            <Maximize aria-hidden style={controlButtonIconStyle} />
+          </ControlButton>
+          <ControlButton
+            onClick={() => setInteractive((v) => !v)}
+            title={interactive ? t("canvas.lockInteraction") : t("canvas.unlockInteraction")}
+            aria-label={interactive ? t("canvas.lockInteraction") : t("canvas.unlockInteraction")}
+          >
+            {interactive ? (
+              <Unlock aria-hidden style={controlButtonIconStyle} />
+            ) : (
+              <Lock aria-hidden style={controlButtonIconStyle} />
+            )}
+          </ControlButton>
+        </Controls>
         {/*
           Job 027: React Flow's built-in minimap (PLAN.md §3's later-phase
           "minimap" bullet) — themed via the SAME `--xy-minimap-*` custom-
@@ -709,13 +825,14 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
         <RecipeChooser
           flowPosition={chooser.flowPosition}
           screenPosition={chooser.screenPosition}
+          pendingConnection={chooser.pendingConnection}
           onClose={() => setChooser(null)}
         />
       )}
       {overlayRect && <MarqueeOverlay rect={overlayRect} />}
-      {nodeMenu && (
+      {nodeMenuState && (
         <NodeContextMenu
-          state={nodeMenu}
+          state={nodeMenuState}
           siblingOutposts={siblingOutposts}
           parentContainer={parentContainer}
           onMoveToContainer={(nodeId, targetContainerId) =>
@@ -724,6 +841,7 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
           onOpenOutpost={(id) => navigateToContainer(id)}
           onDeleteOutpost={(id) => deleteOutpost(sfmDoc, id)}
           onConvertContainerKind={(id, kind) => updateContainer(sfmDoc, id, { kind })}
+          numberFormats={settings.numberFormats}
           onClose={() => setNodeMenu(null)}
         />
       )}

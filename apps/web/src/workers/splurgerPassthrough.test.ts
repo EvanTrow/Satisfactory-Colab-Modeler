@@ -8,6 +8,7 @@ import {
   moveWithinTier,
   setTier,
   tierForEdge,
+  tierGroupsForCaps,
   withDefaultedEdges,
   withoutStaleEdges,
   type SplurgerEdgeLike,
@@ -109,6 +110,39 @@ describe("computeSplurgerShape", () => {
       ]).kind,
     ).toBe("unsupported");
   });
+
+  it("flags a part present on only one side as dangling — nothing to route it to", () => {
+    // Both sides carry SOME edge (so the whole-node kind reads as an
+    // ordinary passthrough), but they're different parts — neither part
+    // actually has a matching opposite side.
+    const shape = computeSplurgerShape("s", [
+      edge({ id: "e1", toNode: "s", part: "Iron Ore" }),
+      edge({ id: "e2", fromNode: "s", part: "Copper Ore" }),
+    ]);
+    expect(shape.kind).toBe("passthrough");
+    expect([...shape.danglingParts].sort()).toEqual(["Copper Ore", "Iron Ore"]);
+  });
+
+  it("does not flag a part wired on both sides as dangling", () => {
+    const shape = computeSplurgerShape("s", [
+      edge({ id: "e1", toNode: "s", part: "Iron Ore" }),
+      edge({ id: "e2", fromNode: "s", part: "Iron Ore" }),
+    ]);
+    expect(shape.danglingParts).toEqual([]);
+  });
+
+  it("tierOwningDirection is \"out\" for a splitter, \"in\" for a merger, null otherwise", () => {
+    expect(
+      computeSplurgerShape("s", [edge({ id: "e1", toNode: "s" }), edge({ id: "e2", fromNode: "s" }), edge({ id: "e3", fromNode: "s" })])
+        .tierOwningDirection,
+    ).toBe("out");
+    expect(
+      computeSplurgerShape("s", [edge({ id: "e1", toNode: "s" }), edge({ id: "e2", toNode: "s" }), edge({ id: "e3", fromNode: "s" })])
+        .tierOwningDirection,
+    ).toBe("in");
+    expect(computeSplurgerShape("s", [edge({ id: "e1", toNode: "s" }), edge({ id: "e2", fromNode: "s" })]).tierOwningDirection).toBeNull();
+    expect(computeSplurgerShape("s", []).tierOwningDirection).toBeNull();
+  });
 });
 
 describe("computeSplurgerPassthroughEdges", () => {
@@ -138,6 +172,30 @@ describe("computeSplurgerPassthroughEdges", () => {
       toNode: "consumerB",
       priorityTier: "bottom",
     });
+  });
+
+  it("reads the tier straight off a *top/*bottom port when present, with no priorityOrder needed at all", () => {
+    const edges: SplurgerEdgeLike[] = [
+      edge({ id: "in1", fromNode: "producer", fromPort: "out:Iron Ore", toNode: "s", toPort: "in:*" }),
+      edge({ id: "out1", fromNode: "s", fromPort: "out:*top", toNode: "consumerA", toPort: "in:Iron Ore" }),
+      edge({ id: "out2", fromNode: "s", fromPort: "out:*bottom", toNode: "consumerB", toPort: "in:Iron Ore" }),
+    ];
+    // No priorityOrder at all — the port strings alone determine tier.
+    const result = computeSplurgerPassthroughEdges([{ id: "s", priorityOrder: [] }], edges);
+    const byTarget = new Map(result.edges.map((e) => [e.toNode, e]));
+    expect(byTarget.get("consumerA")?.priorityTier).toBe("top");
+    expect(byTarget.get("consumerB")?.priorityTier).toBe("bottom");
+  });
+
+  it("prefers a *top/*bottom port over a conflicting priorityOrder assignment", () => {
+    const edges: SplurgerEdgeLike[] = [
+      edge({ id: "in1", fromNode: "producer", toNode: "s", toPort: "in:*" }),
+      edge({ id: "out1", fromNode: "s", fromPort: "out:*bottom", toNode: "consumer", toPort: "in:Iron Ore" }),
+    ];
+    // priorityOrder says "top", but the port itself says "bottom" — the port wins.
+    const splurger = { id: "s", priorityOrder: encodePriorityOrder({ top: ["out1"], bottom: [] }) };
+    const result = computeSplurgerPassthroughEdges([splurger], edges);
+    expect(result.edges[0]!.priorityTier).toBe("bottom");
   });
 
   it("rewrites an N-input/1-output Splurger (merger) into direct edges carrying the input's own tier", () => {
@@ -216,5 +274,14 @@ describe("computeSplurgerPassthroughEdges", () => {
     const result = computeSplurgerPassthroughEdges([{ id: "lonely", priorityOrder: [] }], []);
     expect(result.edges).toHaveLength(0);
     expect(result.unsupportedNodeIds.size).toBe(0);
+  });
+});
+
+describe("tierGroupsForCaps", () => {
+  it("is true only for a side capped at 2, regardless of the other side", () => {
+    expect(tierGroupsForCaps({ in: 1, out: 1 })).toEqual({ in: false, out: false });
+    expect(tierGroupsForCaps({ in: 1, out: 2 })).toEqual({ in: false, out: true });
+    expect(tierGroupsForCaps({ in: 2, out: 1 })).toEqual({ in: true, out: false });
+    expect(tierGroupsForCaps({ in: 2, out: 2 })).toEqual({ in: true, out: true });
   });
 });

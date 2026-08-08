@@ -399,8 +399,12 @@ export async function getProjectVersionBytes(projectId: string, versionId: strin
 
 /** What a successful `restoreProjectVersion` did, for the route/tests. */
 export interface RestoreResult {
-  /** The safety snapshot of current (pre-restore) state, taken before the overwrite — see this function's doc comment. */
-  preRestoreVersion: ProjectVersionSummary;
+  /**
+   * The safety snapshot of current (pre-restore) state, taken before the
+   * overwrite — see this function's doc comment. `null` when the caller
+   * opted out via `options.createPreRestoreVersion: false`.
+   */
+  preRestoreVersion: ProjectVersionSummary | null;
   /** Echoes the id that was restored, for the caller's convenience. */
   restoredVersionId: string;
 }
@@ -436,11 +440,16 @@ export interface RestoreResult {
  * log rows) and deleting every row up to and including it — mirroring
  * `compactProject`'s own fold-and-delete shape, except the "fold" here
  * discards the log's content instead of merging it in.
+ *
+ * `options.createPreRestoreVersion` (default `true`) makes the safety
+ * snapshot optional — the version-history UI asks the user each time
+ * whether they want one, rather than forcing it unconditionally.
  */
 export async function restoreProjectVersion(
   projectId: string,
   versionId: string,
   actorUserId: string | null,
+  options: { createPreRestoreVersion?: boolean } = {},
 ): Promise<RestoreResult | null> {
   const versionBytes = await getProjectVersionBytes(projectId, versionId);
   if (!versionBytes) {
@@ -449,15 +458,19 @@ export async function restoreProjectVersion(
 
   // Safety snapshot of current state *before* it's overwritten — "restoring
   // is itself non-destructive/undoable at the version-history level" per
-  // the job file. Taken outside the transaction below (reads current
-  // snapshot+log via the ordinary `loadProjectDoc` path, same as any other
-  // `createProjectVersion` call) so it reflects state as of *now*, not
-  // whatever's left after the transaction below discards the log.
-  const preRestoreVersion = await createProjectVersion(projectId, {
-    kind: "pre_restore",
-    createdBy: actorUserId,
-    label: `Before restoring "${versionId}"`,
-  });
+  // the job file, unless the caller opted out. Taken outside the
+  // transaction below (reads current snapshot+log via the ordinary
+  // `loadProjectDoc` path, same as any other `createProjectVersion` call)
+  // so it reflects state as of *now*, not whatever's left after the
+  // transaction below discards the log.
+  const preRestoreVersion =
+    options.createPreRestoreVersion === false
+      ? null
+      : await createProjectVersion(projectId, {
+          kind: "pre_restore",
+          createdBy: actorUserId,
+          label: `Before restoring "${versionId}"`,
+        });
 
   await db.transaction().execute(async (trx) => {
     const maxLogRow = await trx
@@ -497,4 +510,25 @@ export async function restoreProjectVersion(
   });
 
   return { preRestoreVersion, restoredVersionId: versionId };
+}
+
+/**
+ * Deletes one `project_versions` row, scoped to `projectId` so a version id
+ * from a *different* project can never be deleted cross-project (same
+ * scoping precedent as `getProjectVersionBytes`). Purely a version-history
+ * housekeeping op — has no effect on the project's current live document
+ * state (`project_doc_state`/`project_doc_updates`), which this never
+ * touches.
+ *
+ * Returns `false` (no-op) if no such version exists for this project;
+ * `true` if a row was deleted.
+ */
+export async function deleteProjectVersion(projectId: string, versionId: string): Promise<boolean> {
+  const result = await db
+    .deleteFrom("project_versions")
+    .where("project_id", "=", projectId)
+    .where("id", "=", versionId)
+    .executeTakeFirst();
+
+  return Number(result.numDeletedRows) > 0;
 }

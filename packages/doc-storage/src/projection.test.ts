@@ -116,6 +116,7 @@ describe("materializeProjection (hooked into appendUpdate, Job 025)", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     const constructor_ = addNode(editor.sfmDoc, {
       containerId: "c_root",
@@ -134,6 +135,7 @@ describe("materializeProjection (hooked into appendUpdate, Job 025)", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     const edge = addEdge(editor.sfmDoc, {
       containerId: "c_root",
@@ -230,6 +232,7 @@ describe("materializeProjection (hooked into appendUpdate, Job 025)", () => {
       purity: "pure",
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
 
     await appendUpdate(project.id, editor.diff(), owner.id);
@@ -270,6 +273,7 @@ describe("materializeProjection (hooked into appendUpdate, Job 025)", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     await appendUpdate(project.id, editor.diff(), owner.id);
 
@@ -318,6 +322,7 @@ describe("materializeProjection (hooked into appendUpdate, Job 025)", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     await appendUpdate(project.id, editor.diff(), owner.id);
     expect(await fetchProjNodes(project.id)).toHaveLength(1);
@@ -351,6 +356,7 @@ describe("materializeProjection (hooked into appendUpdate, Job 025)", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     const b = addNode(editor.sfmDoc, {
       containerId: "c_root",
@@ -369,6 +375,7 @@ describe("materializeProjection (hooked into appendUpdate, Job 025)", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
+      splurgerVariant: null,
     });
     const edge = addEdge(editor.sfmDoc, {
       containerId: "c_root",
