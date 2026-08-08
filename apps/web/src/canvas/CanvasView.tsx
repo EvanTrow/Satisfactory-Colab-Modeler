@@ -11,7 +11,7 @@
 // breadcrumb trail, and a node-level context menu for moving nodes
 // into/out of an outpost and deleting one (reparenting its contents rather
 // than destroying them).
-import { Lock, Map as MapIcon, Maximize, Redo2, Undo2, Unlock, ZoomIn, ZoomOut } from "lucide-react";
+import { Lock, Map as MapIcon, Maximize, Redo2, Undo2, Unlock, Wand2, ZoomIn, ZoomOut } from "lucide-react";
 import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
@@ -50,6 +50,7 @@ import { RecipeChooser, type PendingConnectionInfo } from "../panels";
 import { SummaryPanel } from "../panels";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
+import { GenerateFactoryDialog } from "./generator";
 import { SettingsMenu } from "./SettingsMenu";
 import { SolverResultContext } from "./SolverResultContext";
 import { type ClickPoint, isDoubleClick } from "./doubleClick";
@@ -315,6 +316,12 @@ function CanvasViewReady({
   // also plain unpersisted local state).
   const [showMinimap, setShowMinimap] = useState(true);
 
+  // "Generate factory": a target-item-and-rate dialog that auto-builds a
+  // full production chain (`canvas/generator/`) — a one-shot action, so
+  // plain local `open` state mirrors `showMinimap`'s own scope note above
+  // rather than anything persisted.
+  const [showGenerateFactory, setShowGenerateFactory] = useState(false);
+
   const docContext: CanvasDocContextValue = useMemo(
     () => ({
       sfmDoc,
@@ -467,6 +474,16 @@ function CanvasViewReady({
               >
                 <MapIcon className="h-4 w-4" aria-hidden />
               </button>
+              {/* "Generate factory" — auto-build a production chain from a target item + desired rate (`canvas/generator/`). */}
+              <button
+                type="button"
+                onClick={() => setShowGenerateFactory(true)}
+                title={t("canvas.generateFactoryTitle")}
+                aria-label={t("canvas.generateFactory")}
+                className="nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+              >
+                <Wand2 className="h-4 w-4" aria-hidden />
+              </button>
               {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. Job 019 added the solver-mode/number-format sections. */}
               <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
@@ -496,10 +513,27 @@ function CanvasViewReady({
               <CanvasFlow sync={sync} settings={settings} theme={theme} showMinimap={showMinimap} />
             </ReactFlowProvider>
           </div>
+          {showGenerateFactory && (
+            <GenerateFactoryDialog
+              sfmDoc={sfmDoc}
+              containerId={containerId}
+              numberFormats={settings.numberFormats}
+              basePosition={generateFactoryBasePosition(sync.nodes)}
+              onClose={() => setShowGenerateFactory(false)}
+            />
+          )}
         </div>
       </SolverResultContext.Provider>
     </CanvasDocContext.Provider>
   );
+}
+
+/** Where a freshly-generated chain should start — clear of whatever's already on the canvas (to the right of the current rightmost node), or the origin for an empty container. */
+function generateFactoryBasePosition(nodes: readonly { position: { x: number; y: number } }[]): { x: number; y: number } {
+  if (nodes.length === 0) return { x: 0, y: 0 };
+  const maxX = Math.max(...nodes.map((n) => n.position.x));
+  const minY = Math.min(...nodes.map((n) => n.position.y));
+  return { x: maxX + 400, y: minY };
 }
 
 interface CanvasFlowProps {
