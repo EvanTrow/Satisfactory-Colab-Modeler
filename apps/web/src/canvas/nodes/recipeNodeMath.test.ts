@@ -168,8 +168,8 @@ describe("CLOCK_PRESETS", () => {
       "225",
       "250",
     ]);
-    expect(equals(CLOCK_PRESETS[0], MIN_CLOCK_PERCENT)).toBe(true);
-    expect(equals(CLOCK_PRESETS[CLOCK_PRESETS.length - 1], MAX_CLOCK_PERCENT)).toBe(true);
+    expect(equals(CLOCK_PRESETS[0]!, MIN_CLOCK_PERCENT)).toBe(true);
+    expect(equals(CLOCK_PRESETS[CLOCK_PRESETS.length - 1]!, MAX_CLOCK_PERCENT)).toBe(true);
   });
 });
 

@@ -295,12 +295,12 @@ export function stepClockToPreset(currentClockPercent: Rational, direction: Cloc
     for (const preset of CLOCK_PRESETS) {
       if (compare(preset, currentClockPercent) > 0) return preset;
     }
-    return CLOCK_PRESETS[CLOCK_PRESETS.length - 1];
+    return CLOCK_PRESETS[CLOCK_PRESETS.length - 1]!;
   }
   for (let i = CLOCK_PRESETS.length - 1; i >= 0; i--) {
-    if (compare(CLOCK_PRESETS[i], currentClockPercent) < 0) return CLOCK_PRESETS[i];
+    if (compare(CLOCK_PRESETS[i]!, currentClockPercent) < 0) return CLOCK_PRESETS[i]!;
   }
-  return CLOCK_PRESETS[0];
+  return CLOCK_PRESETS[0]!;
 }
 
 // ---------------------------------------------------------------------------

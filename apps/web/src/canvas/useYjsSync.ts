@@ -336,7 +336,7 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
     setEdges(applyEdgeChanges(changes, current));
   };
 
-  const onNodeDragStop: OnNodeDrag<CanvasNode> = (_event, node, nodes) => {
+  const onNodeDragStop: OnNodeDrag<CanvasNode> = (_event, _node, nodes) => {
     // The one and only place a drag gesture writes back into the doc — see
     // this module's header comment for why this isn't done per-frame.
     // Job 013: an outpost boundary node's id is a *container* id, not a
