@@ -2,18 +2,23 @@
 // PLAN.md §2's "Select" row: "Standard cut/copy/paste/delete keybinds", and
 // §3's "per-user undo/redo"). All the actual doc-mutation/id-regeneration
 // logic lives in `clipboard.ts` (React-free, independently unit-tested);
-// this hook is just the keydown wiring plus an in-memory (not OS)
-// clipboard ref — see this job's Handoff notes for why an OS clipboard
-// wasn't used.
-import { useEffect, useRef } from "react";
+// this hook wires copy/cut/paste to the browser's native `copy`/`cut`/
+// `paste` `ClipboardEvent`s (not the async `navigator.clipboard` API) —
+// the same pattern canvas apps like Figma/Excalidraw use, since Ctrl+C/X/V
+// fire these events regardless of there being an actual DOM text selection,
+// they work synchronously with no permission prompt, and (crucially for
+// this feature) they put real text on the *system* clipboard: pasteable
+// into another browser window/project, or into a chat message to hand a
+// selection to another person.
+import { useEffect } from "react";
 
-import type { SfmDocument } from "@scm/ydoc";
+import type { Point, SfmDocument } from "@scm/ydoc";
 import type { EdgeChange, NodeChange } from "@xyflow/react";
 import type * as Y from "yjs";
 
 import { deleteOutpost } from "../outposts";
 import type { CanvasEdge, CanvasNode, UseYjsSyncResult } from "../useYjsSync";
-import { type ClipboardPayload, buildClipboard, deleteSelection, pasteClipboard } from "./clipboard";
+import { buildClipboard, deleteSelection, deserializeClipboard, pasteClipboard, pasteOffsetForCenter, serializeClipboard } from "./clipboard";
 
 export interface UseSelectionKeybindsOptions {
   sfmDoc: SfmDocument;
@@ -25,6 +30,13 @@ export interface UseSelectionKeybindsOptions {
   undoManager: Y.UndoManager;
   /** False while e.g. the Recipe Chooser modal is open — see this file's header comment on why the whole hook is gated rather than relying solely on the focused-input check below. */
   enabled: boolean;
+  /**
+   * The current viewport's center, in document/flow coordinates — a paste
+   * centers the pasted group here instead of reproducing the copied
+   * position verbatim (see `clipboard.ts`'s `pasteOffsetForCenter`).
+   * `null`/omitted falls back to `DEFAULT_PASTE_OFFSET`.
+   */
+  getPasteCenter?: () => Point | null;
 }
 
 /** True if `target` is a form control the browser's own text-editing keys (Backspace/Delete/Ctrl+C/etc.) should be left alone for — `RecipeNode.tsx`'s limit/clock fields being the concrete case that matters here: deleting text in one of those must never delete the node underneath it. */
@@ -36,16 +48,17 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /**
- * Wires cut/copy/paste/delete/select-all/undo/redo to `window` keydown
- * events. Window-level (not a focused-element listener) on purpose, same
- * pattern `RecipeChooser.tsx`'s own Escape-to-close handler already uses —
- * there's no dedicated "canvas has focus" concept in this app yet, and the
- * `enabled` flag plus `isEditableTarget` guard cover the cases that
- * actually matter (a modal open, or a text field focused).
+ * Wires delete/select-all/undo/redo to `window` keydown events, and
+ * copy/cut/paste to `document`'s native `copy`/`cut`/`paste` `ClipboardEvent`s
+ * (see this file's header comment). Document/window-level (not a
+ * focused-element listener) on purpose, same pattern `RecipeChooser.tsx`'s
+ * own Escape-to-close handler already uses — there's no dedicated "canvas
+ * has focus" concept in this app yet, and the `enabled` flag plus
+ * `isEditableTarget` guard cover the cases that actually matter (a modal
+ * open, or a text field focused).
  */
 export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void {
-  const { sfmDoc, containerId, nodes, edges, onNodesChange, onEdgesChange, undoManager, enabled } = options;
-  const clipboardRef = useRef<ClipboardPayload | null>(null);
+  const { sfmDoc, containerId, nodes, edges, onNodesChange, onEdgesChange, undoManager, enabled, getPasteCenter } = options;
 
   useEffect(() => {
     if (!enabled) return;
@@ -76,16 +89,35 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
       onEdgesChange(edges.map((edge) => ({ id: edge.id, type: "select", selected: true }) as EdgeChange<CanvasEdge>));
     }
 
-    function handleCopy() {
-      // Job 013: `buildClipboard` only ever matches ids present in
-      // `listNodes` (real ydoc nodes) — an outpost boundary node's id
-      // simply won't match anything there, so a selection that includes an
-      // outpost silently copies only the real nodes in it. Copying/pasting
-      // an outpost itself (with its contents) isn't built here — see
-      // jobs/013-outposts.md's Handoff notes for why that's left to
-      // Blueprints (Job 026) rather than this job's own clipboard.
+    /**
+     * Shared by the native `copy` and `cut` event handlers below: builds the
+     * clipboard payload for the current selection and, if there is one,
+     * writes it to `event.clipboardData` as this app's JSON envelope (see
+     * `clipboard.ts`'s `serializeClipboard`) and calls `preventDefault()` so
+     * the browser doesn't also try to copy the empty/irrelevant native DOM
+     * selection over it. Returns `false` (and leaves the event alone) when
+     * nothing's selected, so a plain-text copy elsewhere on the page — e.g.
+     * a label the user actually highlighted — still works normally.
+     *
+     * Job 013: `buildClipboard` only ever matches ids present in
+     * `listNodes` (real ydoc nodes) — an outpost boundary node's id simply
+     * won't match anything there, so a selection that includes an outpost
+     * silently copies only the real nodes in it. Copying/pasting an outpost
+     * itself (with its contents) isn't built here — see
+     * jobs/013-outposts.md's Handoff notes for why that's left to
+     * Blueprints (Job 026) rather than this job's own clipboard.
+     */
+    function writeSelectionToClipboard(event: ClipboardEvent): boolean {
       const payload = buildClipboard(sfmDoc, selectedNodeIds());
-      if (payload) clipboardRef.current = payload;
+      if (!payload) return false;
+      event.preventDefault();
+      event.clipboardData?.setData("text/plain", serializeClipboard(payload));
+      return true;
+    }
+
+    function handleCopyEvent(event: ClipboardEvent) {
+      if (isEditableTarget(event.target)) return;
+      writeSelectionToClipboard(event);
     }
 
     function handleDelete() {
@@ -102,14 +134,22 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
       }
     }
 
-    function handleCut() {
-      handleCopy();
-      handleDelete();
+    function handleCutEvent(event: ClipboardEvent) {
+      if (isEditableTarget(event.target)) return;
+      if (writeSelectionToClipboard(event)) handleDelete();
     }
 
-    function handlePaste() {
-      const clipboard = clipboardRef.current;
+    function handlePasteEvent(event: ClipboardEvent) {
+      if (isEditableTarget(event.target)) return;
+      const text = event.clipboardData?.getData("text/plain");
+      if (!text) return;
+      const clipboard = deserializeClipboard(text);
+      // Not this app's clipboard format (plain text, something copied from
+      // elsewhere, a foreign JSON blob) — leave it alone entirely so the
+      // browser's own default paste behavior (if any, for whatever has
+      // focus) still applies.
       if (!clipboard) return;
+      event.preventDefault();
       // Deselect whatever was selected before the paste and select the
       // newly-pasted group instead — the conventional "paste replaces
       // selection with what you just pasted" behavior, and also what makes
@@ -117,7 +157,8 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
       // the old one.
       const previousNodeIds = selectedNodeIds();
       const previousEdgeIds = selectedEdgeIds();
-      const result = pasteClipboard(sfmDoc, containerId, clipboard);
+      const offset = pasteOffsetForCenter(clipboard.nodes, getPasteCenter ? getPasteCenter() : null);
+      const result = pasteClipboard(sfmDoc, containerId, clipboard, offset);
       // `onNodesChange`/`onEdgesChange` (see `useYjsSync.ts`) resolve
       // against the *live* Zustand store at call time, not against this
       // closure's `nodes`/`edges` — which matters here specifically because
@@ -162,21 +203,11 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
         handleSelectAll();
         return;
       }
-      if (meta && key === "c") {
-        event.preventDefault();
-        handleCopy();
-        return;
-      }
-      if (meta && key === "x") {
-        event.preventDefault();
-        handleCut();
-        return;
-      }
-      if (meta && key === "v") {
-        event.preventDefault();
-        handlePaste();
-        return;
-      }
+      // Copy/cut/paste are handled by the native `copy`/`cut`/`paste`
+      // listeners below instead of here — Ctrl/Cmd+C/X/V already trigger
+      // those `ClipboardEvent`s on their own, and handling them there (with
+      // access to `event.clipboardData`) is what makes this a real system-
+      // clipboard read/write instead of in-memory-only state.
       if (!meta && (key === "delete" || key === "backspace")) {
         event.preventDefault();
         handleDelete();
@@ -184,6 +215,14 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
     }
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [sfmDoc, containerId, nodes, edges, onNodesChange, onEdgesChange, undoManager, enabled]);
+    document.addEventListener("copy", handleCopyEvent);
+    document.addEventListener("cut", handleCutEvent);
+    document.addEventListener("paste", handlePasteEvent);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("copy", handleCopyEvent);
+      document.removeEventListener("cut", handleCutEvent);
+      document.removeEventListener("paste", handlePasteEvent);
+    };
+  }, [sfmDoc, containerId, nodes, edges, onNodesChange, onEdgesChange, undoManager, enabled, getPasteCenter]);
 }

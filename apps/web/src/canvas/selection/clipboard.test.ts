@@ -16,7 +16,16 @@ import {
 } from "@scm/ydoc";
 import { describe, expect, it } from "vitest";
 
-import { buildClipboard, deleteSelection, pasteClipboard } from "./clipboard";
+import {
+  DEFAULT_PASTE_OFFSET,
+  buildClipboard,
+  clipboardCentroid,
+  deleteSelection,
+  deserializeClipboard,
+  pasteClipboard,
+  pasteOffsetForCenter,
+  serializeClipboard,
+} from "./clipboard";
 
 function baseNode(containerId: string, overrides: Partial<NewNodeInput> = {}): NewNodeInput {
   return {
@@ -181,6 +190,96 @@ describe("pasteClipboard", () => {
     });
     pasteClipboard(sfmDoc, root.id, clipboard);
     expect(updateCount).toBe(1);
+  });
+});
+
+describe("serializeClipboard / deserializeClipboard", () => {
+  it("round-trips a clipboard payload through system-clipboard text", () => {
+    const { sfmDoc, root } = setUp();
+    const a = addNode(sfmDoc, baseNode(root.id, { x: 0, y: 0 }));
+    const b = addNode(sfmDoc, baseNode(root.id, { x: 100, y: 50 }));
+    addEdge(sfmDoc, baseEdge(root.id, { fromNode: a.id, toNode: b.id }));
+    const clipboard = buildClipboard(sfmDoc, [a.id, b.id])!;
+
+    const text = serializeClipboard(clipboard);
+    expect(typeof text).toBe("string");
+    const roundTripped = deserializeClipboard(text);
+
+    expect(roundTripped).toEqual(clipboard);
+  });
+
+  it("returns null for text that isn't valid base64", () => {
+    expect(deserializeClipboard("just some plain text, with punctuation!")).toBeNull();
+  });
+
+  it("returns null for base64 that doesn't decode to JSON", () => {
+    // Valid base64 (all-lowercase-letter strings happen to decode cleanly),
+    // but the decoded bytes aren't JSON — exercises the `JSON.parse` guard
+    // specifically, distinct from the base64-decode guard above.
+    expect(deserializeClipboard(btoa("thisisnotjsonatall"))).toBeNull();
+  });
+
+  it("returns null for well-formed JSON that isn't this app's clipboard envelope", () => {
+    expect(deserializeClipboard(btoa(JSON.stringify({ hello: "world" })))).toBeNull();
+    expect(deserializeClipboard(btoa(JSON.stringify({ nodes: [], edges: [] })))).toBeNull();
+  });
+
+  it("returns null for a clipboard envelope from an unsupported schema version", () => {
+    const encoded = btoa(JSON.stringify({ app: "scm.clipboard", version: 999, nodes: [], edges: [] }));
+    expect(deserializeClipboard(encoded)).toBeNull();
+  });
+
+  it("returns null when a node record is missing required fields", () => {
+    const encoded = btoa(
+      JSON.stringify({
+        app: "scm.clipboard",
+        version: 1,
+        nodes: [{ id: "n1" }],
+        edges: [],
+      }),
+    );
+    expect(deserializeClipboard(encoded)).toBeNull();
+  });
+});
+
+describe("clipboardCentroid / pasteOffsetForCenter", () => {
+  it("returns null for an empty node list", () => {
+    expect(clipboardCentroid([])).toBeNull();
+  });
+
+  it("averages node positions", () => {
+    const { sfmDoc, root } = setUp();
+    const a = addNode(sfmDoc, baseNode(root.id, { x: 0, y: 0 }));
+    const b = addNode(sfmDoc, baseNode(root.id, { x: 100, y: 50 }));
+    const clipboard = buildClipboard(sfmDoc, [a.id, b.id])!;
+
+    expect(clipboardCentroid(clipboard.nodes)).toEqual({ x: 50, y: 25 });
+  });
+
+  it("falls back to DEFAULT_PASTE_OFFSET when there's no known viewport center", () => {
+    const { sfmDoc, root } = setUp();
+    const a = addNode(sfmDoc, baseNode(root.id, { x: 0, y: 0 }));
+    const clipboard = buildClipboard(sfmDoc, [a.id])!;
+
+    expect(pasteOffsetForCenter(clipboard.nodes, null)).toEqual(DEFAULT_PASTE_OFFSET);
+  });
+
+  it("falls back to DEFAULT_PASTE_OFFSET for an empty clipboard even with a known center", () => {
+    expect(pasteOffsetForCenter([], { x: 500, y: 500 })).toEqual(DEFAULT_PASTE_OFFSET);
+  });
+
+  it("computes the offset that moves the copied group's centroid onto the given center", () => {
+    const { sfmDoc, root } = setUp();
+    const a = addNode(sfmDoc, baseNode(root.id, { x: 0, y: 0 }));
+    const b = addNode(sfmDoc, baseNode(root.id, { x: 100, y: 50 }));
+    const clipboard = buildClipboard(sfmDoc, [a.id, b.id])!;
+
+    const offset = pasteOffsetForCenter(clipboard.nodes, { x: 1000, y: 2000 });
+    expect(offset).toEqual({ dx: 950, dy: 1975 }); // 1000-50, 2000-25
+
+    const result = pasteClipboard(sfmDoc, root.id, clipboard, offset);
+    const pastedNodes = result.nodeIds.map((id) => listNodes(sfmDoc).find((n) => n.id === id)!);
+    expect(clipboardCentroid(pastedNodes)).toEqual({ x: 1000, y: 2000 });
   });
 });
 

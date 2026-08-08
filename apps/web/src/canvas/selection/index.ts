@@ -1,8 +1,12 @@
 // Public surface of Job 012's selection/clipboard/undo-redo UI.
 export {
   buildClipboard,
+  clipboardCentroid,
   deleteSelection,
+  deserializeClipboard,
   pasteClipboard,
+  pasteOffsetForCenter,
+  serializeClipboard,
   DEFAULT_PASTE_OFFSET,
   type ClipboardPayload,
   type PasteOffset,

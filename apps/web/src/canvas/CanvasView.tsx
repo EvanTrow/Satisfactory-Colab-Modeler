@@ -620,6 +620,24 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
   // Not React state on purpose — a click-time bookkeeping ref, not something whose change should trigger a render.
   const lastPaneClickRef = useRef<ClickPoint | null>(null);
 
+  // Job 012 (paste-centering follow-up): the `<ReactFlow>` pane's own wrapper
+  // div, measured on demand by `getPasteCenter` below — not React state,
+  // since nothing needs to re-render when it mounts, only read its (already
+  // up to date) bounding rect at paste time.
+  const paneWrapperRef = useRef<HTMLDivElement>(null);
+  /**
+   * Where a paste centers the pasted group — the visible canvas area's
+   * center (this wrapper fills it exactly; toolbar/panels float on top of
+   * it, they don't shrink it), converted to document/flow coordinates.
+   * `null` before the wrapper's first layout, which `pasteOffsetForCenter`
+   * treats as "fall back to the old fixed offset."
+   */
+  const getPasteCenter = useCallback((): { x: number; y: number } | null => {
+    const rect = paneWrapperRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+  }, [screenToFlowPosition]);
+
   // Job 011: drag-to-connect, edge removal via re-drag, and mismatched-part
   // rejection. See `useConnectionHandlers.ts`'s header comment for exactly
   // how the reconnect-vs-remove-by-drag split works.
@@ -651,6 +669,7 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
     onEdgesChange,
     undoManager,
     enabled: chooser === null && nodeMenu === null,
+    getPasteCenter,
   });
 
   function openChooserAt(clientX: number, clientY: number, pendingConnection?: PendingConnectionInfo) {
@@ -775,6 +794,7 @@ function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
     // sit as a plain sibling of `<ReactFlow>` without reaching into its
     // internals.
     <div
+      ref={paneWrapperRef}
       className="relative h-full w-full"
       {...pointerHandlers}
       onMouseMove={cursorHandlers.onMouseMove}

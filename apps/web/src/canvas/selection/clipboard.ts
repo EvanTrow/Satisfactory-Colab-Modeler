@@ -5,17 +5,97 @@
 // — nothing here touches React Flow or the Zustand store; `useMarqueeSelection
 // .ts`/`useSelectionKeybinds.ts` are the thin React layers that call into
 // this module with a list of currently-selected ids.
-import { type EdgeRecord, type NodeRecord, type SfmDocument, addEdge, addNode, listEdges, listNodes, removeEdge, removeNode } from "@scm/ydoc";
+import { EdgeRecordSchema, type EdgeRecord, NodeRecordSchema, type NodeRecord, type Point, type SfmDocument, addEdge, addNode, listEdges, listNodes, removeEdge, removeNode } from "@scm/ydoc";
+import { z } from "zod";
 
 /**
- * What a copy/cut puts on the (in-app, not OS) clipboard: the full records
- * of every copied node, plus only the edges that connect two copied nodes
- * — never an edge to a node outside the copied set (this is the acceptance
- * criterion "does not duplicate edges to nodes outside the copied set").
+ * What a copy/cut puts on the clipboard: the full records of every copied
+ * node, plus only the edges that connect two copied nodes — never an edge to
+ * a node outside the copied set (this is the acceptance criterion "does not
+ * duplicate edges to nodes outside the copied set").
  */
 export interface ClipboardPayload {
   nodes: NodeRecord[];
   edges: EdgeRecord[];
+}
+
+/**
+ * On-the-wire envelope written to (and read from) the *system* clipboard —
+ * this is what makes copy/paste work across projects, browser windows, and
+ * between people (paste it into a chat message, the recipient copies it,
+ * pastes it into their own project). `app`/`type` let `deserializeClipboard`
+ * recognize and reject anything that isn't this app's own clipboard format
+ * (arbitrary text the user happened to have copied, a stray JSON blob from
+ * elsewhere, etc.) before it ever reaches `addNode`/`addEdge` — those trust
+ * their input, so validating the shape here is the only thing standing
+ * between a garbled/foreign clipboard and a corrupted shared (Yjs) document.
+ */
+const CLIPBOARD_FORMAT = "scm.clipboard";
+const CLIPBOARD_VERSION = 1;
+
+const ClipboardEnvelopeSchema = z.object({
+  app: z.literal(CLIPBOARD_FORMAT),
+  version: z.literal(CLIPBOARD_VERSION),
+  nodes: z.array(NodeRecordSchema),
+  edges: z.array(EdgeRecordSchema),
+});
+
+/** UTF-8-safe `btoa` — plain `btoa` throws on any code point above U+00FF, and node titles/recipe names aren't limited to Latin-1. */
+function encodeBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/** Inverse of `encodeBase64`. */
+function decodeBase64(base64: string): string {
+  const binary = atob(base64);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+/**
+ * Serializes a clipboard payload to the text written to the system
+ * clipboard — base64-encoded (on top of the JSON envelope) so what actually
+ * lands on the clipboard/in a pasted chat message reads as one opaque blob
+ * of data rather than legible JSON.
+ */
+export function serializeClipboard(payload: ClipboardPayload): string {
+  const json = JSON.stringify({
+    app: CLIPBOARD_FORMAT,
+    version: CLIPBOARD_VERSION,
+    nodes: payload.nodes,
+    edges: payload.edges,
+  });
+  return encodeBase64(json);
+}
+
+/**
+ * Parses text read back from the system clipboard. Returns `null` for
+ * anything that isn't a validly-shaped clipboard envelope from this app —
+ * plain text the user copied from elsewhere, JSON from a different app,
+ * invalid base64, hand-edited/corrupted text, a future/older schema
+ * version — so callers can treat "not our format" as a silent no-op paste
+ * rather than a crash or (far worse, since this document is shared over
+ * Yjs) writing malformed records into a collaborator's live document.
+ */
+export function deserializeClipboard(text: string): ClipboardPayload | null {
+  let json: string;
+  try {
+    json = decodeBase64(text);
+  } catch {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  const result = ClipboardEnvelopeSchema.safeParse(parsed);
+  if (!result.success) return null;
+  return { nodes: result.data.nodes, edges: result.data.edges };
 }
 
 /**
@@ -44,8 +124,38 @@ export interface PasteOffset {
   dy: number;
 }
 
-/** Default paste offset (px, in flow/document coordinates) so a paste doesn't land exactly on top of what it was copied from — chosen to be visually obvious without being so large the pasted group drifts off-screen for a small selection. */
+/** Default paste offset (px, in flow/document coordinates) so a paste doesn't land exactly on top of what it was copied from — chosen to be visually obvious without being so large the pasted group drifts off-screen for a small selection. Only used as a fallback by `pasteOffsetForCenter` when there's no known viewport center to target (or nothing to center). */
 export const DEFAULT_PASTE_OFFSET: PasteOffset = { dx: 40, dy: 40 };
+
+/**
+ * Average x/y of a clipboard payload's nodes, in document/flow coordinates.
+ * `null` for an empty node list — nothing to center.
+ */
+export function clipboardCentroid(nodes: readonly NodeRecord[]): Point | null {
+  if (nodes.length === 0) return null;
+  const sum = nodes.reduce((acc, node) => ({ x: acc.x + node.x, y: acc.y + node.y }), { x: 0, y: 0 });
+  return { x: sum.x / nodes.length, y: sum.y / nodes.length };
+}
+
+/**
+ * The `PasteOffset` that lands a clipboard payload centered on `center`
+ * (typically the current viewport's center, in flow coordinates) instead of
+ * reproducing the copied position verbatim. A paste's source position is
+ * frequently not even on-screen at paste time — a different project, a
+ * different pan/zoom, a whole different browser window a selection got
+ * pasted into from a chat message — so keeping the original coordinates
+ * (this app's very first clipboard behavior) can silently place the pasted
+ * group off-screen; it looks exactly like paste did nothing.
+ *
+ * Falls back to `DEFAULT_PASTE_OFFSET` when there's no centroid (empty
+ * clipboard) or no known viewport center (`center` is `null` — e.g. the
+ * canvas hasn't measured its own layout yet).
+ */
+export function pasteOffsetForCenter(nodes: readonly NodeRecord[], center: Point | null): PasteOffset {
+  const centroid = clipboardCentroid(nodes);
+  if (!centroid || !center) return DEFAULT_PASTE_OFFSET;
+  return { dx: center.x - centroid.x, dy: center.y - centroid.y };
+}
 
 export interface PasteResult {
   /** New node ids, in the same order as `clipboard.nodes`. */
