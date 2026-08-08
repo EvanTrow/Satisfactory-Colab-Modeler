@@ -6,7 +6,7 @@
 // container, not because Node/Docker have any built-in notion of "co-run
 // these". If any one of the three exits, this script kills the other two
 // and exits non-zero so the host platform's own restart policy (every
-// mainstream host — Fly.io/Railway/Render/plain `docker run --restart`)
+// mainstream host — Railway/Render/plain `docker run --restart`)
 // recreates the whole container rather than limping along with a partially
 // dead app.
 //

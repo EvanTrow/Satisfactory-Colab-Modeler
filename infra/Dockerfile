@@ -98,7 +98,8 @@ USER scm
 
 # `--init` at `docker run`/the host platform's equivalent is what should
 # supply real PID-1 signal/zombie handling (see entrypoint.mjs's own header
-# comment on why this script deliberately doesn't try to BE that) — Fly.io
-# and Railway both run containers with an init process already; a bare
-# `docker run` needs `--init` passed explicitly (documented in README.md).
+# comment on why this script deliberately doesn't try to BE that) — most
+# hosted container platforms run containers with an init process already;
+# a bare `docker run` needs `--init` passed explicitly (documented in
+# README.md).
 ENTRYPOINT ["node", "infra/docker/entrypoint.mjs"]

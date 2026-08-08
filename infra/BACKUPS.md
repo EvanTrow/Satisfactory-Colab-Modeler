@@ -37,34 +37,7 @@ replication) is the managed provider's job, not this app's. Do not build a
 custom `pg_dump`-to-S3 cron job unless the chosen provider genuinely has no
 backup feature at all (see the fallback further down).
 
-### If using Fly.io (this job's chosen deploy target — see `infra/fly.toml`)
-
-Fly offers two Postgres products; pick based on what actually exists when
-you deploy:
-
-- **Fly Managed Postgres (MPG)** — Fly's fully-managed offering. Automated
-  backups and point-in-time recovery are built in and enabled by default;
-  no extra setup step. This is the one that actually matches PLAN.md's
-  "managed Postgres" wording literally — prefer it if available in your
-  target region.
-- **Legacy `fly postgres create` (self-run, HA-replica-based)** — this is
-  a regular Fly app running Postgres yourself, NOT automatically backed
-  up. If this is what you end up with (e.g. MPG isn't available in your
-  region yet), you must either migrate to MPG or set up your own backup
-  job — see the fallback section below.
-
-Either way, after provisioning:
-
-```sh
-fly postgres attach <postgres-app-name>   # wires DATABASE_URL into the app's secrets automatically
-```
-
-Verify backups exist (exact command depends on which product — check
-`fly postgres backups list` / the Fly dashboard's Postgres backups tab for
-your specific app once created; this could not be run in this sandbox
-since no Fly account exists here).
-
-### If using a different managed provider (Neon, Supabase, Railway Postgres, AWS RDS, etc.)
+### Managed provider (Neon, Supabase, Railway Postgres, AWS RDS, etc.)
 
 Every one of these has native automated backups as a first-class,
 documented feature — Neon and Supabase both default to continuous/PITR
@@ -78,27 +51,27 @@ deployment.
 ## Suggested cadence
 
 **Daily, at minimum** (per this job's own acceptance criteria) — a WAL-
-based/PITR system (Fly MPG, Neon, RDS) gives you far better than daily
-granularity for free once enabled; a plain nightly `pg_dump` snapshot (the
-fallback below) should run at minimum once every 24 hours.
+based/PITR system (Neon, RDS, and similar managed providers) gives you far
+better than daily granularity for free once enabled; a plain nightly
+`pg_dump` snapshot (the fallback below) should run at minimum once every
+24 hours.
 
 ## Fallback: a plain `pg_dump` cron job
 
 Only needed if the chosen host genuinely has no native backup feature.
 `infra/scripts/backup.sh` (this repo) is a minimal, working example — a
 human adapts the upload step to wherever they want backups stored (S3,
-Backblaze, Fly's own Tigris object storage, etc.) since this sandbox has
-no such bucket to test against:
+Backblaze, etc.) since this sandbox has no such bucket to test against:
 
 ```sh
 DATABASE_URL=... ./infra/scripts/backup.sh
 ```
 
-Run it on a schedule via whatever the host provides (a Fly Machine on a
-cron-like schedule, GitHub Actions on a schedule, etc.) — there is no
-in-app scheduler for this, deliberately: backup infrastructure living
-inside the same app it's backing up is a single point of failure a real
-production setup shouldn't have.
+Run it on a schedule via whatever the host provides (a scheduled job on
+the host, GitHub Actions on a schedule, etc.) — there is no in-app
+scheduler for this, deliberately: backup infrastructure living inside the
+same app it's backing up is a single point of failure a real production
+setup shouldn't have.
 
 ## Restore runbook
 
@@ -106,7 +79,7 @@ production setup shouldn't have.
    specific `pg_dump` file from `infra/scripts/backup.sh`'s fallback).
 2. **Restore into a NEW Postgres instance** first — never restore
    directly over the live production database. Managed-provider PITR
-   (Fly MPG/Neon/RDS) does this by creating a new instance from the
+   (Neon/RDS/etc.) does this by creating a new instance from the
    snapshot/point in time automatically; for a plain `pg_dump` file:
    ```sh
    createdb scm_restore_test
@@ -120,9 +93,9 @@ production setup shouldn't have.
    present-but-corrupt in ways a row count won't catch; opening it and
    letting `packages/ydoc`'s integrity reducer run over it, per Job 022, is
    itself part of what "verify the restore" should mean here).
-4. **Cut over**: update `DATABASE_URL` (Fly secret / host equivalent) to
-   point at the restored instance, redeploy, confirm `/health` and a real
-   login+project-open still work end to end.
+4. **Cut over**: update `DATABASE_URL` (via the host's secrets mechanism)
+   to point at the restored instance, redeploy, confirm `/health` and a
+   real login+project-open still work end to end.
 5. **Only after cutover is confirmed working**, decommission the old
    (corrupted/lost) instance — don't delete it as part of the restore
    itself.

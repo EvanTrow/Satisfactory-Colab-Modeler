@@ -475,7 +475,7 @@ Phases 0–5 are the MVP. A rough sizing, assuming one developer: Phase 2 and Ph
 
 ## 10. Open Questions
 
-Decided in planning: **React Flow** for the canvas · **container host + managed Postgres** (Fly.io/Railway/Render) · **Manual + Basic first, Full in Phase 6** · **IndexedDB cache, online to edit**.
+Decided in planning: **React Flow** for the canvas · **container host + managed Postgres** (Railway/Render/etc.) · **Manual + Basic first, Full in Phase 6** · **IndexedDB cache, online to edit**.
 
 Still open — none block Phase 0, but the starred ones should be settled before the phase that needs them:
 

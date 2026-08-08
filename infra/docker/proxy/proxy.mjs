@@ -5,7 +5,7 @@
 // everything else in this 'single container host'" — see that function's
 // own header comment, unchanged since Job 020). This is what actually
 // makes that assumption true: it's the ONE public port a real host
-// (Fly.io/Railway/Render) points at, and it fans out to `apps/api`
+// (Railway/Render/etc.) points at, and it fans out to `apps/api`
 // (serving `apps/web`'s static build too, see `apps/api/src/staticSite.ts`)
 // on `API_PORT` for everything, and `apps/realtime`'s public Hocuspocus
 // WebSocket listener on `REALTIME_PORT` for `/collab*` — both plain

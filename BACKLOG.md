@@ -48,7 +48,6 @@ This is a living backlog, not a job queue — pick items opportunistically rathe
 - Marquee-selection's pre-first-paint fallback node size (`useMarqueeSelection.ts`'s `FALLBACK_SIZE_BY_TYPE`) needs manual updates whenever a node card's width class changes — no test currently guards this staying in sync.
 - `apps/web/src/a11y/contrastAudit.ts`'s token values are a hand-kept duplicate of `index.css`'s real custom properties (no CSS-var-to-TS bridge exists) — a color token change that isn't mirrored here makes the contrast regression test silently stop proving anything real.
 - `infra/Dockerfile`'s runtime image copies the entire built workspace uncurated (not size-optimized) — a legitimate future trim, not a correctness issue.
-- `infra/fly.toml` was written against Fly.io's documented schema but never validated against a real account (`fly config validate` / a real `fly launch`) — first real deploy attempt should treat it as "written correctly," not "proven correct."
 - No automated test exists for `useProjectDocument.ts`'s hydration-ordering invariant (push-listener/root-container-creation ordering) — guarded only by a code comment across Jobs 015/016/020. Worth a real regression test once `apps/web` gets DOM test infra (see P1).
 - The dev Postgres has accumulated several thousand leftover test-fixture rows from the test suites across the whole 29-job history. Run `pnpm db:reset` (with the correct `DATABASE_URL`) before treating the current DB as a clean baseline for anything.
 
@@ -72,13 +71,13 @@ These are named in `PLAN.md` §3's "Later phases" / §10's "Open Questions" and 
 
 The app is **deploy-ready, not deployed**. No real cloud account, production Discord app, Sentry project, or live backup exists — Job 029 deliberately stopped short of any of that (account creation and billing are the user's own action, not an agent's). Concretely, to go live:
 
-1. Create a Fly.io account (or adapt `infra/fly.toml` for Railway/Render — PLAN.md leaves the host choice open, Fly.io is what was written).
+1. Create an account with a container host (Railway, Render, or similar — PLAN.md leaves the choice open) and write that host's own deploy config alongside `infra/Dockerfile`.
 2. Register a **production** Discord OAuth application (the existing `infra/.env` credentials are dev-only, pointed at `localhost:5173`) and set its redirect URI to the real production domain.
 3. Provision a managed Postgres instance for production (not the local `docker-compose` one).
-4. Set the ~6 categories of secrets Fly needs via `fly secrets set` — see `README.md`'s "Production deploy" section for the exact list (Discord client id/secret/redirect, cookie secret, database URL, realtime ticket/internal secrets, optionally `SENTRY_DSN`/`VITE_SENTRY_DSN`).
+4. Set the ~6 categories of secrets the app needs via the host's own secrets mechanism — see `README.md`'s "Production deploy" section for the exact list (Discord client id/secret/redirect, cookie secret, database URL, realtime ticket/internal secrets, optionally `SENTRY_DSN`/`VITE_SENTRY_DSN`).
 5. Optionally create a Sentry project and set its DSN — error reporting is already wired end-to-end (including the CRDT integrity-reducer-firing signal) and no-ops cleanly without one.
 6. Set up the managed host's native backup feature, or schedule `infra/scripts/backup.sh` (a working `pg_dump`-based fallback, verified via a real dump/restore round trip) if the host has none.
-7. `fly deploy` — `infra/Dockerfile` is built and verified locally (real HTTP + WebSocket traffic through the reverse proxy, graceful shutdown, self-healing teardown) but has never been run against a real Fly account.
+7. Deploy via the host's own build/deploy flow — `infra/Dockerfile` is built and verified locally (real HTTP + WebSocket traffic through the reverse proxy, graceful shutdown, self-healing teardown) but has never been run against a real hosting account.
 
 ---
 
