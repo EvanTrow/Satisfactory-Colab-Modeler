@@ -38,6 +38,7 @@ import { buildSolverSnapshotWithBlueprints } from "./buildSnapshot";
 import { expandBlueprintResults, type BlueprintDisplayInfo } from "./blueprintCollapse";
 import { mergeComponentResults } from "./mergeResults";
 import type { HostToWorkerMessage, WorkerToHostMessage } from "./protocol";
+import { originalEdgeIdFromSinkEdgeId } from "./sinkPassthrough";
 import { createSolveScheduler, type SolveHostState, type SolveStaleness } from "./solveScheduler";
 
 interface SolveStoreState extends SolveHostState {
@@ -104,7 +105,21 @@ function indexNodes(result: SolveResult | null): ReadonlyMap<string, NodeSolveRe
 
 function indexEdges(result: SolveResult | null): ReadonlyMap<string, EdgeSolveResult> {
   if (!result || result.edges.length === 0) return EMPTY_EDGE_RESULTS;
-  return new Map(result.edges.map((e) => [e.edgeId, e] as const));
+  const map = new Map(result.edges.map((e) => [e.edgeId, e] as const));
+  // A sink-rewritten edge's `EdgeSolveResult` is keyed by its MINTED id
+  // (`sinkPassthrough.ts`'s `SINK_EDGE_ID_PREFIX` + the original edge id),
+  // not the real edge id `ConnectionEdge.tsx`'s label looks up by — alias it
+  // under the original id too so a connection feeding an AWESOME Sink shows
+  // its solved rate like any other connection. Set with `??=` semantics (via
+  // the `has` check) so a real, non-rewritten edge's own entry always wins if
+  // an id were ever to collide, though `originalEdgeIdFromSinkEdgeId` only
+  // ever recovers ids that were never valid standalone `SolverEdge` ids to
+  // begin with (they always carried the sink's minted prefix).
+  for (const e of result.edges) {
+    const originalId = originalEdgeIdFromSinkEdgeId(e.edgeId);
+    if (originalId && !map.has(originalId)) map.set(originalId, e);
+  }
+  return map;
 }
 
 export interface UseSolverDiagnostics {

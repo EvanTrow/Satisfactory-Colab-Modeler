@@ -19,12 +19,37 @@
 // future non-realtime consumer), remove only the now-genuinely-unused
 // client-side wrappers around them.
 import { ApiError } from "../../api/projects";
+import { bytesToBase64 } from "./base64";
 
 async function parseErrorBody(res: Response): Promise<unknown> {
   try {
     return await res.json();
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Guest-mode work: pushes one raw Yjs update into a project's doc log —
+ * calls the same `POST /api/projects/:id/doc/updates` route this file's own
+ * header comment describes as a live-sync fallback with no client caller
+ * left in `apps/web`. This is that caller: `guest/importGuestProjects.ts`
+ * uses it as a one-shot "seed a brand-new (still-empty) cloud project with
+ * this exact guest doc content" call, entirely outside the normal
+ * `useProjectDocument.ts`/Hocuspocus live-sync path — there's no realtime
+ * connection to a project that was, a moment ago, purely local to this
+ * browser. Requires owner/editor role server-side; a freshly created
+ * project is always owned by its creator, so that's never an issue here.
+ */
+export async function pushInitialDocUpdate(projectId: string, update: Uint8Array): Promise<void> {
+  const res = await fetch(`/api/projects/${projectId}/doc/updates`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ update: bytesToBase64(update) }),
+  });
+  if (!res.ok) {
+    throw new ApiError(res.status, await parseErrorBody(res));
   }
 }
 

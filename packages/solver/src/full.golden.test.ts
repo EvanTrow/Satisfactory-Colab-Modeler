@@ -99,6 +99,78 @@ describe("Full mode golden values — even-split preference (hand-derived from P
   });
 });
 
+describe("Full mode golden values — an UNCONSTRAINED node that is itself a splitter", () => {
+  it("resolves the splitter off its complete upstream supply, not off one sibling's partial downstream demand: 90/min ore -> smelter(unconstrained) -> 30 capped / 60 uncapped", () => {
+    // Regression test: `smelter` has no limit of its own, so it must be
+    // resolved by propagation. It has ONE resolved neighbor upstream
+    // (`producer`, a single-edge complete signal: 90/min Iron Ore) and TWO
+    // downstream siblings for its own output part (Iron Ingot) — `plateA`
+    // (pinned to exactly 1 machine, a hard 30/min Iron Ingot demand) and
+    // `plateB` (unconstrained, resolves only after `smelter` does).
+    //
+    // Before the fix, `propagateMachineCountsFull` picked its pivot part
+    // purely by "does `impliedByPart` have an entry for the recipe's
+    // primary (output) part", without checking whether that entry actually
+    // summed EVERY sibling edge for that part. Here it didn't: only
+    // `plateA` (already resolved) had contributed, so the partial sum
+    // (`plateA`'s own 30/min demand) was mistaken for `smelter`'s FULL
+    // Iron Ingot output, locking `smelter` at exactly 1 machine (30/min)
+    // instead of the 3 machines (90/min) its actual Iron Ore supply
+    // supports — after which the 30/min it did produce was ITSELF
+    // water-filled evenly across both downstream edges (15/15), starving
+    // both far below what was actually available.
+    //
+    // The fix requires every sibling edge for a candidate pivot part to
+    // have a resolved counterpart before that part's implied sum is
+    // trusted; here that only holds for Iron Ore (`smelter`'s single
+    // upstream edge), so `smelter` correctly resolves off its full 90/min
+    // supply first, and ITS OWN split (computed once IT is resolved)
+    // correctly water-fills 90 -> 30 (plateA's exact cap) / 60 (plateB,
+    // the remainder).
+    const producer = miner("producer", "90");
+    const smelter = unconstrainedSmelter("smelter");
+    const plateA: SolverNode = {
+      id: "plateA",
+      recipe: "Iron Plate",
+      machine: "Constructor",
+      purity: null,
+      limit: "1",
+      limitMode: "machines",
+      clock: null,
+      shards: 0,
+    };
+    const plateB: SolverNode = {
+      id: "plateB",
+      recipe: "Iron Plate",
+      machine: "Constructor",
+      purity: null,
+      limit: null,
+      limitMode: "machines",
+      clock: null,
+      shards: 0,
+    };
+    const edges: SolverEdge[] = [
+      { id: "e-ore", part: "Iron Ore", fromNode: "producer", fromPort: "out", toNode: "smelter", toPort: "in" },
+      { id: "e-a", part: "Iron Ingot", fromNode: "smelter", fromPort: "out", toNode: "plateA", toPort: "in" },
+      { id: "e-b", part: "Iron Ingot", fromNode: "smelter", fromPort: "out", toNode: "plateB", toPort: "in" },
+    ];
+    const result = solveFull({ nodes: [producer, smelter, plateA, plateB], edges });
+
+    expect(result.valid).toBe(true);
+    const smelterNode = result.nodes.find((n) => n.nodeId === "smelter")!;
+    expect(smelterNode.resolved).toBe(true);
+    expect(equals(parseRational(smelterNode.machineCount), of(3))).toBe(true);
+    expect(equals(ingotRate(result, "smelter"), of(90))).toBe(true);
+
+    const edgeA = result.edges.find((e) => e.edgeId === "e-a")!;
+    const edgeB = result.edges.find((e) => e.edgeId === "e-b")!;
+    expect(equals(parseRational(edgeA.rate), of(30))).toBe(true);
+    expect(equals(parseRational(edgeB.rate), of(60))).toBe(true);
+    expect(edgeA.valid).toBe(true);
+    expect(edgeB.valid).toBe(true);
+  });
+});
+
 describe("Full mode golden values — two-tier priority (hand-derived: \"top drains first, bottom takes overflow\")", () => {
   it("an uncapped top-tier sibling absorbs everything; the bottom-tier sibling gets exactly zero", () => {
     // "bottom-a" is pinned to exactly 0 machines (a real, valid, explicit

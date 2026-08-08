@@ -54,17 +54,10 @@ import { GenerateFactoryDialog } from "./generator";
 import { SettingsMenu } from "./SettingsMenu";
 import { SolverResultContext } from "./SolverResultContext";
 import { type ClickPoint, isDoubleClick } from "./doubleClick";
-import { ConnectionEdge, parsePortHandleId, useConnectionHandlers } from "./edges";
-import { RecipeNode, useAutoRound } from "./nodes";
-import {
-  BlueprintNode,
-  BoundaryEdge,
-  NodeContextMenu,
-  OutpostNode,
-  deleteOutpost,
-  moveNodeToContainer,
-  type NodeContextMenuState,
-} from "./outposts";
+import { parsePortHandleId, useConnectionHandlers } from "./edges";
+import { edgeTypes, nodeTypes } from "./flowTypes";
+import { useAutoRound } from "./nodes";
+import { NodeContextMenu, deleteOutpost, moveNodeToContainer, type NodeContextMenuState } from "./outposts";
 import { ConnectionStatusIndicator } from "./persistence/ConnectionStatusIndicator";
 import type { ConnectionStatus } from "./persistence/connectionStatus";
 import { SaveStatusIndicator } from "./persistence/SaveStatusIndicator";
@@ -79,33 +72,11 @@ import {
   useUndoRedoState,
 } from "./selection";
 import { ThemeToggle, useTheme, type ThemeMode } from "../theme";
+import { useMinimapVisible } from "./useMinimapVisible";
 import { useSettings } from "./useSettings";
 import { useSolver } from "../workers";
 import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
 import { SolveStatusIndicator } from "./SolveStatusIndicator";
-import { SinkNode, SplurgerNode, StorageNode } from "./nodes";
-
-// Module-level constants (not created inside the component) so React Flow
-// never sees a new `nodeTypes`/`edgeTypes` object identity on every render
-// — passing a fresh object each render is a documented React Flow footgun
-// that triggers a console warning and forces an internal remount of every
-// custom node/edge. `"recipe"` matches the `type` string
-// `useYjsSync.ts`'s `nodeRecordToFlowNode` assigns to every `kind:
-// "recipe"` node; `"outpost"` (Job 013) matches
-// `containerToOutpostFlowNode`'s synthetic boundary nodes. `"part"` matches
-// what `useYjsSync.ts` assigns to a normal direct edge (Job 011's
-// `ConnectionEdge`); `"boundary"` (Job 013) matches a boundary-crossing
-// projected edge (`outposts/BoundaryEdge.tsx`).
-const nodeTypes = {
-  recipe: RecipeNode,
-  outpost: OutpostNode,
-  blueprint: BlueprintNode,
-  splurger: SplurgerNode,
-  sink: SinkNode,
-  depot: SinkNode,
-  storage: StorageNode,
-};
-const edgeTypes = { part: ConnectionEdge, boundary: BoundaryEdge };
 
 /** Node kinds whose right-click menu shows `RecipeNodeQuickSettings.tsx` (at minimum the Name field, plus recipe-only fields it gates itself). */
 const QUICK_SETTINGS_KINDS = new Set(["recipe", "splurger", "sink", "depot", "storage"]);
@@ -194,6 +165,7 @@ export function CanvasView({
 
   return (
     <CanvasViewReady
+      mode="cloud"
       sfmDoc={docState.sfmDoc}
       rootContainerId={docState.rootContainerId}
       undoManager={docState.undoManager}
@@ -217,8 +189,8 @@ interface CanvasStatusScreenProps {
   children: ReactNode;
 }
 
-/** The loading/error shell — same back-button affordance as the real canvas header, so a stuck load never traps the user. */
-function CanvasStatusScreen({ projectTitle, onBack, children }: CanvasStatusScreenProps) {
+/** The loading/error shell — same back-button affordance as the real canvas header, so a stuck load never traps the user. Exported so `GuestCanvasView.tsx` can reuse the exact same chrome for its own loading/error states. */
+export function CanvasStatusScreen({ projectTitle, onBack, children }: CanvasStatusScreenProps) {
   const { t } = useTranslation("app");
   return (
     <div className="flex h-svh w-full flex-col bg-[var(--surface-app)] text-[var(--text-primary)]">
@@ -244,23 +216,42 @@ function CanvasStatusScreen({ projectTitle, onBack, children }: CanvasStatusScre
 }
 
 interface CanvasViewReadyProps extends StaticCanvasDoc {
-  /** The project's real database id — `VersionPanel` talks to `/api/projects/:id/versions*` directly with this, same id `useProjectDocument` fetches/pushes doc bytes against. */
+  /**
+   * Guest-mode work: `"cloud"` is the original, server-synced project path
+   * (Jobs 008-022); `"guest"` is a purely local, solo document
+   * (`GuestCanvasView.tsx`, `useLocalOnlyProjectDocument.ts`) with no
+   * server, no collaborators, and no version history. Gates the four
+   * collab/cloud-only toolbar pieces below — everything else (canvas
+   * editing, solver, generator, settings, undo/redo) is genuinely mode-
+   * agnostic and stays on unconditionally.
+   */
+  mode: "cloud" | "guest";
+  /** The project's real database id — `VersionPanel` talks to `/api/projects/:id/versions*` directly with this, same id `useProjectDocument` fetches/pushes doc bytes against. Unused in guest mode. */
   projectId: string;
   projectTitle: string;
-  projectShortId: string;
+  /** Cloud-only — a guest project has no server-assigned short id. */
+  projectShortId?: string;
   role: ProjectRole;
   localUser: LocalUserIdentity;
-  /** Live autosave state from `useProjectDocument`'s push queue — see `SaveStatusIndicator.tsx`. */
+  /** Live autosave state — from `useProjectDocument`'s push queue in cloud mode, or `useLocalOnlyProjectDocument`'s local IndexedDB-settle approximation in guest mode. See `SaveStatusIndicator.tsx`. */
   saveStatus: SaveStatus;
-  /** Job 022: the live WebSocket's own transport-level state — see `connectionStatus.ts`'s header comment for how this differs from `saveStatus`. */
-  connectionStatus: ConnectionStatus;
-  /** Called once a `VersionPanel` restore has succeeded server-side — forces `useProjectDocument` to fully re-hydrate from the (now-restored) server state. See that function's own doc comment for why a restore can't just be merged into the live doc. */
-  onRestored: () => void;
+  /** Job 022: the live WebSocket's own transport-level state — see `connectionStatus.ts`'s header comment for how this differs from `saveStatus`. Cloud-only — guest mode has no transport to report on. */
+  connectionStatus?: ConnectionStatus;
+  /** Called once a `VersionPanel` restore has succeeded server-side — forces `useProjectDocument` to fully re-hydrate from the (now-restored) server state. Cloud-only — guest mode has no version history. */
+  onRestored?: () => void;
   onBack: () => void;
 }
 
-/** Everything Jobs 008-014 built, unchanged in substance — now fed a hydrated `sfmDoc`/`rootContainerId`/`undoManager`/`awareness` from `useProjectDocument` instead of creating a fresh empty one itself. */
-function CanvasViewReady({
+/**
+ * Everything Jobs 008-014 built, unchanged in substance — now fed a hydrated
+ * `sfmDoc`/`rootContainerId`/`undoManager`/`awareness` from
+ * `useProjectDocument` (or, in guest mode, `useLocalOnlyProjectDocument`)
+ * instead of creating a fresh empty one itself. Exported so
+ * `GuestCanvasView.tsx` can render it directly with `mode="guest"` instead
+ * of duplicating this whole toolbar/canvas composition.
+ */
+export function CanvasViewReady({
+  mode,
   sfmDoc,
   rootContainerId,
   undoManager,
@@ -308,13 +299,11 @@ function CanvasViewReady({
   const [containerId, setContainerId] = useState(rootContainerId);
   const navigateToContainer = useCallback((id: string) => setContainerId(id), []);
 
-  // Job 027: minimap show/hide — a simple local toggle, not a persisted
-  // `Settings` field (per this job's own scope note: "doesn't need to be a
-  // persisted setting unless you judge it should be" — a per-session UI
-  // preference reads as the right scope for something this cosmetic,
-  // matching how e.g. the summary/settings popovers' own `open` state is
-  // also plain unpersisted local state).
-  const [showMinimap, setShowMinimap] = useState(true);
+  // Job 027: minimap show/hide — persisted as a `localStorage`-backed user
+  // setting (see `useMinimapVisible.ts`'s header comment for why it's this
+  // and not a per-document CRDT `Settings` field), matching
+  // `theme/useTheme.ts`'s own account-level-preference pattern.
+  const { showMinimap, toggleMinimap } = useMinimapVisible();
 
   // "Generate factory": a target-item-and-rate dialog that auto-builds a
   // full production chain (`canvas/generator/`) — a one-shot action, so
@@ -459,10 +448,10 @@ function CanvasViewReady({
                 numberFormats={settings.numberFormats}
                 theme={theme}
               />
-              {/* Job 027: minimap show/hide — see `showMinimap`'s own comment above for why this is plain local state, not a persisted setting. */}
+              {/* Job 027: minimap show/hide — see `showMinimap`'s own comment above for why this is a persisted user setting. */}
               <button
                 type="button"
-                onClick={() => setShowMinimap((v) => !v)}
+                onClick={toggleMinimap}
                 title={showMinimap ? t("canvas.hideMinimap") : t("canvas.showMinimap")}
                 aria-label={showMinimap ? t("canvas.hideMinimap") : t("canvas.showMinimap")}
                 aria-pressed={showMinimap}
@@ -487,15 +476,33 @@ function CanvasViewReady({
               {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. Job 019 added the solver-mode/number-format sections. */}
               <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
-              {/* Job 016: version history + restore, and the live autosave-status indicator (replaces Job 015's static "autosaves ~1.5s..." placeholder text). */}
-              <VersionPanel projectId={projectId} role={role} onRestored={onRestored} />
-              {/* Job 022: real sharing UI — invite links + member management, extending Job 020's owner-only routes. */}
-              <SharingPanel projectId={projectId} role={role} currentUserId={localUser.id} />
-              <span className="text-xs text-[var(--text-muted)]">{projectShortId}</span>
-              {/* Job 021: "who's currently connected" — every role (owner/editor/viewer, Job 020) gets a live provider connection, so a viewer shows up here too. */}
-              <PresenceAvatarList awareness={awareness} localUser={localUser} />
-              {/* Job 022: transport-level connection state, distinct from `SaveStatusIndicator`'s save-durability signal — see `connectionStatus.ts`'s header comment. */}
-              <ConnectionStatusIndicator status={connectionStatus} />
+              {/*
+                Guest-mode work: version history, sharing, live presence, and
+                transport-connection state all assume a server-synced
+                project — none apply to a solo local guest document, so they
+                only render in `mode === "cloud"`. `SaveStatusIndicator`
+                stays for both: guest mode has its own local, IndexedDB-
+                settle approximation of the same `saveStatus` shape (see
+                `useLocalOnlyProjectDocument.ts`).
+              */}
+              {mode === "cloud" && (
+                <>
+                  {/* Job 016: version history + restore, and the live autosave-status indicator (replaces Job 015's static "autosaves ~1.5s..." placeholder text). */}
+                  <VersionPanel projectId={projectId} role={role} onRestored={onRestored!} />
+                  {/* Job 022: real sharing UI — invite links + member management, extending Job 020's owner-only routes. */}
+                  <SharingPanel projectId={projectId} role={role} currentUserId={localUser.id} />
+                  <span className="text-xs text-[var(--text-muted)]">{projectShortId}</span>
+                  {/* Job 021: "who's currently connected" — every role (owner/editor/viewer, Job 020) gets a live provider connection, so a viewer shows up here too. */}
+                  <PresenceAvatarList awareness={awareness} localUser={localUser} />
+                  {/* Job 022: transport-level connection state, distinct from `SaveStatusIndicator`'s save-durability signal — see `connectionStatus.ts`'s header comment. */}
+                  <ConnectionStatusIndicator status={connectionStatus!} />
+                </>
+              )}
+              {mode === "guest" && (
+                <span className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)]">
+                  {t("guestMode.canvasBadge")}
+                </span>
+              )}
               <SaveStatusIndicator status={saveStatus} role={role} />
             </div>
           </div>

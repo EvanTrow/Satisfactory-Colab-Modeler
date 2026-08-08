@@ -2,6 +2,18 @@
 // `apps/web/src/canvas/` entry and jobs/008-canvas-skeleton.md's Handoff
 // notes for how this fits together.
 export { CanvasView } from "./CanvasView";
+// Guest-mode work: the local-only canvas entry point + its persistence hook,
+// plus the shared hydration helper and `<ReactFlow>` type maps the landing
+// page's read-only sample preview also needs — see each module's own header
+// comment.
+export { GuestCanvasView } from "./GuestCanvasView";
+export {
+  useLocalOnlyProjectDocument,
+  deleteLocalOnlyProjectDocument,
+  guestIndexedDbName,
+} from "./persistence/useLocalOnlyProjectDocument";
+export { bootstrapSfmDocument, type BootstrappedDocument } from "./persistence/bootstrapDocument";
+export { nodeTypes, edgeTypes } from "./flowTypes";
 export { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
 // Job 019: Job 018's live solver output, threaded through context so
 // `RecipeNode.tsx`/`panels/SummaryPanel.tsx` don't each spin up their own
@@ -77,6 +89,7 @@ export {
   listProjectVersions,
   saveProjectVersion,
   restoreProjectVersion,
+  pushInitialDocUpdate,
   type ProjectVersionInfo,
   type RestoreVersionResult,
 } from "./persistence/docApi";

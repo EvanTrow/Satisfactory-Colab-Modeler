@@ -8,7 +8,14 @@
 import { toFractionString } from "@scm/rational";
 import { addEdge, addNode, type SfmDocument } from "@scm/ydoc";
 
-import { type FactoryPlan, type LayoutOptions, layoutFactoryPlan } from "./planFactory";
+import { WILDCARD_PART } from "../edges";
+import {
+  type FactoryPlan,
+  type LayoutOptions,
+  layoutByproductDisposals,
+  layoutFactoryPlan,
+  needsDisposalNode,
+} from "./planFactory";
 
 // Every generated node is pinned to its exact computed machine count
 // (`limitMode: "machines"`) rather than left for a solver to propagate —
@@ -16,6 +23,8 @@ import { type FactoryPlan, type LayoutOptions, layoutFactoryPlan } from "./planF
 // document with no live solve at all. Same neutral gray the Recipe Chooser
 // itself uses for a freshly-placed node (`filters.ts`'s `buildNodeInputForRecipe`).
 const GENERATED_NODE_COLOR = "#4b5563";
+/** Distinct color for byproduct-disposal nodes (conversion machines + their sinks) — visually sets them apart from the main production chain, same idea as `RecipeChooser.tsx`'s own per-node-kind color choices. */
+const DISPOSAL_NODE_COLOR = "#7c3aed";
 
 export interface ApplyFactoryPlanResult {
   /** `PlannedNode.part` -> the real node id it was created as. */
@@ -34,30 +43,13 @@ export function applyFactoryPlan(
   layoutOptions: LayoutOptions = {},
 ): ApplyFactoryPlanResult {
   const positions = layoutFactoryPlan(plan, layoutOptions);
+  const disposalLayout = layoutByproductDisposals(plan, layoutOptions);
   const nodeIdByPart = new Map<string, string>();
 
   sfmDoc.doc.transact(() => {
     for (const planned of plan.nodes) {
       const position = positions.get(planned.part) ?? { x: 0, y: 0 };
-      const node = addNode(sfmDoc, {
-        containerId,
-        kind: "recipe",
-        recipe: planned.recipe.name,
-        machine: planned.machine,
-        x: position.x,
-        y: position.y,
-        title: planned.recipe.name,
-        color: GENERATED_NODE_COLOR,
-        limit: toFractionString(planned.machineCount),
-        limitMode: "machines",
-        clock: null,
-        autoRound: false,
-        shards: 0,
-        purity: planned.purity,
-        beltTier: null,
-        storageMode: null,
-        splurgerVariant: null,
-      });
+      const node = addGeneratedRecipeNode(sfmDoc, containerId, position, planned, GENERATED_NODE_COLOR);
       nodeIdByPart.set(planned.part, node.id);
     }
 
@@ -72,9 +64,207 @@ export function applyFactoryPlan(
         fromPort: `out:${edge.part}`,
         toNode,
         toPort: `in:${edge.part}`,
+        style: null,
+        labelPos: null,
       });
+    }
+
+    // Byproduct disposal (`options.handleByproducts`, see `planFactory.ts`'s
+    // own doc comments): each disposal gets its OWN AWESOME Sink — positioned
+    // one level right of wherever its byproduct is actually produced, not
+    // funneled through one sink shared by the whole plan — plus its own
+    // conversion machine (and, for a packaged fluid/gas, that conversion's
+    // own small supporting chain) first when one was found to route the
+    // byproduct through.
+    for (const disposal of plan.byproductDisposals) {
+      // Reuse (`ByproductDisposal.reuse`): every source producing this
+      // byproduct ALSO gets a direct edge into each of the raw producer's
+      // existing consumers, alongside their existing edge from that
+      // (already-shrunk, see `planFactory.ts`'s own `applyByproductReuse`)
+      // raw producer — a real Satisfactory splitter naturally lets each
+      // consumer draw what it needs first, so feeding a consumer from BOTH
+      // the raw producer and the byproduct at once is exactly how a player
+      // would wire this up by hand.
+      if (disposal.reuse) {
+        for (const source of disposal.sources) {
+          const fromNode = nodeIdByPart.get(source.fromPart);
+          if (!fromNode) continue;
+          for (const intoPart of disposal.reuse.intoParts) {
+            const toNode = nodeIdByPart.get(intoPart);
+            if (!toNode) continue;
+            addEdge(sfmDoc, {
+              containerId,
+              part: disposal.part,
+              fromNode,
+              fromPort: `out:${disposal.part}`,
+              toNode,
+              toPort: `in:${disposal.part}`,
+              style: null,
+              labelPos: null,
+            });
+          }
+        }
+      }
+
+      // Whatever's left after reuse either has nowhere to go (reuse alone
+      // covered it — `disposalRate` is zero) or genuinely can't be disposed
+      // at all (a fluid/gas with no packaging route — `rawSinkAllowed` is
+      // false and there's no `conversion`): leave it un-wired rather than a
+      // broken or physically-invalid edge into a sink.
+      if (!needsDisposalNode(disposal)) continue;
+
+      const sinkPosition = disposalLayout.sinkPositions.get(disposal.part) ?? { x: 0, y: 0 };
+      const sinkNode = addNode(sfmDoc, {
+        containerId,
+        kind: "sink",
+        recipe: null,
+        machine: "AWESOME Sink",
+        x: sinkPosition.x,
+        y: sinkPosition.y,
+        title: "AWESOME Sink",
+        color: DISPOSAL_NODE_COLOR,
+        limit: null,
+        limitMode: "ppm",
+        clock: null,
+        autoRound: false,
+        shards: 0,
+        purity: null,
+        beltTier: null,
+        storageMode: null,
+        splurgerVariant: null,
+      });
+
+      // Fan-in: every source producing THIS byproduct feeds the same
+      // conversion node (or this disposal's own sink directly), same as any
+      // other multiple-producers-into-one-consumer edge this app already
+      // supports natively — different byproducts no longer share a node, but
+      // multiple sources of the SAME byproduct still do.
+      const disposalTargetNodeId = ((): string => {
+        if (!disposal.conversion) return sinkNode.id;
+        const position = disposalLayout.conversionPositions.get(disposal.part) ?? { x: 0, y: 0 };
+        const conversionNode = addNode(sfmDoc, {
+          containerId,
+          kind: "recipe",
+          recipe: disposal.conversion.recipe.name,
+          machine: disposal.conversion.machine,
+          x: position.x,
+          y: position.y,
+          title: disposal.conversion.recipe.name,
+          color: DISPOSAL_NODE_COLOR,
+          limit: toFractionString(disposal.conversion.machineCount),
+          limitMode: "machines",
+          clock: null,
+          autoRound: false,
+          shards: 0,
+          purity: disposal.conversion.purity,
+          beltTier: null,
+          storageMode: null,
+          splurgerVariant: null,
+        });
+
+        // Packaging support chain (e.g. Water needs an Empty Canister): its
+        // own dedicated nodes/edges, entirely separate from `nodeIdByPart` —
+        // never merged with the main graph or any other disposal's support
+        // chain, same additive-side-chain reasoning as the disposal itself.
+        if (disposal.conversion.supportChain) {
+          const supportChain = disposal.conversion.supportChain;
+          const supportPositions = disposalLayout.supportChainPositions.get(disposal.part);
+          const supportNodeIdByPart = new Map<string, string>();
+          for (const supportNode of supportChain.nodes) {
+            const supportPosition = supportPositions?.get(supportNode.part) ?? { x: 0, y: 0 };
+            const node = addGeneratedRecipeNode(sfmDoc, containerId, supportPosition, supportNode, DISPOSAL_NODE_COLOR);
+            supportNodeIdByPart.set(supportNode.part, node.id);
+          }
+          for (const supportEdge of supportChain.edges) {
+            const fromNode = supportNodeIdByPart.get(supportEdge.fromPart);
+            const toNode = supportNodeIdByPart.get(supportEdge.toPart);
+            if (!fromNode || !toNode) continue;
+            addEdge(sfmDoc, {
+              containerId,
+              part: supportEdge.part,
+              fromNode,
+              fromPort: `out:${supportEdge.part}`,
+              toNode,
+              toPort: `in:${supportEdge.part}`,
+              style: null,
+              labelPos: null,
+            });
+          }
+          // The support chain's own root — the node producing the carrier
+          // part itself — feeds the conversion machine's carrier input port.
+          const rootNodeId = supportNodeIdByPart.get(supportChain.part);
+          if (rootNodeId) {
+            addEdge(sfmDoc, {
+              containerId,
+              part: supportChain.part,
+              fromNode: rootNodeId,
+              fromPort: `out:${supportChain.part}`,
+              toNode: conversionNode.id,
+              toPort: `in:${supportChain.part}`,
+              style: null,
+              labelPos: null,
+            });
+          }
+        }
+
+        addEdge(sfmDoc, {
+          containerId,
+          part: disposal.conversion.outputPart,
+          fromNode: conversionNode.id,
+          fromPort: `out:${disposal.conversion.outputPart}`,
+          toNode: sinkNode.id,
+          toPort: `in:${WILDCARD_PART}`,
+          style: null,
+          labelPos: null,
+        });
+        return conversionNode.id;
+      })();
+
+      for (const source of disposal.sources) {
+        const fromNode = nodeIdByPart.get(source.fromPart);
+        if (!fromNode) continue; // shouldn't happen — every source is one of `plan.nodes`, created above
+        addEdge(sfmDoc, {
+          containerId,
+          part: disposal.part,
+          fromNode,
+          fromPort: `out:${disposal.part}`,
+          toNode: disposalTargetNodeId,
+          toPort: disposal.conversion ? `in:${disposal.part}` : `in:${WILDCARD_PART}`,
+          style: null,
+          labelPos: null,
+        });
+      }
     }
   });
 
   return { nodeIdByPart };
+}
+
+/** Shared `addNode` shape for both a main-graph `PlannedNode` and a byproduct-disposal support chain's own `PlannedNode`s (`ByproductDisposal.conversion.supportChain.nodes`) — identical fields either way, only the color differs. */
+function addGeneratedRecipeNode(
+  sfmDoc: SfmDocument,
+  containerId: string,
+  position: { x: number; y: number },
+  planned: FactoryPlan["nodes"][number],
+  color: string,
+) {
+  return addNode(sfmDoc, {
+    containerId,
+    kind: "recipe",
+    recipe: planned.recipe.name,
+    machine: planned.machine,
+    x: position.x,
+    y: position.y,
+    title: planned.recipe.name,
+    color,
+    limit: toFractionString(planned.machineCount),
+    limitMode: "machines",
+    clock: null,
+    autoRound: false,
+    shards: 0,
+    purity: planned.purity,
+    beltTier: null,
+    storageMode: null,
+    splurgerVariant: null,
+  });
 }

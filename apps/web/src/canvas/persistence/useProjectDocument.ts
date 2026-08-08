@@ -65,19 +65,12 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import { IndexeddbPersistence, clearDocument } from "y-indexeddb";
 import * as Y from "yjs";
 
-import {
-  type SfmDocument,
-  addContainer,
-  createDocument,
-  createUndoManager,
-  isNoopRepair,
-  listContainers,
-  runIntegrityReducer,
-} from "@scm/ydoc";
+import { type SfmDocument, isNoopRepair } from "@scm/ydoc";
 
 import type { ProjectRole } from "../../api/projects";
 import type { AwarenessHandle } from "../../collab/awareness";
 import { captureIntegrityRepairSignal } from "../../monitoring/sentry";
+import { bootstrapSfmDocument } from "./bootstrapDocument";
 import { attachClientIntegrityReducer } from "./clientIntegrity";
 import { computeConnectionStatus, type ConnectionStatus } from "./connectionStatus";
 import { fetchRealtimeTicket, getRealtimeWsUrl } from "./realtimeTicket";
@@ -259,23 +252,17 @@ export function useProjectDocument(
 
       hydrated = true;
 
-      const sfmDoc = createDocument({ doc });
+      // `bootstrapSfmDocument` (`bootstrapDocument.ts`) owns creating the
+      // `SfmDocument`, the repair-on-load pass, and the root-container/
+      // undo-manager setup — extracted out so the guest-mode local-only hook
+      // and the landing page's read-only sample preview share the exact
+      // same hydration logic instead of risking drift. Job 022's repair-on-
+      // load reasoning (mirrors `apps/realtime/src/server.ts`'s own
+      // "already corrupt when loaded" pass) and Job 015/016's "undo manager
+      // created last" reasoning both still apply — see that module's
+      // comments for the full detail.
+      const { sfmDoc, rootContainerId, undoManager, initialRepairSummary } = bootstrapSfmDocument(doc);
 
-      // Job 022: repair-on-load, mirroring `apps/realtime/src/server.ts`'s
-      // own "already corrupt when loaded" pass — a document hydrated from
-      // this device's IndexedDB cache (or freshly merged from the server on
-      // first sync) might already carry a dangling reference from a prior
-      // session/tab that never got a chance to repair it (e.g. a crash
-      // mid-edit). Runs *before* the root-container-creation check below and
-      // *before* `createUndoManager`, so nothing here can ever show up as an
-      // undo step regardless of ordering — `INTEGRITY_ORIGIN` is excluded
-      // unconditionally either way (see `undo.ts`), this is just the
-      // tidiest place for it. `attachClientIntegrityReducer` (right below)
-      // then keeps repairing after every subsequent transaction — local
-      // edits, remote peers' merged-in edits, and this reducer's own
-      // integrity-tagged passes alike (see that module's header comment for
-      // why "every transaction" is the correct scope, not just local ones).
-      const initialRepairSummary = runIntegrityReducer(sfmDoc);
       // Job 029: this specific branch means the document was ALREADY
       // corrupt when hydrated (see `apps/realtime/src/server.ts`'s
       // matching `afterLoadDocument` comment for the same reasoning on
@@ -284,28 +271,14 @@ export function useProjectDocument(
       if (!isNoopRepair(initialRepairSummary)) {
         captureIntegrityRepairSignal({ phase: "client-repair-on-load", repairSummary: initialRepairSummary });
       }
+      // `attachClientIntegrityReducer` then keeps repairing after every
+      // subsequent transaction — local edits, remote peers' merged-in
+      // edits, and this reducer's own integrity-tagged passes alike (see
+      // that module's header comment for why "every transaction" is the
+      // correct scope, not just local ones).
       detachIntegrityReducer = attachClientIntegrityReducer(sfmDoc);
 
-      let root = listContainers(sfmDoc).find((container) => container.kind === "root");
-      if (!root) {
-        root = addContainer(sfmDoc, {
-          kind: "root",
-          parentId: null,
-          title: "Root",
-          color: "#4b5563",
-          x: 0,
-          y: 0,
-          copiesLimit: null,
-        });
-      }
-
-      // Created last, deliberately — see this function's header comment on
-      // why (unchanged reasoning from Job 015/016): none of the
-      // hydration/default-filling mutations above should show up as an
-      // undo step once the user starts pressing Ctrl/Cmd+Z.
-      const undoManager = createUndoManager(sfmDoc);
-
-      setState({ status: "ready", sfmDoc, rootContainerId: root.id, undoManager, awareness });
+      setState({ status: "ready", sfmDoc, rootContainerId, undoManager, awareness });
     }
 
     async function load() {

@@ -123,6 +123,22 @@ describe("GET /auth/discord/callback — state verification (security-critical)"
 
     await app2.close();
   });
+
+  it("redirects to the landing page (instead of returning raw JSON) when Discord reports an error, e.g. the user clicked Cancel", async () => {
+    const { client } = makeFakeDiscordClient({ id: "cancel", username: "cancel", global_name: null, avatar: null });
+    const app3 = await buildApp({ logger: false, authRoutesOptions: { discordClient: client } });
+    await app3.ready();
+
+    const res = await app3.inject({
+      method: "GET",
+      url: "/auth/discord/callback?error=access_denied",
+    });
+
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe("/");
+
+    await app3.close();
+  });
 });
 
 describe("full login flow: callback upserts a user, creates a session, and /auth/me reflects it", () => {
@@ -187,8 +203,13 @@ describe("full login flow: callback upserts a user, creates a session, and /auth
     expect(rows).toHaveLength(1);
 
     // 4. GET /auth/logout
-    const logoutRes = await app.inject({ method: "GET", url: "/auth/logout", headers: { cookie: sessionCookie } });
-    expect(logoutRes.statusCode).toBe(200);
+    const logoutRes = await app.inject({
+      method: "GET",
+      url: "/auth/logout",
+      headers: { cookie: sessionCookie },
+    });
+    expect(logoutRes.statusCode).toBe(302);
+    expect(logoutRes.headers.location).toBe("/");
     expect(isCookieCleared(logoutRes.headers["set-cookie"], "sfm_session")).toBe(true);
 
     // 5. GET /auth/me now rejects — the session row is gone.

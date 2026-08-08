@@ -11,8 +11,9 @@ import type { ConfirmDialogProps } from "./ConfirmDialog";
 export interface ConfirmOptions {
   title?: string;
   message: React.ReactNode;
-  confirmLabel?: string;
-  cancelLabel?: string;
+  /** Usually plain text, but `React.ReactNode` (not `string`) so a call site can prefix an icon — see `App.tsx`'s guest-mode `enterGuestMode`. */
+  confirmLabel?: React.ReactNode;
+  cancelLabel?: React.ReactNode;
   danger?: boolean;
 }
 

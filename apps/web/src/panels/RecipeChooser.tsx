@@ -59,7 +59,6 @@ import {
   buildNodeInputForRecipe,
   filterRecipes,
   initialFiltersForPendingPart,
-  listChooserMachines,
   listChooserTiers,
   matchingHandleId,
   type RecipeChooserFilters,
@@ -167,7 +166,6 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
   const searchInputRef = useRef<HTMLInputElement>(null);
   useFocusTrap(modalRef, true, { onClose, initialFocusRef: searchInputRef });
 
-  const machines = useMemo(() => listChooserMachines(gameData), [gameData]);
   const tiers = useMemo(() => listChooserTiers(gameData), [gameData]);
   const recipes = useMemo(
     () => filterRecipes(gameData, filters, progression),
@@ -614,35 +612,6 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
                   disabled
                 />
               </div>
-
-              <p className="mb-1 mt-3 border-t border-[var(--border-subtle)] px-1 pt-2 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-                {tRaw("MACHINES")}
-              </p>
-              <button
-                type="button"
-                onClick={() => setFilters((f) => ({ ...f, machine: null }))}
-                className={`block w-full rounded-md px-2 py-1 text-left text-sm ${
-                  filters.machine === null
-                    ? "bg-[var(--accent)] text-[var(--accent-contrast)]"
-                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
-                }`}
-              >
-                {t("canvas.allMachines")}
-              </button>
-              {machines.map((machine) => (
-                <button
-                  key={machine}
-                  type="button"
-                  onClick={() => setFilters((f) => ({ ...f, machine: f.machine === machine ? null : machine }))}
-                  className={`block w-full truncate rounded-md px-2 py-1 text-left text-sm ${
-                    filters.machine === machine
-                      ? "bg-[var(--accent)] text-[var(--accent-contrast)]"
-                      : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
-                  }`}
-                >
-                  {gameTerm(machine)}
-                </button>
-              ))}
             </div>
 
             {/* Right pane: filterable recipe list. */}

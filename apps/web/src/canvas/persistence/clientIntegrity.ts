@@ -26,6 +26,18 @@ import { INTEGRITY_ORIGIN, isNoopRepair, runIntegrityReducer, type SfmDocument }
 
 import { captureIntegrityRepairSignal } from "../../monitoring/sentry";
 
+export interface AttachClientIntegrityReducerOptions {
+  /**
+   * Guest-mode work: `useLocalOnlyProjectDocument.ts` (and the landing
+   * page's read-only sample preview) pass `report: false` here — guest data
+   * never leaves the browser, including as an anonymous Sentry repair
+   * signal, so the reducer still runs (a corrupt local doc should still be
+   * fixed) but never phones home about it. Defaults to `true`, unchanged
+   * behavior for the real (server-synced) document path.
+   */
+  report?: boolean;
+}
+
 /**
  * Attaches the ongoing "repair after every transaction" listener and
  * returns a cleanup function to detach it. Does **not** run an initial
@@ -33,7 +45,10 @@ import { captureIntegrityRepairSignal } from "../../monitoring/sentry";
  * (e.g. right after hydration, mirroring `apps/realtime`'s "repair on
  * load") for a document that might already be corrupt before this attaches.
  */
-export function attachClientIntegrityReducer(sfmDoc: SfmDocument): () => void {
+export function attachClientIntegrityReducer(
+  sfmDoc: SfmDocument,
+  { report = true }: AttachClientIntegrityReducerOptions = {},
+): () => void {
   const handleAfterTransaction = (transaction: Y.Transaction) => {
     if (transaction.origin === INTEGRITY_ORIGIN) return;
     const repairSummary = runIntegrityReducer(sfmDoc);
@@ -41,7 +56,7 @@ export function attachClientIntegrityReducer(sfmDoc: SfmDocument): () => void {
     // attention — see `monitoring/sentry.ts`'s
     // `captureIntegrityRepairSignal` doc comment for why a non-fatal
     // repair is still worth tracking. No-ops when Sentry isn't configured.
-    if (!isNoopRepair(repairSummary)) {
+    if (report && !isNoopRepair(repairSummary)) {
       captureIntegrityRepairSignal({ phase: "client-afterTransaction", repairSummary });
     }
   };

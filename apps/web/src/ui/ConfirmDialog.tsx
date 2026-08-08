@@ -15,8 +15,9 @@ export interface ConfirmDialogProps {
   open: boolean;
   title?: string;
   message: React.ReactNode;
-  confirmLabel?: string;
-  cancelLabel?: string;
+  /** Usually plain text, but `React.ReactNode` (not `string`) so a call site can prefix an icon — see `App.tsx`'s guest-mode `enterGuestMode`. */
+  confirmLabel?: React.ReactNode;
+  cancelLabel?: React.ReactNode;
   /** Styles the confirm button as a destructive action (delete/revoke/remove) — reuses the same `danger`/`danger-soft` pair already audited in `a11y/contrastAudit.ts`. */
   danger?: boolean;
   onConfirm: () => void;
@@ -54,7 +55,8 @@ export function ConfirmDialog({
         onMouseDown={(event) => event.stopPropagation()}
       >
         {title && <h3 className="mb-2 text-sm font-semibold text-[var(--text-primary)]">{title}</h3>}
-        <p className="mb-4 text-sm text-[var(--text-secondary)]">{message}</p>
+        {/* A `<div>`, not a `<p>` — `message` is `React.ReactNode`, and Guest-mode work's `GuestModeExplainer` passes block content (`<div>`/`<h4>`/`<ul>`) here, which is invalid nested inside a `<p>` (hydration warning, and Chrome auto-closes the `<p>` early either way). */}
+        <div className="mb-4 text-sm text-[var(--text-secondary)]">{message}</div>
         <div className="flex justify-end gap-2">
           <button
             type="button"

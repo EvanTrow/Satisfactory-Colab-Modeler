@@ -28,6 +28,8 @@ export interface AuthRoutesOptions {
   discordClient?: DiscordClient;
   /** Where `/auth/discord/callback` redirects on success. Defaults to `/`. */
   postLoginRedirect?: string;
+  /** Where `/auth/logout` redirects once the session is cleared. Defaults to `/`. */
+  postLogoutRedirect?: string;
 }
 
 /**
@@ -44,6 +46,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (fastify,
   const config = getAuthConfig();
   const discordClient = opts.discordClient ?? createDiscordClient(config.discord);
   const postLoginRedirect = opts.postLoginRedirect ?? "/";
+  const postLogoutRedirect = opts.postLogoutRedirect ?? "/";
 
   fastify.get("/auth/discord/login", async (_request, reply) => {
     const state = generateState();
@@ -74,7 +77,10 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (fastify,
       reply.clearCookie(OAUTH_STATE_COOKIE, { path: "/auth/discord" });
 
       if (error) {
-        return reply.code(400).send({ error: "discord_oauth_error", detail: error });
+        // The user declined on Discord's consent screen (or Discord itself
+        // errored) — this is a normal, expected outcome, not a bug to
+        // surface as raw JSON. Send them back to the landing page.
+        return reply.redirect(postLoginRedirect, 302);
       }
 
       if (!code || !state || !rawStateCookie) {
@@ -151,7 +157,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (fastify,
       await deleteSessionByToken(token);
     }
     reply.clearCookie(SESSION_COOKIE_NAME, { path: "/" });
-    return reply.send({ ok: true });
+    return reply.redirect(postLogoutRedirect, 302);
   });
 
   fastify.get("/auth/me", { preHandler: fastify.authenticate }, async (request, reply) => {

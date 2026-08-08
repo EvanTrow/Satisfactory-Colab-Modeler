@@ -25,14 +25,31 @@
 // node — exactly the ordinary "several producers, one consumer, same part"
 // shape `basic.ts`/`full.ts` already water-fill correctly.
 //
-// Known, accepted limitation (parity with Splurger, not a new gap): the
-// rewritten edges get a MINTED id, so the sink's card can't look up a
-// per-edge `EdgeSolveResult` by the original edge id — it reads the
-// synthetic consumer node's own `NodeSolveResult.partRates` via
-// `sinkConsumerNodeId` instead (see `canvas/nodes/SinkNode.tsx`). The
-// upstream real recipe node's own rate/port-highlight is unaffected — it's
-// keyed by its own real id/edges, never rewritten.
+// The rewritten edges get a MINTED id (`SINK_EDGE_ID_PREFIX` + the original
+// edge id) rather than reusing the original — `sinkConsumerNodeId` groups
+// every producer of the same part into one shared synthetic node, so the
+// original id can't just be reused verbatim without inviting confusion about
+// which of possibly-several original edges a given `SolverEdge` came from.
+// Unlike Splurger's rewrite (which can MERGE two original edges into one
+// synthetic edge with no single "original id" to point back to — see
+// `splurgerPassthrough.ts`'s header), this rewrite is always exactly
+// one-original-edge-in, one-synthetic-edge-out, so `originalEdgeIdFromSinkEdgeId`
+// below can always recover it. `useSolver.ts`'s `indexEdges` uses that to
+// additionally key its `edgeResultById` map by the ORIGINAL edge id, so
+// `ConnectionEdge.tsx`'s label (keyed by the real, un-rewritten edge id) shows
+// the solved rate for a sink connection exactly like any other connection.
+// The sink's own card still separately reads the synthetic consumer node's
+// `NodeSolveResult.partRates` via `sinkConsumerNodeId` (see
+// `canvas/nodes/SinkNode.tsx`) for its aggregate-per-part display.
 import type { LimitMode, SolverEdge, SolverNode } from "@scm/solver";
+
+/** Prefix `computeSinkConsumerNodes` mints a rewritten edge's id with, ahead of the original edge's own id — see this module's header. */
+export const SINK_EDGE_ID_PREFIX = "sk-e:";
+
+/** Recovers the original (pre-rewrite) edge id from a sink-rewritten `SolverEdge.id`/`EdgeSolveResult.edgeId`, or `undefined` if `id` wasn't minted by this module. */
+export function originalEdgeIdFromSinkEdgeId(id: string): string | undefined {
+  return id.startsWith(SINK_EDGE_ID_PREFIX) ? id.slice(SINK_EDGE_ID_PREFIX.length) : undefined;
+}
 
 export interface SinkEdgeLike {
   readonly id: string;
@@ -93,7 +110,7 @@ export function computeSinkConsumerNodes(
         });
       }
       rewrittenEdges.push({
-        id: `sk-e:${edge.id}`,
+        id: `${SINK_EDGE_ID_PREFIX}${edge.id}`,
         part: edge.part,
         fromNode: edge.fromNode,
         fromPort: edge.fromPort,

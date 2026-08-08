@@ -1,13 +1,31 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Rocket } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { listProjects, type ProjectSummary } from "./api/projects";
-import { CanvasView } from "./canvas";
+import { CanvasView, GuestCanvasView } from "./canvas";
 import { discordAvatarUrl, type LocalUserIdentity } from "./collab";
+import { GuestModeExplainer, importGuestProjectsToAccount, type GuestProjectSummary } from "./guest";
+import { LandingPage } from "./landing";
+import { GuestProjectsPage } from "./routes/GuestProjectsPage";
 import { ProjectsPage } from "./routes/ProjectsPage";
 import { UserSettingsPage } from "./routes/UserSettingsPage";
 import { InviteRedeemPage } from "./sharing";
 import { ThemeToggle, useTheme } from "./theme";
+import { ConfirmDialog, useConfirmDialog } from "./ui";
+
+/**
+ * Guest-mode work: whether this browser has opted into Limited Guest Mode —
+ * `localStorage`, not React state alone, so a page refresh (or the app
+ * simply reopening in a new tab) lands back in the guest project list
+ * instead of bouncing to the landing page every time, matching the
+ * always-local nature of guest data itself (`guest/localProjects.ts`).
+ * Cleared only by `showGuestModeInfo`'s "exit guest mode" confirm below —
+ * never automatically, since a real login (`auth.status === "authenticated"`)
+ * already takes priority over this flag everywhere it's checked below
+ * without needing to clear it.
+ */
+const GUEST_MODE_STORAGE_KEY = "scm_guest_mode_active";
 
 /**
  * Job 022: share-by-link. This app has no router (see the `View` comment
@@ -75,7 +93,11 @@ type View =
   // as `"canvas"` does — a fresh load or refresh on `/settings` lands here
   // directly rather than on the project list, and the browser back button
   // pops out of it instead of leaving the SPA (see the `popstate` handler).
-  | { name: "settings" };
+  | { name: "settings" }
+  // Guest-mode work: the local-storage siblings of "projects"/"canvas" —
+  // see `guestMode` below for what gates rendering these.
+  | { name: "guestProjects" }
+  | { name: "guestCanvas"; project: GuestProjectSummary };
 
 function App() {
   const { t } = useTranslation("app");
@@ -85,9 +107,43 @@ function App() {
   // `View` comment above) — everything else (`"canvas"`) needs the
   // `initialProjectShortId` effect below because it needs a project fetched
   // by shortId first.
-  const [view, setView] = useState<View>(() =>
-    window.location.pathname === "/settings" ? { name: "settings" } : { name: "projects" },
+  const [view, setView] = useState<View>(() => {
+    if (window.location.pathname === "/settings") return { name: "settings" };
+    // Guest-mode work: a page refresh (or a new tab) with the guest flag
+    // already set from a previous visit lands back in the guest project
+    // list, not the landing page — see `GUEST_MODE_STORAGE_KEY`'s own
+    // comment above for why this is `localStorage`, not just this state.
+    if (localStorage.getItem(GUEST_MODE_STORAGE_KEY) === "1") return { name: "guestProjects" };
+    return { name: "projects" };
+  });
+  // Guest-mode work: mirrors `GUEST_MODE_STORAGE_KEY` into React state so
+  // JSX below can react to it; every write to this also writes (or clears)
+  // the `localStorage` key in the same call — see `enterGuestMode`/
+  // `showGuestModeInfo` below, the only two places this is ever set.
+  const [guestMode, setGuestMode] = useState<boolean>(
+    () => localStorage.getItem(GUEST_MODE_STORAGE_KEY) === "1",
   );
+  // Guest-mode work: "sign in from guest mode and your local projects get
+  // added to your account" — see the two effects below and
+  // `guest/importGuestProjects.ts`. `guestImportBusy` gates rendering
+  // `<ProjectsPage>` (see its own render-site comment) so that page's own
+  // `listProjects()` fetch — which runs once on ITS mount, with no way for
+  // this component to trigger a refetch afterward — never runs before the
+  // newly-imported projects actually exist server-side. `guestImportNotice`
+  // is a plain string (not boolean), same "only set when there's actually
+  // something to say" shape `ProjectsPage.tsx`'s own `notice` state uses.
+  const [guestImportBusy, setGuestImportBusy] = useState(false);
+  const [guestImportNotice, setGuestImportNotice] = useState<string | null>(null);
+  // Guards against running the import twice for the same "just
+  // authenticated while guestMode was on" transition — most importantly
+  // React StrictMode's dev-only double-invoke of effects, which would
+  // otherwise race two full import passes against the same guest projects.
+  // Deliberately NOT reset to `false` on every render: only the "some
+  // guest projects failed to import" branch inside the effect resets it,
+  // so a later reload while still signed in gets to retry those, but a
+  // transient re-render of this same mount never re-triggers it.
+  const guestImportAttemptedRef = useRef(false);
+  const { requestConfirm, dialogProps: confirmDialogProps } = useConfirmDialog();
   // Job 014: mounted once here (not just inside `CanvasView.tsx`) precisely
   // because "app-level, not canvas-only" is the whole point — see
   // `theme/useTheme.ts`'s header comment. Both mounts share the same
@@ -116,6 +172,62 @@ function App() {
   const enterCanvas = useCallback((project: ProjectSummary) => {
     setView({ name: "canvas", project });
     window.history.pushState({ shortId: project.shortId }, "", `/p/${project.shortId}/edit`);
+  }, []);
+
+  /**
+   * Guest-mode work: shown before Limited Guest Mode is actually entered
+   * (the "what you're choosing" explainer, `GuestModeExplainer.tsx`) — and
+   * reused as-is by `showGuestModeInfo` below for the header badge's
+   * "already in guest mode, want to leave?" case, just with a different
+   * `confirmLabel`/`danger`. One dialog, two call sites, since the content
+   * a guest needs to see is identical either way.
+   */
+  const enterGuestMode = useCallback(async () => {
+    const confirmed = await requestConfirm({
+      title: t("guestMode.explainerTitle"),
+      message: <GuestModeExplainer />,
+      // A `Rocket` icon prefix, not plain text — matches Ferrumium's own
+      // "Continue as Guest" button (see this file's `GuestModeExplainer`
+      // import comment). `confirmLabel` accepts `ReactNode` for exactly
+      // this (`ui/useConfirmDialog.ts`'s own doc comment); every other call
+      // site (delete/revoke/remove, and `showGuestModeInfo` below) still
+      // just passes plain text.
+      confirmLabel: (
+        <span className="inline-flex items-center gap-1.5">
+          <Rocket aria-hidden className="h-3.5 w-3.5" />
+          {t("guestMode.continueButton")}
+        </span>
+      ),
+    });
+    if (!confirmed) return;
+    localStorage.setItem(GUEST_MODE_STORAGE_KEY, "1");
+    setGuestMode(true);
+    setView({ name: "guestProjects" });
+  }, [requestConfirm, t]);
+
+  /** The header's Guest Mode badge — reopens the same explainer, this time offering to exit instead of to enter. */
+  const showGuestModeInfo = useCallback(async () => {
+    const confirmed = await requestConfirm({
+      title: t("guestMode.explainerTitle"),
+      message: <GuestModeExplainer />,
+      confirmLabel: t("guestMode.confirmExitButton"),
+      danger: true,
+    });
+    if (!confirmed) return;
+    localStorage.removeItem(GUEST_MODE_STORAGE_KEY);
+    setGuestMode(false);
+    setView({ name: "projects" });
+    window.history.pushState({}, "", "/");
+  }, [requestConfirm, t]);
+
+  const enterGuestCanvas = useCallback((project: GuestProjectSummary) => {
+    setView({ name: "guestCanvas", project });
+    window.history.pushState({}, "", `/g/${project.id}`);
+  }, []);
+
+  const leaveGuestCanvas = useCallback(() => {
+    setView({ name: "guestProjects" });
+    window.history.pushState({}, "", "/");
   }, []);
 
   // Deep-link resolution: if the page loaded (or was refreshed) on
@@ -177,17 +289,22 @@ function App() {
   }, []);
 
   const closeSettings = useCallback(() => {
-    setView({ name: "projects" });
+    setView(guestMode ? { name: "guestProjects" } : { name: "projects" });
     window.history.pushState({}, "", "/");
-  }, []);
+  }, [guestMode]);
 
   // Browser back button while the canvas or settings is open: pop out to
   // the project list instead of leaving the SPA (there's nowhere else for
   // this History entry to go, since neither `enterCanvas` nor
-  // `openSettings` ever pushes more than one level).
+  // `openSettings` ever pushes more than one level). Guest-mode work: pops
+  // out to the guest project list instead when this browser is in guest
+  // mode, mirroring every other list-view fallback in this file.
   useEffect(() => {
     function onPopState() {
-      setView((current) => (current.name !== "projects" ? { name: "projects" } : current));
+      setView((current) => {
+        if (current.name === "projects" || current.name === "guestProjects") return current;
+        return guestMode ? { name: "guestProjects" } : { name: "projects" };
+      });
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -210,6 +327,67 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  // Guest-mode work: a guest who was looking at the guest project list and
+  // clicked the header's "Log in with Discord" link leaves the SPA
+  // entirely for the OAuth round trip, then lands back on `/` — a fresh
+  // mount, where the `view` lazy initializer above still reads the (still
+  // untouched-by-login) guest-mode `localStorage` flag and starts this
+  // mount right back on `"guestProjects"`. Nothing below renders that view
+  // once `auth.status` is `"authenticated"` (see the guest project-list
+  // render guard's own comment), so without this, a freshly-logged-in
+  // former guest would see a blank content area. This is the general fix
+  // (not folded into the import effect below) since it has to apply even
+  // when there's nothing to import (e.g. an empty guest project list).
+  useEffect(() => {
+    if (auth.status === "authenticated" && view.name === "guestProjects") {
+      setView({ name: "projects" });
+      window.history.replaceState({}, "", "/");
+    }
+  }, [auth.status, view.name]);
+
+  // Guest-mode work: the actual "add my guest projects to my account" step
+  // — see `guestImportBusy`/`guestImportNotice`/`guestImportAttemptedRef`'s
+  // own comments above and `guest/importGuestProjects.ts` for the per-
+  // project import itself. Fires once per "just became authenticated while
+  // the guest-mode flag is still set" transition, regardless of which view
+  // is currently showing (the effect above already gets `view` out of
+  // `"guestProjects"`'s way in parallel) — "even if they have an account
+  // with projects already, add these too" per this feature's own
+  // requirement, so this never checks whether the account is empty first.
+  useEffect(() => {
+    if (auth.status !== "authenticated") return;
+    if (localStorage.getItem(GUEST_MODE_STORAGE_KEY) !== "1") return;
+    if (guestImportAttemptedRef.current) return;
+    guestImportAttemptedRef.current = true;
+
+    setGuestImportBusy(true);
+    importGuestProjectsToAccount()
+      .then((summary) => {
+        if (summary.failed === 0) {
+          // Everything local is now safely in the account — the guest-mode
+          // flag (and the "Guest Mode" badge it drove) has nothing left to
+          // mean. `summary.imported === 0` (an empty guest project list)
+          // also lands here and clears it just the same.
+          localStorage.removeItem(GUEST_MODE_STORAGE_KEY);
+          setGuestMode(false);
+        } else {
+          // At least one guest project is still sitting in this browser,
+          // un-imported — leave the flag set and allow a future mount
+          // (e.g. the next page load while still signed in) to retry it,
+          // rather than silently giving up on it.
+          guestImportAttemptedRef.current = false;
+        }
+        if (summary.imported > 0) {
+          setGuestImportNotice(t("guestMode.importNotice", { count: summary.imported }));
+        }
+      })
+      .catch((err: unknown) => {
+        console.error("[App] guest project import failed", err);
+        guestImportAttemptedRef.current = false;
+      })
+      .finally(() => setGuestImportBusy(false));
+  }, [auth.status, t]);
 
   // Job 022: `/i/:token` detection — see this file's header comment. Runs
   // once on mount: if the URL itself carries a token, stash it and replace
@@ -281,6 +459,23 @@ function App() {
     );
   }
 
+  // Guest-mode work: same full-viewport treatment as the cloud canvas above
+  // — `GuestCanvasView` renders its own compact header/back bar, same as
+  // `CanvasView` does. Independent of `auth.status`: a guest canvas is
+  // never gated on being logged in.
+  if (guestMode && view.name === "guestCanvas") {
+    return (
+      <main className="bg-[var(--surface-app)] text-[var(--text-primary)]">
+        <GuestCanvasView
+          key={view.project.id}
+          guestId={view.project.id}
+          projectTitle={view.project.title}
+          onBack={leaveGuestCanvas}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-svh bg-[var(--surface-app)] text-[var(--text-primary)]">
       <header className="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-3">
@@ -296,12 +491,25 @@ function App() {
             <span className="text-sm text-[var(--text-muted)]">{t("app.checkingLogin")}</span>
           )}
           {auth.status === "anonymous" && (
-            <a
-              href="/auth/discord/login"
-              className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]"
-            >
-              {t("app.logInWithDiscord")}
-            </a>
+            <div className="flex items-center gap-2">
+              {/* Guest-mode work: reopens the explainer, this time offering to exit — see `showGuestModeInfo`'s own comment. */}
+              {guestMode && (
+                <button
+                  type="button"
+                  onClick={() => void showGuestModeInfo()}
+                  title={t("guestMode.badgeTitle")}
+                  className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+                >
+                  {t("guestMode.canvasBadge")}
+                </button>
+              )}
+              <a
+                href="/auth/discord/login"
+                className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]"
+              >
+                {t("app.logInWithDiscord")}
+              </a>
+            </div>
           )}
           {auth.status === "authenticated" && (
             <div className="flex items-center gap-3 text-sm">
@@ -355,19 +563,70 @@ function App() {
       )}
 
       {/* Route guard: only an authenticated user gets past this point to
-          the project list / canvas. Anonymous and loading states render the
-          login prompt above with no project content underneath — the
-          closest thing to "redirect to the login flow" available without a
-          real router (see the View comment above). */}
-      {!pendingInviteToken && view.name !== "settings" && auth.status !== "authenticated" && (
-        <div className="mx-auto max-w-3xl px-4 py-16 text-center text-[var(--text-muted)]">
-          {auth.status === "loading" ? t("app.loading") : t("app.logInPrompt")}
-        </div>
+          the project list / canvas. A logged-out, non-guest visitor gets
+          the landing page instead of a bare prompt — see `LandingPage.tsx`.
+          Guest-mode work: `!guestMode` here hands off to the guest branch
+          below instead, so the two are mutually exclusive by construction,
+          not by render order alone. */}
+      {!pendingInviteToken && view.name !== "settings" && !guestMode && auth.status !== "authenticated" && (
+        auth.status === "loading" ? (
+          <div className="mx-auto max-w-3xl px-4 py-16 text-center text-[var(--text-muted)]">{t("app.loading")}</div>
+        ) : (
+          <LandingPage onContinueAsGuest={() => void enterGuestMode()} />
+        )
       )}
 
-      {!pendingInviteToken && auth.status === "authenticated" && view.name === "projects" && !resolvingProjectLink && (
-        <ProjectsPage onOpenProject={enterCanvas} />
-      )}
+      {/* Guest-mode work: a real login always takes priority over a stale
+          guest flag (see `GUEST_MODE_STORAGE_KEY`'s own comment) — hence
+          the explicit `auth.status !== "authenticated"` guard here too,
+          not just `guestMode` alone. */}
+      {!pendingInviteToken &&
+        view.name !== "settings" &&
+        guestMode &&
+        auth.status !== "authenticated" && <GuestProjectsPage onOpenProject={enterGuestCanvas} />}
+
+      {/* Guest-mode work: while the just-signed-in import is running, hold
+          off on mounting `<ProjectsPage>` — its own `listProjects()` fetch
+          runs once on mount with no way for this component to trigger a
+          refetch afterward, so mounting it before the import finishes
+          would show the list without the projects just added to it. */}
+      {!pendingInviteToken &&
+        auth.status === "authenticated" &&
+        view.name === "projects" &&
+        !resolvingProjectLink &&
+        guestImportBusy && (
+          <div className="mx-auto max-w-3xl px-4 py-16 text-center text-[var(--text-muted)]">
+            {t("guestMode.importingNotice")}
+          </div>
+        )}
+
+      {!pendingInviteToken &&
+        auth.status === "authenticated" &&
+        view.name === "projects" &&
+        !resolvingProjectLink &&
+        !guestImportBusy && (
+          <>
+            {/* Guest-mode work: the "N guest project(s) added to your
+                account" summary, once — same dismissible-banner shape as
+                `ProjectsPage.tsx`'s own `notice` state, kept here (a
+                sibling above it) rather than threaded in as a prop, since
+                this is a one-time App-level event, not something
+                `ProjectsPage` itself needs to know how to produce. */}
+            {guestImportNotice && (
+              <div className="mx-auto max-w-3xl px-4 pt-6">
+                <div className="rounded-md border border-[var(--outpost-border)] bg-[var(--outpost-soft)] px-3 py-2 text-sm text-[var(--outpost)]">
+                  {guestImportNotice}
+                  <button type="button" onClick={() => setGuestImportNotice(null)} className="ml-3 underline">
+                    {t("projects.dismiss")}
+                  </button>
+                </div>
+              </div>
+            )}
+            <ProjectsPage onOpenProject={enterCanvas} />
+          </>
+        )}
+
+      <ConfirmDialog {...confirmDialogProps} />
     </main>
   );
 }

@@ -117,6 +117,20 @@
   --mismatch-soft: rgba(194, 65, 12, 0.14);
 
   /*
+   * A third, lower-severity tier below `--danger` (red, broken) and
+   * `--mismatch` (red-orange, values don't reconcile): a genuine yellow
+   * (Tailwind's `yellow` family, hue ~50) rather than reaching for amber —
+   * `--mismatch`'s own comment above already flagged amber (#b45309/#f59e0b)
+   * as considered-and-rejected there specifically because it'd collide with
+   * `--outpost`; this stays clear of that same collision by picking a
+   * visibly more yellow, less brown/orange hue. Used for RecipeNode's
+   * "unhandled byproduct" warning — a real thing worth noticing, but not as
+   * severe as a value that's actively wrong.
+   */
+  --warning: #a16207;
+  --warning-soft: rgba(202, 138, 4, 0.14);
+
+  /*
    * Job 024: the Splurger node's own accent — violet, distinct from
    * `--accent` (indigo, selection), `--outpost` (amber), and `--mismatch`
    * (red-orange) so a Splurger reads as its own kind of thing at a glance,
@@ -243,6 +257,10 @@
   /* Job 019 — see the light theme's own comment above for the full rationale. */
   --mismatch: #fb923c;
   --mismatch-soft: rgba(251, 146, 60, 0.18);
+
+  /* See the light theme's own comment above for the full rationale. */
+  --warning: #facc15;
+  --warning-soft: rgba(250, 204, 21, 0.18);
 
   /* Job 024 — see the light theme's own comment above for the full rationale. */
   --splurger: #a78bfa;

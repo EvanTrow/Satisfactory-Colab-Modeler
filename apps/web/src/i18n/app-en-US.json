@@ -9,6 +9,76 @@
   "app.loading": "Loading…",
   "app.logInPrompt": "Log in with Discord to see your projects.",
 
+  "guestMode.explainerTitle": "Limited Guest Mode",
+  "guestMode.continueButton": "Continue as Guest",
+  "guestMode.canvasBadge": "Guest Mode",
+  "guestMode.badgeTitle": "You're in Limited Guest Mode — click for details",
+  "guestMode.localDisplayName": "You (Guest)",
+  "guestMode.exit": "Exit guest mode",
+  "guestMode.confirmExitMessage": "Exit guest mode and go back to the login screen? Your guest projects stay saved in this browser — nothing is deleted.",
+  "guestMode.confirmExitButton": "Exit guest mode",
+  "guestMode.importingNotice": "Importing your guest projects into your account…",
+  "guestMode.importNotice": "Added {{count}} guest project(s) to your account.",
+  "guestMode.explainer.canDoHeading": "What you can do",
+  "guestMode.explainer.canDoItems": [
+    "Use the full factory planner with all tools",
+    "Save and load factory plans locally"
+  ],
+  "guestMode.explainer.missHeading": "What you'll miss",
+  "guestMode.explainer.missItems": [
+    "Cloud sync — guest data is not stored on the server",
+    "Collaboration (co-op editing)"
+  ],
+  "guestMode.explainer.privacyHeading": "Data & privacy",
+  "guestMode.explainer.privacyItems": [
+    "No account is created",
+    "Guest data stays in this browser and is not synced to an account",
+    "If you clear browser data or switch devices, your data will be lost"
+  ],
+
+  "guestProjects.heading": "Your guest projects",
+  "guestProjects.subheading": "Saved locally in this browser only — not synced to any account.",
+  "guestProjects.empty": "No guest projects yet — create one to get started.",
+  "guestProjects.updatedAt": "Updated {{date}}",
+
+  "landing.logInWithDiscord": "Log in with Discord",
+  "landing.continueAsGuest": "Continue as Guest",
+  "landing.continueAsGuestSubtext": "No account needed",
+  "landing.eyebrow": "Satisfactory factory planning, together",
+  "landing.headline1": "Plan your factory.",
+  "landing.headline2": "Together, in real time.",
+  "landing.subhead": "Lay out production chains, balance rates, and share the factory plan live with your friends — right in the browser.",
+  "landing.sampleHeading": "See it in action",
+  "landing.sampleSubtext": "A real factory, laid out with the planner — pan and zoom to explore.",
+  "landing.sampleBadge": "Read-only example",
+  "landing.featuresHeading": "Everything you need to plan a factory",
+  "landing.features": [
+    {
+      "title": "Visual production chains",
+      "body": "Drag out machines, connect their ports, and watch belts and pipes route themselves between them."
+    },
+    {
+      "title": "Live rate solving",
+      "body": "Every machine's real throughput is calculated as you build — no spreadsheet required to spot a bottleneck."
+    },
+    {
+      "title": "Auto-build a factory",
+      "body": "Give it a target item and rate, and it'll generate a complete, connected production chain for you."
+    },
+    {
+      "title": "Outposts & blueprints",
+      "body": "Group machines into outposts to keep sprawling factories organized and readable."
+    },
+    {
+      "title": "Real-time collaboration",
+      "body": "Build with friends on the same factory plan — see their cursors and edits appear live."
+    },
+    {
+      "title": "Version history",
+      "body": "Every project keeps a history of saved versions, so a bad edit is never permanent."
+    }
+  ],
+
   "confirm.defaultTitle": "Confirm",
   "confirm.confirm": "Confirm",
   "confirm.cancel": "Cancel",
@@ -109,16 +179,42 @@
   "canvas.addToCanvas": "Add to canvas",
 
   "canvas.generateFactory": "Generate factory",
-  "canvas.generateFactoryTitle": "Auto-build a production chain for a target item and desired rate",
+  "canvas.generateFactoryTitle": "Auto-build a production chain for one or more target items and desired rates",
   "canvas.generateFactoryHeading": "Generate factory",
   "canvas.generateFactoryRateLabel": "Target rate (items/min)",
-  "canvas.generateFactoryTargetLabel": "Item to produce",
+  "canvas.generateFactoryTargetLabel": "Items to produce",
+  "canvas.generateFactoryAddItem": "Add an item",
   "canvas.generateFactorySearchPlaceholder": "Search items…",
-  "canvas.generateFactoryChangeItem": "Change",
-  "canvas.generateFactoryInvalidRate": "Enter a target rate greater than 0.",
+  "canvas.generateFactoryRemoveItem": "Remove {{item}}",
+  "canvas.generateFactoryInvalidRate": "Enter a target rate greater than 0 for every item.",
   "canvas.generateFactoryNoRecipeForTarget": "No recipe produces this item.",
   "canvas.generateFactoryPreviewHeading": "Will create {{count}} machine(s):",
   "canvas.generateFactoryUnresolvedWarning": "No recipe found for: {{parts}} — these inputs will be left unconnected.",
+  "canvas.generateFactoryPriorityLabel": "Generation priority",
+  "canvas.generateFactoryPriorityBalanced": "Balanced (default)",
+  "canvas.generateFactoryPriorityBalancedDesc": "Prefers the recipe with the fewest production steps, falling back to the standard (non-alternate) recipe on a tie.",
+  "canvas.generateFactoryPriorityFewestMachines": "Fewest machines",
+  "canvas.generateFactoryPriorityFewestMachinesDesc": "Minimizes the total number of machines needed across the whole factory.",
+  "canvas.generateFactoryPriorityFewestRawResources": "Fewest raw resources",
+  "canvas.generateFactoryPriorityFewestRawResourcesDesc": "Minimizes total raw ore/resource extraction, even if it takes an extra processing step.",
+  "canvas.generateFactoryPrioritySimplestChain": "Simplest chain",
+  "canvas.generateFactoryPrioritySimplestChainDesc": "Minimizes the number of machines and connections in the result, favoring shorter chains with fewer inputs.",
+  "canvas.generateFactoryPriorityLowestPower": "Lowest power usage",
+  "canvas.generateFactoryPriorityLowestPowerDesc": "Minimizes total power (MW) consumed by the generated machines.",
+  "canvas.generateFactoryOrganizeLayout": "Organize layout (reduce crossing connections)",
+  "canvas.generateFactoryUseConverters": "Use Converter recipes",
+  "canvas.generateFactoryUseConvertersTitle": "Allow recipes that run on the Converter machine (ore-to-ore conversions) — off by default since they're a late-game, resource-intensive mechanic most factories don't need. Still used automatically when a part has no other recipe, or when it's clearly the intended route for a part already at or above the Converter's own tier.",
+  "canvas.generateFactoryHandleByproducts": "Handle byproducts",
+  "canvas.generateFactoryHandleByproductsTitle": "Reuse leftover byproducts (secondary recipe outputs with nowhere else to go) to cut back raw extraction where possible, then route whatever's left through a conversion machine into something else (or, for a fluid/gas, packaged first) before sinking it — off by default since it adds extra machines to the generated factory.",
+  "canvas.generateFactoryByproductsHeading": "Byproducts",
+  "canvas.generateFactoryByproductConverted": "made into {{item}}, then sunk",
+  "canvas.generateFactoryByproductSunk": "sunk",
+  "canvas.generateFactoryByproductReused": "reused to cut extraction",
+  "canvas.generateFactoryByproductUnsinkable": "no packaging route found — left disconnected",
+  "canvas.generateFactoryAlternatesHeading": "Alternate recipes",
+  "canvas.generateFactoryAlternatesCount": "{{enabled}}/{{total}} enabled",
+  "canvas.generateFactorySelectAll": "Select all",
+  "canvas.generateFactoryDeselectAll": "Deselect all",
   "canvas.generate": "Generate",
 
   "settings.snapToGrid": "Snap to grid",
@@ -168,6 +264,12 @@
   "node.portTooltip.invalid": "This connection could not be resolved — see the node/edge for details.",
   "node.portTooltip.mismatched": "Rate mismatch: this part's in/out rate doesn't reconcile with a connected neighbor.",
   "node.portTooltip.default": "{{direction}}: right-click to disconnect",
+  "node.portTooltip.unconnected": "{{direction}}: not connected",
+  "node.portTooltip.insufficientInput": "Not enough coming in: needs {{required}}/min but only receiving {{supplied}}/min (short {{deficit}}/min).",
+  "node.insufficientInputMessage": "Not enough input: {{details}}",
+  "node.insufficientInputDetail": "{{part}} short {{deficit}}/min",
+  "node.portTooltip.unhandledByproduct": "Unhandled byproduct: nothing is consuming this — it'll back up production.",
+  "node.unhandledByproductMessage": "Unhandled byproduct(s): {{details}}",
   "node.limitInvalidTooltip": "This limit could not be resolved to a machine count.",
   "node.autoRoundEditTooltip": "Auto-round is on — editing this will turn it off.",
   "node.shardsInvalidTooltip": "This shard count exceeds the machine's cap.",

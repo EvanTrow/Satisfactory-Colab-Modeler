@@ -16,6 +16,7 @@
 // `./computeValidity.ts`'s header) and why validity/rates are computed
 // locally here from `SolverResultContext` rather than threaded through
 // `CanvasNodeData.validityState` via `useYjsSync.ts`.
+import { TriangleAlert } from "lucide-react";
 import { memo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -40,7 +41,9 @@ import { formatRate } from "../formatRate";
 import { useSolverResult } from "../SolverResultContext";
 import { useSettings } from "../useSettings";
 import type { CanvasNode } from "../useYjsSync";
+import { computeInputShortages, type PartShortage } from "./computeInputShortage";
 import { computeNodeValidityState } from "./computeValidity";
+import { computeUnhandledByproducts } from "./computeUnhandledByproducts";
 import { autoRoundFieldClass, fieldInputClass } from "./nodeFieldStyles";
 import { computeMachineCount, effectiveLimitValue, orderRecipeParts, partHandleId, stopgapPartRate } from "./recipeNodeMath";
 import { useCommittedTextField } from "./useCommittedTextField";
@@ -73,6 +76,20 @@ interface PartRowProps {
   numberFormats: NumberFormats;
   /** Job 019: this part's port highlight (from `computeValidity.ts`'s per-node `RecipeNodeValidityState.ports`) — `undefined` means no edge issue touches this part on this node. */
   portValidity?: RecipeNodeValidity;
+  /** `false` when no edge is wired to this port yet — dims the validity ring in favor of an accent ring so an unwired dot stands out at a glance. Takes a back seat to `portValidity`, which flags an actual problem rather than just "not hooked up yet". */
+  isConnected: boolean;
+  /** Set only for an input part that isn't receiving as much per minute as this node's own solved rate needs — see `computeInputShortage.ts`'s header. `undefined` (the common case) renders this row exactly as before. */
+  shortage?: PartShortage;
+  /**
+   * `true` only for a secondary (non-primary) positive-amount output — a
+   * byproduct, per `recipeNodeMath.ts`'s `primaryPart` — that has zero
+   * outgoing edges: it's being produced but has nowhere to go, which will
+   * back the whole machine up rather than just look "not wired up yet"
+   * (unlike a plain unconnected port, which gets only the informational
+   * accent-ring dot). Never `true` for an input part or for a recipe's own
+   * primary output.
+   */
+  isUnhandledByproduct: boolean;
   /**
    * Job 011: right-clicking this row removes every edge connected to this
    * port (PLAN.md §2's Connect row — "remove by re-dragging or
@@ -107,6 +124,9 @@ function PartRow({
   rate,
   numberFormats,
   portValidity,
+  isConnected,
+  shortage,
+  isUnhandledByproduct,
   onRemovePortEdges,
   isDragging,
   isDragOver,
@@ -129,13 +149,27 @@ function PartRow({
   // within this node, no reason for a second id scheme.
   const handleId = partHandleId(part);
   const iconUrl = getIconUrl(part.part);
-  const handleHighlight = highlightRingClass(portValidity);
+  // Job 030: an unwired dot gets an accent ring so it stands out among a
+  // recipe's other ports — `portValidity`'s red/orange rings flag an actual
+  // problem (wrong part, mismatched rate) and take precedence over this
+  // purely-informational "nothing plugged in here yet" one. An unhandled
+  // byproduct is ALSO unconnected by definition, but it's a real problem
+  // worth its own yellow ring rather than reading as merely "not wired up
+  // yet" — ranked below `portValidity`'s red/orange but above the plain
+  // accent dot.
+  const handleHighlight =
+    highlightRingClass(portValidity) ??
+    (isUnhandledByproduct ? "ring-2 ring-[var(--warning)]" : !isConnected ? "ring-2 ring-[var(--accent)]" : undefined);
   const rowTitle =
     portValidity === "invalid"
       ? t("node.portTooltip.invalid")
       : portValidity === "mismatched"
         ? t("node.portTooltip.mismatched")
-        : t("node.portTooltip.default", { direction: tRaw(input ? "INPUT" : "OUTPUT") });
+        : isUnhandledByproduct
+          ? t("node.portTooltip.unhandledByproduct")
+          : !isConnected
+            ? t("node.portTooltip.unconnected", { direction: tRaw(input ? "INPUT" : "OUTPUT") })
+            : t("node.portTooltip.default", { direction: tRaw(input ? "INPUT" : "OUTPUT") });
 
   // While a connection is in progress and this row's port isn't a legal drop
   // target, fade the dot out and stop it from intercepting hover/drop —
@@ -240,17 +274,36 @@ function PartRow({
             ? "text-[var(--danger)]"
             : portValidity === "mismatched"
               ? "text-[var(--mismatch)]"
-              : "text-[var(--text-primary)]"
+              : isUnhandledByproduct
+                ? "text-[var(--warning)]"
+                : "text-[var(--text-primary)]"
         }`}
       >
         {gameTerm(part.part)}
       </span>
       <span
-        className="shrink-0 tabular-nums text-[var(--text-secondary)]"
+        className={`shrink-0 tabular-nums ${shortage ? "text-[var(--danger)]" : "text-[var(--text-secondary)]"}`}
         title={toFractionString(rate)}
       >
         ({formatRate(rate, numberFormats)}/min)
       </span>
+      {shortage && (
+        <span
+          className="shrink-0"
+          title={t("node.portTooltip.insufficientInput", {
+            required: formatRate(shortage.required, numberFormats),
+            supplied: formatRate(shortage.supplied, numberFormats),
+            deficit: formatRate(shortage.deficit, numberFormats),
+          })}
+        >
+          <TriangleAlert className="h-3 w-3 text-[var(--danger)]" aria-hidden />
+        </span>
+      )}
+      {isUnhandledByproduct && (
+        <span className="shrink-0" title={t("node.portTooltip.unhandledByproduct")}>
+          <TriangleAlert className="h-3 w-3 text-[var(--warning)]" aria-hidden />
+        </span>
+      )}
       {!input && icon}
       {!input && (
         <Handle
@@ -373,10 +426,54 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
   // context-consumption note above). `CanvasNodeData.validityState` itself
   // is left exactly as Job 010 built it (always `null`) — see this job's
   // Handoff notes for the full reasoning.
-  const incidentEdges = listEdges(sfmDoc)
+  const edges = listEdges(sfmDoc);
+  const incidentEdges = edges
     .filter((edge) => edge.fromNode === id || edge.toNode === id)
     .map((edge) => ({ edgeId: edge.id, part: edge.part }));
   const validityState = computeNodeValidityState(nodeResult, incidentEdges, edgeResultById);
+
+  // Job 030: which of this node's ports already have an edge wired to them —
+  // drives the accent-ring "unconnected" highlight in `PartRow` below. A
+  // port can appear as either a `fromPort` or `toPort` depending on which
+  // side of the edge this node is on, same as `removeEdgesForPort`'s scan.
+  const connectedPorts = new Set<string>();
+  for (const edge of edges) {
+    if (edge.fromNode === id) connectedPorts.add(edge.fromPort);
+    if (edge.toNode === id) connectedPorts.add(edge.toPort);
+  }
+
+  // Per-input-part shortfall — "this machine isn't getting enough items per
+  // minute" — computed straight from the solver's own numbers (this node's
+  // solved demand vs. every incoming edge's own solved rate), independent
+  // of `validityState`'s red/orange system above. See
+  // `computeInputShortage.ts`'s header for why this is a distinct,
+  // deliberately more specific signal than the existing "mismatched" state.
+  const incomingEdges = edges
+    .filter((edge) => edge.toNode === id)
+    .map((edge) => ({ edgeId: edge.id, part: edge.part }));
+  const inputShortages = computeInputShortages(nodeResult, recipe?.parts ?? [], incomingEdges, edgeResultById);
+  const shortPartNames = Object.keys(inputShortages);
+  const shortagesSummary = shortPartNames
+    .map((partName) =>
+      t("node.insufficientInputDetail", {
+        part: gameTerm(partName),
+        deficit: formatRate(inputShortages[partName]!.deficit, numberFormats),
+      }),
+    )
+    .join("; ");
+
+  // "Unhandled byproduct" — a secondary (non-primary) positive-amount
+  // output that's being produced but has zero outgoing edges, i.e. nowhere
+  // to go. A recipe's PRIMARY output being unconnected is normal while
+  // still building a factory (just the plain accent-ring dot); a byproduct
+  // sitting there with nothing consuming it is worth flagging on its own —
+  // same "worth surfacing beyond the plain unconnected dot" reasoning
+  // `inputShortages` above already established for the input side, mirrored
+  // here for outputs (see `computeUnhandledByproducts.ts`'s own header). A
+  // yellow (not red/orange) tier: real, but less severe than a value that's
+  // actively wrong.
+  const unhandledByproductNames = recipe ? computeUnhandledByproducts(recipe, connectedPorts) : [];
+  const byproductsSummary = unhandledByproductNames.map(gameTerm).join(", ");
 
   // A machine-count-mode node with no `limit` set is meant to read as
   // genuinely blank — "nothing limiting this machine, the solver derives it
@@ -558,14 +655,25 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
       // Job 019: red/orange validity highlighting (PLAN.md §3) takes
       // precedence over the plain "selected" ring — a node's own
       // wrongness/mismatch is more important to see at a glance than
-      // whether it happens to be selected. Job 018's staleness state
+      // whether it happens to be selected. An input shortage (see
+      // `computeInputShortage.ts`) reuses that same red — it's not part of
+      // `validityState`'s own red/orange system (a separate, purpose-built
+      // signal — see `inputShortages`' own comment above), but "this
+      // machine isn't getting enough" reads as at least as severe as an
+      // individually-invalid value, so it gets the same top-severity
+      // treatment and wins over a plain "mismatched" orange. An unhandled
+      // byproduct (see `unhandledByproductNames`' own comment above) is a
+      // third, yellow tier below both of those — real, but less severe than
+      // a value that's actively wrong — so it only wins the border once
+      // nothing red/orange applies. Job 018's staleness state
       // (`opacity-60` here, applied to the WHOLE card, not just the
       // numbers) greys the card out while a recompute is in flight, per
       // PLAN.md §5 point 3 ("show the last result greyed/stale while
       // recomputing rather than blanking values") — the last-known values
       // stay exactly as they were underneath, this only dims them.
       className={`relative w-64 rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors ${
-        highlightBorderClass(validityState?.overall) ??
+        (shortPartNames.length > 0 ? "border-[var(--danger)]" : highlightBorderClass(validityState?.overall)) ??
+        (unhandledByproductNames.length > 0 ? "border-[var(--warning)]" : undefined) ??
         (selected ? "border-[var(--accent)]" : "border-[var(--border-strong)]")
       } ${staleness === "stale-recomputing" ? "opacity-60" : ""}`}
       // Job 021: remote-selection halo — one or more *other* users currently
@@ -581,9 +689,13 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
           : undefined
       }
       title={
-        validityState?.overall === "invalid"
-          ? t("node.invalid", { issues: nodeResult?.issues.join("; ") || t("node.invalidFallback") })
-          : undefined
+        shortPartNames.length > 0
+          ? t("node.insufficientInputMessage", { details: shortagesSummary })
+          : validityState?.overall === "invalid"
+            ? t("node.invalid", { issues: nodeResult?.issues.join("; ") || t("node.invalidFallback") })
+            : unhandledByproductNames.length > 0
+              ? t("node.unhandledByproductMessage", { details: byproductsSummary })
+              : undefined
       }
     >
       {remoteSelectors.length > 0 && (
@@ -664,6 +776,9 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
                   rate={rate}
                   numberFormats={numberFormats}
                   portValidity={validityState?.ports?.[part.part]}
+                  isConnected={connectedPorts.has(handleId)}
+                  shortage={inputShortages[part.part]}
+                  isUnhandledByproduct={unhandledByproductNames.includes(part.part)}
                   onRemovePortEdges={removeEdgesForPort}
                   isDragging={draggingPartId === handleId}
                   isDragOver={dragOverPartId === handleId}
@@ -677,6 +792,26 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
             })
         )}
       </div>
+
+      {/* Always-visible explanation for the red border above — a tooltip
+          alone (the card's own `title`) only reaches a user who thinks to
+          hover the card; this makes "why is this red" legible at a glance,
+          same pattern `SplurgerNode.tsx` uses for its own dangling-part
+          warning. */}
+      {shortPartNames.length > 0 && (
+        <p className="mx-2 mt-1.5 rounded-md bg-[var(--danger-soft)] px-2 py-1 text-[10px] text-[var(--danger)]">
+          {t("node.insufficientInputMessage", { details: shortagesSummary })}
+        </p>
+      )}
+
+      {/* Same always-visible treatment, yellow instead of red — shown
+          independently of the banner above (a node can have BOTH an input
+          shortage and an unhandled byproduct at once). */}
+      {unhandledByproductNames.length > 0 && (
+        <p className="mx-2 mt-1.5 rounded-md bg-[var(--warning-soft)] px-2 py-1 text-[10px] text-[var(--warning)]">
+          {t("node.unhandledByproductMessage", { details: byproductsSummary })}
+        </p>
+      )}
 
       <div className="space-y-1.5 border-t border-[var(--border-subtle)] px-2 py-1.5 text-[11px]">
         <label className="flex items-center justify-between gap-2">

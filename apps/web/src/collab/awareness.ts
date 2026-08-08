@@ -24,17 +24,22 @@ import type { HocuspocusProvider } from "@hocuspocus/provider";
  * The live `Awareness` instance a `HocuspocusProvider` owns
  * (`provider.awareness`). Named via `NonNullable<...>` on the provider's own
  * typed getter rather than `import type { Awareness } from
- * "y-protocols/awareness"` directly: `y-protocols` is only a *peer*
- * dependency of `@hocuspocus/provider` (see `apps/web/package.json` — it's
- * not declared there directly, only transitively required to satisfy
- * `@hocuspocus/provider`'s peer dependency, same as `apps/realtime`'s own
- * `package.json` only lists it as a devDependency for its provider-side
- * tests). TypeScript can still fully resolve the referenced type
- * transitively through `@hocuspocus/provider`'s own `.d.ts` this way, with
- * no separate runtime import needed anywhere in `apps/web` — every actual
- * `Awareness` *instance* this app ever touches always originates from a real
- * `HocuspocusProvider` (`useProjectDocument.ts`), never constructed
- * standalone here.
+ * "y-protocols/awareness"` directly, so TypeScript resolves the referenced
+ * type transitively through `@hocuspocus/provider`'s own `.d.ts` — every
+ * server-synced `Awareness` *instance* this app touches still always
+ * originates from a real `HocuspocusProvider` (`useProjectDocument.ts`),
+ * never constructed standalone there.
+ *
+ * Guest-mode exception: `useLocalOnlyProjectDocument.ts` and the landing
+ * page's read-only `SampleFactoryPreview.tsx` have no provider at all (no
+ * server connection, ever) and construct a plain `Awareness` directly from
+ * `y-protocols/awareness` (a direct `apps/web` dependency for exactly this —
+ * see `apps/web/package.json`) instead. That's the identical class
+ * `HocuspocusProvider` itself hands back from its own `.awareness` getter,
+ * so it satisfies this type unchanged. It's never gossiped anywhere in that
+ * case (no remote peer can ever appear), which is fine — every consumer of
+ * `CanvasDocContextValue.awareness` only needs *a* live `Awareness` instance
+ * to exist, not one that's actually networked.
  */
 export type AwarenessHandle = NonNullable<HocuspocusProvider["awareness"]>;
 
