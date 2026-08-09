@@ -22,6 +22,7 @@ import { useTranslation } from "react-i18next";
 
 import { defaultGameData, type Recipe, type RecipePart } from "@scm/gamedata";
 import { equals, formatRational, isNegative, of, parseRational, toFractionString, type Rational } from "@scm/rational";
+import { partRateKey } from "@scm/solver";
 import {
   listEdges,
   removeEdge,
@@ -768,8 +769,14 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               // to Job 010's stopgap only when there's no solver result for
               // this node yet (None mode, or pre-first-solve) — see this
               // file's header comment and `recipeNodeMath.ts`'s own doc
-              // comments for the full rationale.
-              const solverRateStr = nodeResult?.partRates[part.part];
+              // comments for the full rationale. Direction-prefixed key,
+              // not the bare part name — a recipe that lists this same
+              // part name twice (e.g. Encased Uranium Cell's Sulfuric
+              // Acid, both a consumed input and a partial-recycle
+              // byproduct output) needs each row to read its OWN entry's
+              // rate, not whichever one the bare-name key happens to
+              // report. See `partRateKey`'s own doc comment in `@scm/solver`.
+              const solverRateStr = nodeResult?.partRatesByDirection?.[partRateKey(part.part, part.amount)];
               const rate =
                 solverRateStr !== undefined
                   ? parseRational(solverRateStr)
@@ -785,14 +792,39 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
                 : false;
               return (
                 <PartRow
-                  key={part.part}
+                  // `handleId` (`in:X`/`out:X`), not the bare part name — a
+                  // recipe that lists the same part name twice (e.g.
+                  // Encased Uranium Cell's Sulfuric Acid, both a consumed
+                  // input and a partial-recycle byproduct output) would
+                  // otherwise give React Flow two sibling rows with the
+                  // IDENTICAL key, which React explicitly warns is
+                  // unsupported (observed live: "Encountered two children
+                  // with the same key ... Sulfuric Acid").
+                  key={handleId}
                   part={part}
                   rate={rate}
                   numberFormats={numberFormats}
+                  // Known residual gap, same shape as the ones documented
+                  // in `@scm/solver`'s `basic.ts`/`full.ts`: `validityState.ports`
+                  // (`computeValidity.ts`) is ALSO keyed by bare part name, so a
+                  // duplicated part name's two rows could show the same
+                  // red/orange ring even when only one direction actually has a
+                  // problem. Narrower and lower-severity than the rate/disposal
+                  // bugs this same investigation fixed (the card's own overall
+                  // border/tooltip, which is what a user actually notices first,
+                  // is unaffected), so left as a documented gap rather than
+                  // widening `IncidentEdgeRef`/`RecipeNodeValidityState.ports` to
+                  // carry direction too.
                   portValidity={validityState?.ports?.[part.part]}
                   isConnected={connectedPorts.has(handleId)}
-                  shortage={inputShortages[part.part]}
-                  isUnhandledByproduct={unhandledByproductNames.includes(part.part)}
+                  // Direction-guarded: `inputShortages`/`unhandledByproductNames`
+                  // are each only ever populated for one direction (shortages:
+                  // input only; byproducts: output only — see their own modules'
+                  // headers), but both are keyed by bare part name, so without
+                  // this guard a duplicated part name's OTHER-direction row would
+                  // wrongly inherit its sibling's indicator.
+                  shortage={isNegative(part.amount) ? inputShortages[part.part] : undefined}
+                  isUnhandledByproduct={!isNegative(part.amount) && unhandledByproductNames.includes(part.part)}
                   onRemovePortEdges={removeEdgesForPort}
                   isDragging={draggingPartId === handleId}
                   isDragOver={dragOverPartId === handleId}

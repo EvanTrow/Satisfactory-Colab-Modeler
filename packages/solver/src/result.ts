@@ -29,8 +29,29 @@ export interface NodeSolveResult {
    * infers).
    */
   readonly resolved: boolean;
-  /** `@scm/gamedata` part name -> signed per-minute rate (canonical `n/d` string). Empty for None mode. */
+  /**
+   * `@scm/gamedata` part name -> signed per-minute rate (canonical `n/d`
+   * string). Empty for None mode. First-match-wins for a part name that
+   * appears more than once in the recipe (see `partRatesByDirection` for
+   * the unambiguous version of those same rates) — `summary.ts`/
+   * `mergeResults.ts` iterate this object treating every key as a real
+   * part name, so it deliberately holds ONLY bare names, never the
+   * direction-prefixed keys below.
+   */
   readonly partRates: Readonly<Record<string, string>>;
+  /**
+   * The same rates as `partRates`, additionally keyed by direction (`"in:"`/
+   * `"out:"` prefix — see `partRateKey`) so a consumer that knows which side
+   * of the node it means can read the correct rate even for the handful of
+   * real recipes (Encased Uranium Cell, Distilled Silica, Instant Scrap)
+   * that list the same part name twice: once as a consumed input, once as a
+   * partial-recycle byproduct output. `partRates` alone can only report one
+   * of those two rates for that name. A separate field, not merged into
+   * `partRates` itself, specifically so aggregate consumers that iterate
+   * `Object.entries(partRates)` (`summary.ts`, `mergeResults.ts`) don't have
+   * to know about or filter out these extra disambiguation-only keys.
+   */
+  readonly partRatesByDirection?: Readonly<Record<string, string>>;
   /** MW, signed (positive = generates, negative = consumes). The float boundary — see `nodeProfile.ts`'s `nodePower`. `0` for None mode. */
   readonly power: number;
   /** `false` if the node's recipe/machine/shard count couldn't be resolved, or an entered limit was malformed. */

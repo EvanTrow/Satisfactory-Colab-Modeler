@@ -526,6 +526,7 @@ export function CanvasViewReady({
               containerId={containerId}
               numberFormats={settings.numberFormats}
               basePosition={generateFactoryBasePosition(sync.nodes)}
+              solverMode={settings.solverMode}
               onClose={() => setShowGenerateFactory(false)}
             />
           )}

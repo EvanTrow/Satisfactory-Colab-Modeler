@@ -1,6 +1,6 @@
 import type { RecipePart } from "@scm/gamedata";
-import { of } from "@scm/rational";
-import type { EdgeSolveResult, NodeSolveResult } from "@scm/solver";
+import { of, parseRational } from "@scm/rational";
+import { partRateKey, type EdgeSolveResult, type NodeSolveResult } from "@scm/solver";
 import { describe, expect, it } from "vitest";
 
 import { computeInputShortages, type IncomingEdgeRef } from "./computeInputShortage";
@@ -9,13 +9,26 @@ function part(name: string, amount: number): RecipePart {
   return { part: name, amount: of(amount) };
 }
 
-function nodeResult(partRates: Record<string, string>): NodeSolveResult {
+/**
+ * Builds a fixture the way the real solver does: each bare-name rate
+ * (`"Iron Ore": "-30"`) in `partRates` ALSO gets its direction-prefixed
+ * twin (`"in:Iron Ore"`) in the separate `partRatesByDirection` map — see
+ * `partRateKey`'s own doc comment in `@scm/solver`. `computeInputShortages`
+ * now reads the prefixed map, so a fixture that only set `partRates` would
+ * silently look like "no solve result for this part" to it.
+ */
+function nodeResult(rates: Record<string, string>): NodeSolveResult {
+  const partRatesByDirection: Record<string, string> = {};
+  for (const [name, rate] of Object.entries(rates)) {
+    partRatesByDirection[partRateKey(name, parseRational(rate))] = rate;
+  }
   return {
     nodeId: "n1",
     machineCount: "1",
     clockPercent: "100",
     resolved: true,
-    partRates,
+    partRates: rates,
+    partRatesByDirection,
     power: 0,
     valid: true,
     issues: [],

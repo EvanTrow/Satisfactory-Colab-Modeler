@@ -190,6 +190,7 @@
   "canvas.generateFactoryNoRecipeForTarget": "No recipe produces this item.",
   "canvas.generateFactoryPreviewHeading": "Will create {{count}} machine(s):",
   "canvas.generateFactoryUnresolvedWarning": "No recipe found for: {{parts}} — these inputs will be left unconnected.",
+  "canvas.generateFactoryBasicModeWarning": "This project's calculator Mode is set to Basic, which assumes every split/merge divides evenly. Generate Factory intentionally creates uneven splits (e.g. one producer feeding two consumers at different rates), so the generated factory will likely show orange \"rate mismatch\" nodes here that aren't really wrong. Switch to Full mode (Settings) for a generated factory to solve cleanly.",
   "canvas.generateFactoryPriorityLabel": "Generation priority",
   "canvas.generateFactoryPriorityBalanced": "Balanced (default)",
   "canvas.generateFactoryPriorityBalancedDesc": "Prefers the recipe with the fewest production steps, falling back to the standard (non-alternate) recipe on a tie.",

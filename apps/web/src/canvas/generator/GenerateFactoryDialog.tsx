@@ -10,7 +10,7 @@ import { useTranslation } from "react-i18next";
 
 import { defaultGameData, type RecipePart } from "@scm/gamedata";
 import { formatRational, isNegative, isPositive, parseRational, type Rational } from "@scm/rational";
-import type { NumberFormats, SfmDocument } from "@scm/ydoc";
+import type { NumberFormats, SfmDocument, SolverMode } from "@scm/ydoc";
 
 import { useFocusTrap } from "../../a11y";
 import { getIconUrl } from "../../assets/icons";
@@ -32,6 +32,8 @@ export interface GenerateFactoryDialogProps {
   numberFormats: NumberFormats;
   /** Top-left anchor for the generated layout — see `CanvasView.tsx`'s call site for how this clears whatever's already on the canvas. */
   basePosition: { x: number; y: number };
+  /** The project's current calculator mode (`Settings.solverMode`) — only read to decide whether to show `generateFactoryBasicModeWarning` below; Basic mode's "no splitter/merger preference" model doesn't match a generated factory's intentionally uneven fan-out (see that string's own translation for the full reasoning). */
+  solverMode: SolverMode;
   onClose: () => void;
 }
 
@@ -80,6 +82,7 @@ export function GenerateFactoryDialog({
   containerId,
   numberFormats,
   basePosition,
+  solverMode,
   onClose,
 }: GenerateFactoryDialogProps) {
   const { t } = useTranslation("app");
@@ -225,6 +228,12 @@ export function GenerateFactoryDialog({
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+          {solverMode === "basic" && (
+            <p className="rounded-md border border-[var(--mismatch)] bg-[var(--mismatch-soft)] px-2 py-1.5 text-xs text-[var(--mismatch)]">
+              {t("canvas.generateFactoryBasicModeWarning")}
+            </p>
+          )}
+
           {targets.length > 0 && (
             <div className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
               <span>{t("canvas.generateFactoryTargetLabel")}</span>

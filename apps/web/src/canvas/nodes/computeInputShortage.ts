@@ -16,7 +16,7 @@
 // `RecipePart[]` the caller already has in hand.
 import type { RecipePart } from "@scm/gamedata";
 import { ZERO, abs, add, compare, isNegative, isZero, parseRational, subtract, type Rational } from "@scm/rational";
-import type { EdgeSolveResult, NodeSolveResult } from "@scm/solver";
+import { partRateKey, type EdgeSolveResult, type NodeSolveResult } from "@scm/solver";
 
 export interface PartShortage {
   /** This node's own solved demand for the part (always positive — the sign of `RecipePart.amount` is already accounted for). */
@@ -51,7 +51,13 @@ export function computeInputShortages(
   const shortages: Record<string, PartShortage> = {};
   for (const part of recipeParts) {
     if (!isNegative(part.amount)) continue;
-    const rateStr = nodeResult.partRates[part.part];
+    // Direction-prefixed key, not the bare part name — a recipe that lists
+    // this same part name twice (e.g. Encased Uranium Cell's Sulfuric
+    // Acid, both a consumed input and a partial-recycle byproduct output)
+    // would otherwise risk reading whichever entry the bare-name key
+    // happens to report first, not necessarily THIS (input) entry. See
+    // `partRateKey`'s own doc comment in `@scm/solver`.
+    const rateStr = nodeResult.partRatesByDirection?.[partRateKey(part.part, part.amount)];
     if (rateStr === undefined) continue;
     const required = abs(parseRational(rateStr));
     if (isZero(required)) continue;

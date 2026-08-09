@@ -66,8 +66,8 @@
 //     shuffled node/edge array order, produces identical output.
 import { ONE, ZERO, add, isNegative, isZero, negate, isPositive, type Rational } from "@scm/rational";
 import type { GameData } from "@scm/gamedata";
-import { buildEdgeGroups, edgeShareFromSource, edgeShareFromTarget, type EdgeGroups } from "./edgeGroups";
-import { validateEdge } from "./edgeValidation";
+import { buildEdgeGroups, edgeShareFromSource, edgeShareFromTarget } from "./edgeGroups";
+import { resolveEdgesJointly } from "./edgeResolution";
 import {
   buildNodeProfile,
   machineCountForTargetRate,
@@ -137,6 +137,20 @@ export function propagateMachineCounts(
       const profile = profiles.get(nodeId);
       if (!profile?.recipe) continue;
 
+      // Known limitation: keyed by bare part name, so an UNPINNED node that
+      // has incident edges on BOTH sides of a part name a recipe lists
+      // twice (an input entry and a separate byproduct output entry — e.g.
+      // Encased Uranium Cell's Sulfuric Acid) would have those two
+      // physically-different implied rates summed together here as if they
+      // were about the same port. Each individual `edgeShareFromSource`/
+      // `edgeShareFromTarget` call above is itself correct (they now pass
+      // the right direction — see `edgeGroups.ts`); it's only this
+      // aggregation step, and `chosenPart`/`partEntry` below picking
+      // whichever entry `.find` happens to match first, that stays
+      // ambiguous. Doesn't affect Generate Factory's output (every
+      // generated node is pinned, so it never reaches propagation at all —
+      // see `applyFactoryPlan.ts`), only a hand-built, unpinned Basic-mode
+      // node using one of these rare recipes on both sides at once.
       const impliedByPart = new Map<string, Rational>();
       for (const incident of incidentByNode.get(nodeId) ?? []) {
         if (!resolved.has(incident.otherNode)) continue;
@@ -232,12 +246,18 @@ export function solveBasic(snapshot: SolverSnapshot, gameData: GameData): SolveR
     ),
   );
 
-  const groups: EdgeGroups = buildEdgeGroups(snapshot.edges);
+  // Joint, not per-edge independent (`edgeShareFromSource`/`Target` alone):
+  // see `edgeResolution.ts`/`jointFlow.ts`'s headers for why two splitter/
+  // merger points adjacent on the same part (e.g. byproduct reuse feeding
+  // the same consumers a raw producer already does) need every connected
+  // edge solved together, not each edge's two endpoints compared in
+  // isolation.
   const edgeIds = sortedIds(snapshot.edges.map((e) => e.id));
   const edgeById = new Map(snapshot.edges.map((e) => [e.id, e] as const));
+  const edgeResolutions = resolveEdgesJointly(snapshot.edges, profiles, counts);
   const edgeResults = edgeIds.map((id) => {
     const edge = edgeById.get(id)!;
-    const internal = validateEdge(edge, profiles, counts, groups);
+    const internal = edgeResolutions.get(id)!;
     return {
       edgeId: edge.id,
       part: edge.part,

@@ -23,6 +23,7 @@ export {
   isIntegerRational,
   primaryPart,
   ratePerMachineAtFullClock,
+  ratePerMachineAtFullClockForEntry,
   referenceRateAtFullClock,
   stepClockToPreset,
   stopgapPartRate,

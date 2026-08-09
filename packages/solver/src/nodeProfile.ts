@@ -12,7 +12,7 @@
 // "a CRDT guarantees convergence, not correctness" framing — the solver's
 // job is to report the problem, not to throw).
 import {
-  baseRecipeRatePerMinute,
+  baseRecipeRatePerMinuteForEntry,
   defaultVariant,
   resolveMachine,
   somersloopBoost,
@@ -133,8 +133,22 @@ export interface NodeProfile {
   readonly effectivePower?: Rational;
   /** `machine.overclockPowerExponent ?? 1` (float boundary, per `@scm/rational`'s `power.ts`). */
   readonly overclockExponent: number;
-  /** `Part.name` -> signed per-minute rate for ONE machine at 100% clock, already scaled by the resolved MultiMachine ratio (but NOT by somersloop or clock — see `partRateAtMachineCount`). */
+  /** `Part.name` -> signed per-minute rate for ONE machine at 100% clock, already scaled by the resolved MultiMachine ratio (but NOT by somersloop or clock — see `partRateAtMachineCount`). First-match-wins for a name that appears more than once in the recipe (see `refRatePerPartByDirection` for the unambiguous version). */
   readonly refRatePerPart: ReadonlyMap<string, Rational>;
+  /**
+   * The same rates as `refRatePerPart`, but keyed by part name AND
+   * disambiguated by direction (input vs. output) — needed because a
+   * handful of real recipes (Encased Uranium Cell, Distilled Silica,
+   * Instant Scrap) list the SAME part name twice: once as a consumed
+   * input, once as a partial-recycle byproduct output. `refRatePerPart`
+   * alone can only ever report one of those two rates for that name
+   * (`recipe.parts.find`'s first match) — silently wrong for whichever
+   * entry isn't first. Populated for every part, not just duplicated
+   * ones, so callers that know which side of an edge/port they mean can
+   * always ask for it unambiguously via `partRateAtMachineCount`'s/
+   * `machineCountForTargetRate`'s optional `direction` parameter.
+   */
+  readonly refRatePerPartByDirection: ReadonlyMap<string, { input?: Rational; output?: Rational }>;
   readonly primaryPart?: RecipePart;
   /** Non-empty only when the node's recipe/machine/shards couldn't be resolved — see the module header. */
   readonly issues: readonly string[];
@@ -161,8 +175,27 @@ function emptyProfile(node: SolverNode, issues: string[], recipe?: Recipe): Node
     powerMultiplier: ONE,
     overclockExponent: 1,
     refRatePerPart: new Map(),
+    refRatePerPartByDirection: new Map(),
     issues,
   };
+}
+
+/** Builds both `NodeProfile.refRatePerPart` and `refRatePerPartByDirection` from a recipe's parts in one pass — shared by `buildBlueprintCompoundProfile` (which already has each part's final rate) and `buildNodeProfile` (which derives it from `baseRecipeRatePerMinuteForEntry` × ratio) below. */
+function buildRefRateMaps(
+  parts: readonly RecipePart[],
+  rateForEntry: (entry: RecipePart) => Rational,
+): Pick<NodeProfile, "refRatePerPart" | "refRatePerPartByDirection"> {
+  const refRatePerPart = new Map<string, Rational>();
+  const refRatePerPartByDirection = new Map<string, { input?: Rational; output?: Rational }>();
+  for (const p of parts) {
+    const rate = rateForEntry(p);
+    if (!refRatePerPart.has(p.part)) refRatePerPart.set(p.part, rate);
+    const bucket = refRatePerPartByDirection.get(p.part) ?? {};
+    if (isPositive(p.amount)) bucket.output = rate;
+    else bucket.input = rate;
+    refRatePerPartByDirection.set(p.part, bucket);
+  }
+  return { refRatePerPart, refRatePerPartByDirection };
 }
 
 // ---------------------------------------------------------------------------
@@ -187,11 +220,16 @@ function buildBlueprintCompoundProfile(
   const issues: string[] = [];
   const parts: RecipePart[] = [];
   const refRatePerPart = new Map<string, Rational>();
+  const refRatePerPartByDirection = new Map<string, { input?: Rational; output?: Rational }>();
   for (const [part, rateString] of Object.entries(basis.perCopyRates)) {
     try {
       const amount = parseRational(rateString);
       parts.push({ part, amount });
       refRatePerPart.set(part, amount);
+      // `Object.entries` can never yield the same `part` key twice, so
+      // there's no duplicate-direction ambiguity to resolve here — unlike
+      // `buildRefRateMaps` below, one entry per name is guaranteed.
+      refRatePerPartByDirection.set(part, isPositive(amount) ? { output: amount } : { input: amount });
     } catch {
       issues.push(`blueprint compound node "${node.id}": invalid per-copy rate "${rateString}" for part "${part}"`);
     }
@@ -227,6 +265,7 @@ function buildBlueprintCompoundProfile(
     powerMultiplier: ONE,
     overclockExponent: 1,
     refRatePerPart,
+    refRatePerPartByDirection,
     primaryPart: primaryPart(parts),
     issues,
     syntheticPowerAtOneUnit: basis.perCopyPowerMW,
@@ -267,8 +306,8 @@ export function buildNodeProfile(node: SolverNode, gameData: GameData): NodeProf
     }
   }
 
-  const refRatePerPart = new Map(
-    recipe.parts.map((p) => [p.part, multiply(baseRecipeRatePerMinute(recipe, p.part), ratio)] as const),
+  const { refRatePerPart, refRatePerPartByDirection } = buildRefRateMaps(recipe.parts, (entry) =>
+    multiply(baseRecipeRatePerMinuteForEntry(recipe, entry), ratio),
   );
   const clockPercent = parseClockPercent(node.clock);
 
@@ -283,6 +322,7 @@ export function buildNodeProfile(node: SolverNode, gameData: GameData): NodeProf
     effectivePower: recipe.averagePower ?? machine.averagePower,
     overclockExponent: machine.overclockPowerExponent ?? 1,
     refRatePerPart,
+    refRatePerPartByDirection,
     primaryPart: primaryPart(recipe.parts),
     issues,
   };
@@ -297,15 +337,36 @@ export function buildNodeProfile(node: SolverNode, gameData: GameData): NodeProf
 // the exact same functions.
 // ---------------------------------------------------------------------------
 
+/** Which of a recipe's two possible entries for one part name is meant — see `NodeProfile.refRatePerPartByDirection`'s own doc comment for why this is ever ambiguous. */
+export type PartDirection = "input" | "output";
+
+function refRateFor(profile: NodeProfile, part: string, direction?: PartDirection): Rational | undefined {
+  if (direction) {
+    const byDirection = profile.refRatePerPartByDirection.get(part)?.[direction];
+    if (byDirection) return byDirection;
+  }
+  return profile.refRatePerPart.get(part);
+}
+
 /**
  * `part`'s signed per-minute rate at `machineCount` machines, this node's
  * own clock, and its somersloop output multiplier (applied to positive
  * i.e. output amounts only — Somersloops boost production, not input
  * consumption, matching the real game and PLAN.md §1's Manufacturer
  * example). `ZERO` if `part` isn't one of the recipe's parts.
+ *
+ * `direction`, when supplied, disambiguates a part name that appears twice
+ * in the recipe (once as an input, once as an output) — omit it only when
+ * the caller genuinely doesn't know which side it means (falls back to
+ * `refRatePerPart`'s first-match, same as before this parameter existed).
  */
-export function partRateAtMachineCount(profile: NodeProfile, part: string, machineCount: Rational): Rational {
-  const ref = profile.refRatePerPart.get(part);
+export function partRateAtMachineCount(
+  profile: NodeProfile,
+  part: string,
+  machineCount: Rational,
+  direction?: PartDirection,
+): Rational {
+  const ref = refRateFor(profile, part, direction);
   if (!ref) return ZERO;
   const multiplier = isPositive(ref) ? profile.outputMultiplier : ONE;
   return multiply(multiply(machineCount, profile.clockFraction), multiply(ref, multiplier));
@@ -316,14 +377,16 @@ export function partRateAtMachineCount(profile: NodeProfile, part: string, machi
  * rate equal `targetRate` (signed), at this node's own clock/shards.
  * `undefined` if `part` isn't one of the recipe's parts, or its reference
  * rate is zero (degenerate recipe data — never happens in practice, but
- * guards the division).
+ * guards the division). `direction` — see `partRateAtMachineCount`'s own
+ * doc comment.
  */
 export function machineCountForTargetRate(
   profile: NodeProfile,
   part: string,
   targetRate: Rational,
+  direction?: PartDirection,
 ): Rational | undefined {
-  const ref = profile.refRatePerPart.get(part);
+  const ref = refRateFor(profile, part, direction);
   if (!ref || isZero(ref)) return undefined;
   const multiplier = isPositive(ref) ? profile.outputMultiplier : ONE;
   const perMachine = multiply(profile.clockFraction, multiply(ref, multiplier));
@@ -382,7 +445,7 @@ export function pinnedMachineCount(profile: NodeProfile): PinnedMachineCountResu
     return { issue: 'limitMode "ppm" but the recipe has no part to anchor it to' };
   }
   const target = isPositive(part.amount) ? limitValue : negate(limitValue);
-  const count = machineCountForTargetRate(profile, part.part, target);
+  const count = machineCountForTargetRate(profile, part.part, target, isPositive(part.amount) ? "output" : "input");
   if (!count) {
     return { issue: `could not derive a machine count from the "ppm" limit on part "${part.part}"` };
   }

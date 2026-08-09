@@ -1031,6 +1031,84 @@ describe("planFactory handleByproducts", () => {
   });
 });
 
+describe("planFactory handleByproducts: a recipe that lists the same part twice", () => {
+  // Mirrors the real game-data shape that broke this (Encased Uranium Cell,
+  // Distilled Silica, Instant Scrap all list one part name twice — once as
+  // a consumed input, once as a partial-recycle byproduct output):
+  // "SelfRef" consumes 8/min SharedPart AND produces 2/min SharedPart back
+  // as a byproduct, in the SAME recipe. "SharedPart producer" is a
+  // dedicated, non-raw (it needs RawA) way to make SharedPart — non-raw
+  // specifically so `applyByproductReuse`'s reuse path is skipped and this
+  // test exercises `planByproductDisposals` directly, same as the real
+  // Sulfuric Acid/Encased Uranium Cell case.
+  const selfRefFixture = loadGameData({
+    Machines: [{ Name: "Extractor", Tier: "0-0" }, { Name: "Constructor", Tier: "0-0" }],
+    MultiMachines: [],
+    Parts: [
+      { Name: "RawA", Tier: "0-0", SinkPoints: 0 },
+      { Name: "SharedPart", Tier: "0-0", SinkPoints: 0 },
+      { Name: "MainOutput", Tier: "0-0", SinkPoints: 0 },
+      { Name: "Converted", Tier: "0-0", SinkPoints: 0 },
+    ],
+    Recipes: [
+      { Name: "RawA", Machine: "Extractor", BatchTime: "60", Tier: "0-0", Parts: [{ Part: "RawA", Amount: "60" }] },
+      {
+        Name: "SharedPart producer",
+        Machine: "Constructor",
+        BatchTime: "60",
+        Tier: "0-0",
+        Parts: [
+          { Part: "RawA", Amount: "-10" },
+          { Part: "SharedPart", Amount: "5" },
+        ],
+      },
+      {
+        Name: "SelfRef",
+        Machine: "Constructor",
+        BatchTime: "60",
+        Tier: "0-0",
+        Parts: [
+          { Part: "RawA", Amount: "-6" },
+          { Part: "SharedPart", Amount: "-8" },
+          { Part: "MainOutput", Amount: "5" },
+          { Part: "SharedPart", Amount: "2" },
+        ],
+      },
+      {
+        Name: "SharedPart to Converted",
+        Machine: "Constructor",
+        BatchTime: "60",
+        Tier: "0-0",
+        Parts: [
+          { Part: "SharedPart", Amount: "-3" },
+          { Part: "Converted", Amount: "6" },
+        ],
+      },
+    ],
+  });
+
+  it("correctly detects and disposes the byproduct entry's own (positive) rate, not the input entry's", () => {
+    const plan = planFactory(selfRefFixture, [{ part: "MainOutput", rate: of(5) }], { handleByproducts: true });
+
+    expect(plan.unresolvedParts).toEqual([]);
+    expect(plan.nodes.find((n) => n.part === "MainOutput")?.recipe.name).toBe("SelfRef");
+    expect(equals(machineCount(plan.nodes, "MainOutput")!, of(1))).toBe(true);
+
+    // Before the fix: the byproduct entry's rate was silently computed as
+    // the INPUT entry's (-8, by-name-ambiguous lookup), which
+    // `planByproductDisposals` then drops as "not positive, nothing to
+    // report" — so `byproductDisposals` would have had NO "SharedPart"
+    // entry at all here, and the canvas would show it as an unhandled
+    // byproduct despite `handleByproducts: true`.
+    const disposal = plan.byproductDisposals.find((d) => d.part === "SharedPart");
+    expect(disposal).toBeDefined();
+    expect(equals(disposal!.totalRate, of(2))).toBe(true); // the +2 byproduct entry, not the -8 input entry
+    expect(disposal!.disposalRate && equals(disposal!.disposalRate, of(2))).toBe(true);
+    expect(disposal!.conversion).toBeDefined();
+    expect(disposal!.conversion!.recipe.name).toBe("SharedPart to Converted");
+  });
+});
+
 describe("layoutFactoryPlan", () => {
   it("places each generation in its own column and stacks a column's nodes without overlap", () => {
     const plan = planFactory(gameData, [{ part: "Rotor", rate: of(4) }]);

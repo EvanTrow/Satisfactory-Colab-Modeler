@@ -78,6 +78,8 @@
 // how Job 018's worker host should wire this through `postMessage`.
 import { ONE, ZERO, abs, add, equals, isNegative, isPositive, isZero, negate, toFractionString, type Rational } from "@scm/rational";
 import type { GameData } from "@scm/gamedata";
+import { resolveEdgesJointly, sourceKey, targetKey } from "./edgeResolution";
+import { groupConnectedComponents, type JointFlowEdge } from "./jointFlow";
 import { buildNodeProfile, machineCountForTargetRate, partRateAtMachineCount, pinnedMachineCount, type NodeProfile } from "./nodeProfile";
 import { buildNodeResult } from "./nodeResult";
 import { idCompare, sortedIds } from "./ordering";
@@ -232,7 +234,17 @@ function computeGroupAllocations(
     const ownerCount = counts.get(group.ownerNode);
     if (!ownerProfile?.recipe || ownerCount === undefined) continue;
 
-    const total = abs(partRateAtMachineCount(ownerProfile, group.part, ownerCount));
+    // The owner's own direction for this group: "outgoing" means the owner
+    // is every edge's `fromNode` (a splitter, producing/OUTPUT for this
+    // part); "incoming" means it's every edge's `toNode` (a merger,
+    // consuming/INPUT). The other endpoint of each edge is always the
+    // opposite direction. Passing this disambiguates recipes that list the
+    // same part name twice (e.g. Encased Uranium Cell's Sulfuric Acid input
+    // vs. its own byproduct) — see `NodeProfile.refRatePerPartByDirection`.
+    const ownerDirection = group.direction === "outgoing" ? "output" : "input";
+    const otherDirection = group.direction === "outgoing" ? "input" : "output";
+
+    const total = abs(partRateAtMachineCount(ownerProfile, group.part, ownerCount, ownerDirection));
     if (isZero(total)) continue;
 
     const candidates: ShareCandidate[] = group.edges.map((edge) => {
@@ -242,7 +254,7 @@ function computeGroupAllocations(
         const otherProfile = profiles.get(otherNode);
         const otherCount = counts.get(otherNode);
         if (otherProfile?.recipe && otherCount !== undefined && otherProfile.refRatePerPart.has(group.part)) {
-          cap = abs(partRateAtMachineCount(otherProfile, group.part, otherCount));
+          cap = abs(partRateAtMachineCount(otherProfile, group.part, otherCount, otherDirection));
         }
       }
       return { edgeId: edge.id, cap, tier: edge.priorityTier ?? "top" };
@@ -342,6 +354,12 @@ export function propagateMachineCountsFull(
         else incidentsByPart.set(incident.part, [incident]);
       }
 
+      // Same known limitation as `basic.ts`'s own `impliedByPart`: keyed by
+      // bare part name, so an unpinned node incident on both directions of
+      // a recipe's duplicated part name (e.g. Encased Uranium Cell's
+      // Sulfuric Acid) would sum two physically-different implied rates
+      // together. Doesn't affect Generate Factory (every generated node is
+      // pinned, so it never reaches this propagation loop at all).
       const impliedByPart = new Map<string, Rational>();
       for (const [part, incidents] of incidentsByPart) {
         if (!incidents.every((incident) => resolved.has(incident.otherNode))) continue;
@@ -505,10 +523,51 @@ function solveFullInner(snapshot: SolverSnapshot, gameData: GameData, options: F
     else incomingGroupByOwnerPart.set(key, group);
   }
 
+  // Priority tiers (`edge.priorityTier`) aren't modeled by the joint
+  // resolver below (`jointFlow.ts`'s own header explains why: two-tier
+  // bipartite fairness is a harder, currently-unneeded problem) — any
+  // connected component (per part) containing a "bottom"-tier edge keeps
+  // using this mode's own tier-aware `finalAllocations` lookup, computed
+  // exactly as before. Every OTHER component — the untiered majority,
+  // including the byproduct-reuse topology this fix targets — gets
+  // resolved jointly instead of each edge's two independent per-group
+  // shares being compared in isolation (which is exactly what silently
+  // mis-split a shared consumer's supply across two adjacent splitter/
+  // merger points — see this fix's own investigation notes).
+  const tieredEdgeIds = new Set<string>();
+  const edgesByPartForTierCheck = new Map<string, SolverEdge[]>();
+  for (const edge of snapshot.edges) {
+    const list = edgesByPartForTierCheck.get(edge.part) ?? [];
+    list.push(edge);
+    edgesByPartForTierCheck.set(edge.part, list);
+  }
+  for (const partEdges of edgesByPartForTierCheck.values()) {
+    const flowEdges: JointFlowEdge[] = partEdges.map((e) => ({ id: e.id, from: sourceKey(e.fromNode), to: targetKey(e.toNode) }));
+    const edgeById2 = new Map(partEdges.map((e) => [e.id, e] as const));
+    for (const component of groupConnectedComponents(flowEdges)) {
+      const hasBottomTier = component.some((fe) => edgeById2.get(fe.id)!.priorityTier === "bottom");
+      if (hasBottomTier) {
+        for (const fe of component) tieredEdgeIds.add(fe.id);
+      }
+    }
+  }
+
+  const jointResolutions = resolveEdgesJointly(snapshot.edges, profiles, counts, {
+    excludeEdgeIds: tieredEdgeIds,
+    signal: options.signal,
+  });
+
   const edgeIds = sortedIds(snapshot.edges.map((e) => e.id));
   const edgeById = new Map(snapshot.edges.map((e) => [e.id, e] as const));
   const edgeResults = edgeIds.map((id) => {
     const edge = edgeById.get(id)!;
+
+    const joint = jointResolutions.get(id);
+    if (joint) {
+      return { edgeId: edge.id, part: edge.part, rate: toFractionString(joint.rate), valid: joint.valid, issues: joint.issues };
+    }
+
+    // Tiered component — the existing per-group, tier-aware computation.
     const sourceProfile = profiles.get(edge.fromNode);
     const targetProfile = profiles.get(edge.toNode);
     const issues: string[] = [];

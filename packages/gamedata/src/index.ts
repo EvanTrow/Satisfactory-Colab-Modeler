@@ -38,9 +38,11 @@ export {
   type ResolvedMultiMachine,
   type ResolvedPlainMachine,
   baseRecipeRatePerMinute,
+  baseRecipeRatePerMinuteForEntry,
   defaultVariant,
   findVariant,
   multiMachineRecipeRatePerMinute,
+  multiMachineRecipeRatePerMinuteForEntry,
   resolveMachine,
 } from "./machines.js";
 

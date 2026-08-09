@@ -25,7 +25,7 @@ import {
 import type { Purity } from "@scm/ydoc";
 
 import { buildNodeInputForRecipe, sortRecipesForChooser } from "../../panels/recipeChooser/filters";
-import { primaryPart, ratePerMachineAtFullClock, type MachineRef } from "../nodes";
+import { primaryPart, ratePerMachineAtFullClock, ratePerMachineAtFullClockForEntry, type MachineRef } from "../nodes";
 import { createRecipeSelector, type GenerationPriority } from "./recipePriority";
 
 export interface PlannedNode {
@@ -355,7 +355,11 @@ export function planFactory(
           closesCycle = true;
           break;
         }
-        inputs.push({ part: p.part, perMachineRate: abs(ratePerMachineAtFullClock(gameData, candidate, ref, p.part)) });
+        // Entry-aware, not by-name — `p` is already the specific input
+        // entry (a candidate recipe that lists this same part name twice,
+        // once as this input and once as its own byproduct output, would
+        // otherwise risk the by-name lookup returning the wrong one).
+        inputs.push({ part: p.part, perMachineRate: abs(ratePerMachineAtFullClockForEntry(gameData, candidate, ref, p)) });
       }
       if (closesCycle) continue; // try the next-ranked candidate instead
 
@@ -520,7 +524,19 @@ function collectByproductSources(
   for (const node of nodes) {
     for (const p of node.recipe.parts) {
       if (!isPositive(p.amount) || p.part === node.part) continue; // p.part === node.part is the part this node was actually chosen to produce
-      const rate = multiply(node.machineCount, ratePerMachineAtFullClock(gameData, node.recipe, { machine: node.machine, purity: node.purity }, p.part));
+      // `ratePerMachineAtFullClockForEntry`, not the by-name
+      // `ratePerMachineAtFullClock` — a recipe that lists this same part
+      // name twice (e.g. Encased Uranium Cell consumes Sulfuric Acid AND
+      // outputs some back as a partial-recycle byproduct) would otherwise
+      // silently get the WRONG (input, negative) entry's rate here instead
+      // of this specific byproduct entry's, corrupting `sourcesByPart` with
+      // a bogus negative "supply" that `planByproductDisposals` then
+      // silently drops — the byproduct never gets wired to anything and
+      // shows up as "unhandled" even with `handleByproducts` on.
+      const rate = multiply(
+        node.machineCount,
+        ratePerMachineAtFullClockForEntry(gameData, node.recipe, { machine: node.machine, purity: node.purity }, p),
+      );
       if (isZero(rate)) continue;
       const list = sourcesByPart.get(p.part) ?? [];
       list.push({ fromPart: node.part, rate });
@@ -631,7 +647,9 @@ function buildPackagingConversion(
 
   const carrierRate = multiply(
     base.machineCount,
-    abs(ratePerMachineAtFullClock(gameData, chosen, { machine: base.machine, purity: base.purity }, carrierInput.part)),
+    abs(
+      ratePerMachineAtFullClockForEntry(gameData, chosen, { machine: base.machine, purity: base.purity }, carrierInput),
+    ),
   );
   if (!isPositive(carrierRate)) return base;
 

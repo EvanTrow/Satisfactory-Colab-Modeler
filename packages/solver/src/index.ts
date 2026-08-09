@@ -56,5 +56,6 @@ export function solve(
 
 export type { LimitMode, PriorityTier, Purity, SolverEdge, SolverMode, SolverNode, SolverSnapshot } from "./snapshot";
 export type { EdgeSolveResult, NodeSolveResult, PartBalance, SolveResult, SolveSummary } from "./result";
+export { partRateKey } from "./nodeResult";
 export type { FullProgressInfo, FullSolveOptions } from "./full";
 export type { CancellationSignal, WaterFillProgress } from "./waterFill";

@@ -355,10 +355,15 @@ function scaleNodeResult(perCopy: NodeSolveResult, copies: Rational, copiesResol
   for (const [part, rate] of Object.entries(perCopy.partRates)) {
     partRates[part] = scaleRate(rate, copies);
   }
+  const partRatesByDirection: Record<string, string> = {};
+  for (const [key, rate] of Object.entries(perCopy.partRatesByDirection ?? {})) {
+    partRatesByDirection[key] = scaleRate(rate, copies);
+  }
   return {
     ...perCopy,
     machineCount: scaleRate(perCopy.machineCount, copies),
     partRates,
+    partRatesByDirection,
     power: perCopy.power * toApproximateNumber(copies),
     resolved: perCopy.resolved && copiesResolved,
   };

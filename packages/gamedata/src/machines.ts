@@ -11,6 +11,7 @@ import type {
   MultiMachineModel,
   MultiMachineRatioKind,
   Recipe,
+  RecipePart,
 } from "./types.js";
 
 /**
@@ -154,9 +155,28 @@ export function defaultVariant(resolved: ResolvedMultiMachine): MultiMachineVari
 }
 
 /**
+ * `baseRecipeRatePerMinute`'s actual math, applied directly to a specific
+ * `RecipePart` entry rather than looked up by name — never ambiguous, even
+ * for the handful of real recipes (Encased Uranium Cell, Distilled Silica,
+ * Instant Scrap) that list the SAME part name twice: once as a consumed
+ * input, once as a partial-recycle byproduct. Prefer this over the by-name
+ * functions below whenever the caller already holds the entry it means
+ * (which is every caller that got it by iterating `recipe.parts` itself).
+ */
+export function baseRecipeRatePerMinuteForEntry(recipe: Recipe, entry: RecipePart): Rational {
+  return multiply(divide(entry.amount, recipe.batchTime), of(60));
+}
+
+/**
  * A recipe's inherent per-minute rate for one of its parts, before any
  * MultiMachine model/capacity multiplier: `(amount / batchTime) × 60`.
  * Signed, matching `RecipePart.amount` (negative = consumption rate).
+ *
+ * Looks the part up BY NAME — `recipe.parts.find`, so the first match wins.
+ * Ambiguous (silently returns the wrong entry) for the rare recipe that
+ * lists the same part name twice; use `baseRecipeRatePerMinuteForEntry`
+ * instead whenever the caller already has the specific `RecipePart` entry
+ * in hand, which resolves the ambiguity for free.
  *
  * Throws if `part` isn't one of the recipe's parts.
  */
@@ -165,7 +185,16 @@ export function baseRecipeRatePerMinute(recipe: Recipe, part: string): Rational 
   if (!entry) {
     throw new Error(`Recipe "${recipe.name}" has no part "${part}"`);
   }
-  return multiply(divide(entry.amount, recipe.batchTime), of(60));
+  return baseRecipeRatePerMinuteForEntry(recipe, entry);
+}
+
+/** `multiMachineRecipeRatePerMinute`'s actual math, applied directly to a specific `RecipePart` entry — see `baseRecipeRatePerMinuteForEntry`'s own doc comment for why this is preferable when the entry is already in hand. */
+export function multiMachineRecipeRatePerMinuteForEntry(
+  recipe: Recipe,
+  entry: RecipePart,
+  variant: MultiMachineVariant,
+): Rational {
+  return multiply(baseRecipeRatePerMinuteForEntry(recipe, entry), variant.ratio);
 }
 
 /**
@@ -177,6 +206,10 @@ export function baseRecipeRatePerMinute(recipe: Recipe, part: string): Rational 
  * "Miner Mk.3 on Pure = 480/min": `baseRecipeRatePerMinute` gives `1`
  * (Amount `1` / BatchTime `60` × 60) for the "Iron Ore" recipe, and the Mk.3
  * × Pure variant's `ratio` is `240 × 2 = 480`, so this returns `480`.
+ *
+ * Looks the part up BY NAME — see `baseRecipeRatePerMinute`'s own doc
+ * comment on the same ambiguity; `multiMachineRecipeRatePerMinuteForEntry`
+ * is the unambiguous equivalent when the entry is already in hand.
  */
 export function multiMachineRecipeRatePerMinute(
   recipe: Recipe,

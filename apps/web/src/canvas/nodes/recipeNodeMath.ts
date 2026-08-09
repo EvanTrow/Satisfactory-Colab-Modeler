@@ -31,8 +31,10 @@
 // ---------------------------------------------------------------------------
 import {
   baseRecipeRatePerMinute,
+  baseRecipeRatePerMinuteForEntry,
   defaultVariant,
   multiMachineRecipeRatePerMinute,
+  multiMachineRecipeRatePerMinuteForEntry,
   resolveMachine,
   type GameData,
   type MultiMachineVariant,
@@ -180,6 +182,30 @@ export function ratePerMachineAtFullClock(
   return multiMachineRecipeRatePerMinute(recipe, partName, variant);
 }
 
+/**
+ * `ratePerMachineAtFullClock`, but for a specific `RecipePart` entry rather
+ * than looked up by name — never ambiguous, even for the handful of real
+ * recipes (Encased Uranium Cell, Distilled Silica, Instant Scrap) that list
+ * the same part name twice (once as a consumed input, once as a
+ * partial-recycle byproduct). Prefer this whenever the caller already has
+ * the entry, same reasoning as `baseRecipeRatePerMinuteForEntry`'s own doc
+ * comment in `@scm/gamedata`.
+ */
+export function ratePerMachineAtFullClockForEntry(
+  gameData: GameData,
+  recipe: Recipe,
+  ref: MachineRef,
+  entry: RecipePart,
+): Rational {
+  const resolved = resolveMachine(recipe.machine, gameData);
+  if (resolved.kind === "machine") {
+    return baseRecipeRatePerMinuteForEntry(recipe, entry);
+  }
+  const variant = resolvedVariantFor(gameData, recipe, ref);
+  if (!variant) return ZERO;
+  return multiMachineRecipeRatePerMinuteForEntry(recipe, entry, variant);
+}
+
 /** `ratePerMachineAtFullClock` for `recipe`'s `primaryPart` — the anchor `computeMachineCount` is built on. `ZERO` when `primaryPart` is `undefined` (zero-part recipes). */
 export function referenceRateAtFullClock(gameData: GameData, recipe: Recipe, ref: MachineRef): Rational {
   const part = primaryPart(recipe);
@@ -253,7 +279,7 @@ export function stopgapPartRate(
   part: RecipePart,
   machineCount: Rational = computeMachineCount(gameData, recipe, node),
 ): Rational {
-  const rateAtFull = ratePerMachineAtFullClock(gameData, recipe, node, part.part);
+  const rateAtFull = ratePerMachineAtFullClockForEntry(gameData, recipe, node, part);
   const clockFraction = divide(effectiveClockPercent(node), of(100));
   return multiply(multiply(machineCount, rateAtFull), clockFraction);
 }
