@@ -161,13 +161,45 @@ describe("computeNodeValidityState", () => {
     expect(state?.overall).toBe("invalid");
   });
 
-  it("Basic mode's 'no limit, no resolvable neighbor' fallback (valid:true, resolved:false) is highlighted as neither red nor orange", () => {
+  it("Basic mode's 'no limit, no resolvable neighbor' fallback (valid:true, resolved:false) is highlighted as the fourth, 'unresolved' tier", () => {
     const result = nodeResult({
       resolved: false,
       valid: true,
       issues: ["no limit and no resolvable neighbor — defaulted to 1 machine"],
     });
     const state = computeNodeValidityState(result, [], new Map());
-    expect(state).toEqual({ overall: "valid" });
+    expect(state).toEqual({ overall: "unresolved" });
+  });
+
+  it("a mismatched edge escalates an otherwise-unresolved node past 'unresolved' to 'mismatched'", () => {
+    const result = nodeResult({ resolved: false, valid: true, issues: [] });
+    const incident: IncidentEdgeRef[] = [{ edgeId: "e1", part: "Iron Ore" }];
+    const edgeResultById = new Map([
+      [
+        "e1",
+        edgeResult({
+          valid: false,
+          issues: ['rate mismatch on part "Iron Ore": source side 1/min, target side 2/min'],
+        }),
+      ],
+    ]);
+    const state = computeNodeValidityState(result, incident, edgeResultById);
+    expect(state?.overall).toBe("mismatched");
+  });
+
+  it("an invalid edge escalates an otherwise-unresolved node past 'unresolved' to 'invalid'", () => {
+    const result = nodeResult({ resolved: false, valid: true, issues: [] });
+    const incident: IncidentEdgeRef[] = [{ edgeId: "e1", part: "Iron Ore" }];
+    const edgeResultById = new Map([
+      ["e1", edgeResult({ valid: false, issues: ['source node "n0" could not be resolved'] })],
+    ]);
+    const state = computeNodeValidityState(result, incident, edgeResultById);
+    expect(state?.overall).toBe("invalid");
+  });
+
+  it("a node's own invalid state beats an unresolved reading (moot in practice — resolved is only ever false when valid is true — but exercises escalate's own precedence)", () => {
+    const result = nodeResult({ valid: false, resolved: false, issues: ['invalid limit "x"'] });
+    const state = computeNodeValidityState(result, [], new Map());
+    expect(state?.overall).toBe("invalid");
   });
 });

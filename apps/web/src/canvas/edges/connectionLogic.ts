@@ -6,10 +6,13 @@
 // unit-testable the same way Jobs 009/010 tested `filters.ts`/
 // `recipeNodeMath.ts` — no DOM, no React Flow provider, just a real
 // `createDocument()` fixture.
+import { defaultGameData } from "@scm/gamedata";
 import {
   addEdge as addEdgeRecord,
   computeEdgeId,
   getEdge,
+  getNode,
+  listEdges,
   removeEdge as removeEdgeRecord,
   type EdgeRecord,
   type SfmDocument,
@@ -114,6 +117,26 @@ function reconcilePart(a: string, b: string): string | null {
 }
 
 /**
+ * A `kind: "depot"` target node has two restrictions beyond an AWESOME
+ * Sink's own unconstrained wildcard input (`SinkNode.tsx`'s header comment)
+ * — matching the real Dimensional Depot Uploader's in-game behavior: it
+ * can't accept a fluid/gas raw at all (`@scm/gamedata`'s `Part.fluid`), and
+ * it only ever holds ONE item type, so a second, DIFFERENT part can't be
+ * wired in once it already has an incoming edge from a different one. `true`
+ * (nothing to gate) for every other node kind, or when `toNode` doesn't
+ * resolve to a real record for any reason (defensive — every connection's
+ * target should already exist).
+ */
+function isDepotConnectionAllowed(sfmDoc: SfmDocument, toNode: string, part: string): boolean {
+  const target = getNode(sfmDoc, toNode);
+  if (!target || target.kind !== "depot") return true;
+  if (defaultGameData.partsByName.get(part)?.fluid === true) return false;
+  return listEdges(sfmDoc)
+    .filter((edge) => edge.toNode === toNode)
+    .every((edge) => edge.part === part);
+}
+
+/**
  * Normalizes a React-Flow-`Connection`-shaped object into `@scm/ydoc`'s
  * directional `fromNode/fromPort -> toNode/toPort` edge endpoints, with
  * `fromPort` always the `"out:"` handle and `toPort` always the `"in:"`
@@ -131,11 +154,13 @@ function reconcilePart(a: string, b: string): string | null {
  * id is directional, so getting `fromNode`/`fromPort` backwards would
  * silently create a *different* edge instead of erroring.
  *
- * Also where mismatched-part rejection lives: returns `null` if either
- * side is missing/unparseable, both sides are the same direction (two
- * inputs or two outputs), or the two sides' part names don't match.
+ * Also where mismatched-part rejection (and, via `isDepotConnectionAllowed`,
+ * Dimensional Depot's own fluid/single-item-type rejection) lives: returns
+ * `null` if either side is missing/unparseable, both sides are the same
+ * direction (two inputs or two outputs), the two sides' part names don't
+ * match, or the resolved connection would violate a Depot's restrictions.
  */
-export function resolveEdgeEndpoints(connection: ConnectionLike): ResolvedEndpoints | null {
+export function resolveEdgeEndpoints(sfmDoc: SfmDocument, connection: ConnectionLike): ResolvedEndpoints | null {
   if (!connection.source || !connection.target) return null;
 
   const sourceInfo = parsePortHandleId(connection.sourceHandle);
@@ -144,34 +169,38 @@ export function resolveEdgeEndpoints(connection: ConnectionLike): ResolvedEndpoi
   const part = reconcilePart(sourceInfo.part, targetInfo.part);
   if (part === null) return null;
 
+  let resolved: ResolvedEndpoints;
   if (sourceInfo.direction === "out" && targetInfo.direction === "in") {
-    return {
+    resolved = {
       fromNode: connection.source,
       fromPort: connection.sourceHandle as string,
       toNode: connection.target,
       toPort: connection.targetHandle as string,
       part,
     };
-  }
-  if (sourceInfo.direction === "in" && targetInfo.direction === "out") {
-    return {
+  } else if (sourceInfo.direction === "in" && targetInfo.direction === "out") {
+    resolved = {
       fromNode: connection.target,
       fromPort: connection.targetHandle as string,
       toNode: connection.source,
       toPort: connection.sourceHandle as string,
       part,
     };
+  } else {
+    // Both "in" or both "out" — not a valid input/output pair (shouldn't
+    // happen given `RecipeNode`'s Handle `type`s and React Flow's default
+    // `connectionMode="strict"`, but rejected explicitly rather than assumed
+    // away).
+    return null;
   }
-  // Both "in" or both "out" — not a valid input/output pair (shouldn't
-  // happen given `RecipeNode`'s Handle `type`s and React Flow's default
-  // `connectionMode="strict"`, but rejected explicitly rather than assumed
-  // away).
-  return null;
+
+  if (!isDepotConnectionAllowed(sfmDoc, resolved.toNode, part)) return null;
+  return resolved;
 }
 
 /** Wired to `<ReactFlow isValidConnection={...} />` — accepts a `Connection` mid-drag or a full `Edge` (React Flow calls it with either). */
-export function isValidPortConnection(connection: ConnectionLike): boolean {
-  return resolveEdgeEndpoints(connection) !== null;
+export function isValidPortConnection(sfmDoc: SfmDocument, connection: ConnectionLike): boolean {
+  return resolveEdgeEndpoints(sfmDoc, connection) !== null;
 }
 
 /**
@@ -206,11 +235,11 @@ export interface HandleRef {
  * tell you which side of the eventual `ConnectionLike` it belongs on — the
  * source/target assignment below does that).
  */
-export function isValidDragCandidate(from: HandleRef, candidate: HandleRef): boolean {
+export function isValidDragCandidate(sfmDoc: SfmDocument, from: HandleRef, candidate: HandleRef): boolean {
   if (from.type === candidate.type) return false;
   const sourceSide = from.type === "source" ? from : candidate;
   const targetSide = from.type === "source" ? candidate : from;
-  return isValidPortConnection({
+  return isValidPortConnection(sfmDoc, {
     source: sourceSide.nodeId,
     sourceHandle: sourceSide.id,
     target: targetSide.nodeId,
@@ -238,7 +267,7 @@ export function isValidDragCandidate(from: HandleRef, candidate: HandleRef): boo
  * need to.
  */
 export function connectPorts(sfmDoc: SfmDocument, containerId: string, connection: ConnectionLike): EdgeRecord | null {
-  const resolved = resolveEdgeEndpoints(connection);
+  const resolved = resolveEdgeEndpoints(sfmDoc, connection);
   if (!resolved) return null;
   const edgeId = computeEdgeId(resolved.fromNode, resolved.fromPort, resolved.toNode, resolved.toPort);
   if (getEdge(sfmDoc, edgeId)) {
@@ -271,7 +300,7 @@ export function reconnectEdge(
   newConnection: ConnectionLike,
   preserveWaypoints: readonly Waypoint[] = [],
 ): EdgeRecord | null {
-  const resolved = resolveEdgeEndpoints(newConnection);
+  const resolved = resolveEdgeEndpoints(sfmDoc, newConnection);
   if (!resolved) return null;
   removeEdgeRecord(sfmDoc, oldEdgeId);
   return addEdgeRecord(sfmDoc, {

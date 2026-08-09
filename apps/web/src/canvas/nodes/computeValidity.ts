@@ -40,19 +40,19 @@
 // severe problem than a mere disagreement between two otherwise-valid
 // values.
 //
-// One deliberate NON-highlight, worth being explicit about: Basic mode's
-// "no limit and no resolvable neighbor — defaulted to 1 machine" case
-// (`basic.ts`) sets `NodeSolveResult.resolved: false` but leaves `.valid:
-// true` (it's not `forceInvalid` — see that module's own comment). This
-// function does NOT highlight that case at all (neither red nor orange):
-// it isn't "wrong" (nothing contradicts it) and it isn't "mismatched"
-// (there's no neighbor's value to disagree with — there IS no neighbor).
-// It's a third, genuinely different situation ("undetermined, arbitrarily
-// defaulted") that PLAN.md's two-color scheme has no color for. Flagged in
-// this job's Handoff notes as a gap a later job could fill with a third,
-// distinct visual treatment (e.g. a dashed border) if it turns out to
-// matter in practice.
+// A fourth, lower-severity tier for Basic/Full mode's "no limit and no
+// resolvable neighbor — defaulted to 1 machine" case (`basic.ts`/`full.ts`):
+// `NodeSolveResult.resolved: false` but `.valid: true` (it's not
+// `forceInvalid` — see those modules' own comments). This is neither "wrong"
+// (nothing contradicts it) nor "mismatched" (there's no neighbor's value to
+// disagree with — there IS no neighbor) — it's `"unresolved"`: a genuinely
+// different situation ("undetermined, arbitrarily defaulted") that this
+// module used to have no color for at all (see `validityState.ts`'s own
+// header for the fuller history). It sits below "mismatched" in severity —
+// an edge issue can still escalate an otherwise-unresolved node up to
+// "mismatched"/"invalid", same "worse wins" rule as everything else here.
 import type { EdgeSolveResult, NodeSolveResult } from "@scm/solver";
+import { classifyEdgeValidity } from "../edges/classifyEdgeValidity";
 import type { RecipeNodeValidity, RecipeNodeValidityState } from "./validityState";
 
 /** An edge incident to the node being evaluated — just enough to look up its `EdgeSolveResult` and know which part-row/port it affects. */
@@ -63,7 +63,6 @@ export interface IncidentEdgeRef {
 
 const LIMIT_ISSUE_PATTERN = /limit/i;
 const SHARD_ISSUE_PATTERN = /shard/i;
-const RATE_MISMATCH_PATTERN = /rate mismatch/i;
 
 /**
  * Maps one of `NodeSolveResult.issues`' known message shapes (see
@@ -84,10 +83,11 @@ function classifyNodeIssue(issue: string): "limit" | "shards" | undefined {
   return undefined;
 }
 
-/** "invalid" beats "mismatched" beats "valid" — see the module header's "invalid always wins" note. */
+/** "invalid" beats "mismatched" beats "unresolved" beats "valid" — see the module header's "invalid always wins" note and its "unresolved" tier addition. */
 function escalate(current: RecipeNodeValidity, next: RecipeNodeValidity): RecipeNodeValidity {
   if (current === "invalid" || next === "invalid") return "invalid";
   if (current === "mismatched" || next === "mismatched") return "mismatched";
+  if (current === "unresolved" || next === "unresolved") return "unresolved";
   return "valid";
 }
 
@@ -116,15 +116,15 @@ export function computeNodeValidityState(
       const field = classifyNodeIssue(issue);
       if (field) fields[field] = "invalid";
     }
+  } else if (!nodeResult.resolved) {
+    overall = "unresolved";
   }
 
   const ports: Record<string, RecipeNodeValidity> = {};
   for (const incident of incidentEdges) {
-    const edgeResult = edgeResultById.get(incident.edgeId);
-    if (!edgeResult || edgeResult.valid) continue;
+    const severity = classifyEdgeValidity(edgeResultById.get(incident.edgeId));
+    if (severity === "valid" || severity === "unknown") continue;
 
-    const isRateMismatch = edgeResult.issues.some((issue) => RATE_MISMATCH_PATTERN.test(issue));
-    const severity: RecipeNodeValidity = isRateMismatch ? "mismatched" : "invalid";
     overall = escalate(overall, severity);
     ports[incident.part] = escalate(ports[incident.part] ?? "valid", severity);
   }

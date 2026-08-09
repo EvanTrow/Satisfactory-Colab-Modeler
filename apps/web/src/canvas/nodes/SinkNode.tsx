@@ -10,10 +10,20 @@
 //
 // Per-connected-part consumed rate is read from the solver's own synthetic
 // per-part consumer node (`../../workers/sinkPassthrough.ts`'s
-// `sinkConsumerNodeId`), NOT from a per-edge lookup — see that module's
+// `sinkConsumerNodeId`), NOT from a per-edge rate lookup — see that module's
 // header for why (same accepted limitation `SplurgerNode.tsx`'s rewrite
 // already has: the incident edge's own id isn't preserved through the
-// rewrite, so `edgeResultById` has nothing under the original edge id).
+// rewrite under its OWN edge type, so a per-edge `edgeResultById` lookup by
+// that node's own incident-edge ids has nothing there directly).
+//
+// Calculation-validation visuals pass: each per-part row's VALIDITY (as
+// opposed to its rate) still works fine, though — `useSolver.ts`'s
+// `indexEdges` aliases a sink-rewritten `EdgeSolveResult` back under the
+// real, original edge id (that fix predates this pass), so
+// `edgeResultById.get(incoming edge's own id)` resolves correctly. This
+// reuses `computeNodeValidityState`/`computeMismatchDetails` — the exact
+// same functions `RecipeNode.tsx` uses — once per part/synthetic consumer
+// node, instead of inventing a parallel mechanism.
 import { memo } from "react";
 
 import { getNode, listEdges, updateNode, type NodeRecord } from "@scm/ydoc";
@@ -28,8 +38,19 @@ import { formatRate } from "../formatRate";
 import { useSolverResult } from "../SolverResultContext";
 import { useSettings } from "../useSettings";
 import type { CanvasNode } from "../useYjsSync";
+import { computeMismatchDetails } from "./computeMismatchDetails";
+import { computeNodeValidityState } from "./computeValidity";
 import { fieldInputClass } from "./nodeFieldStyles";
 import { useCommittedTextField } from "./useCommittedTextField";
+import type { RecipeNodeValidity } from "./validityState";
+
+/** Same mapping `RecipeNode.tsx`'s own `highlightRingClass` uses — kept as a tiny local copy rather than exporting/importing that one, since this only ever needs the ring, never the dashed-border case. */
+function rowRingClass(validity: RecipeNodeValidity | undefined): string {
+  if (validity === "invalid") return "ring-1 ring-inset ring-[var(--danger)]";
+  if (validity === "mismatched") return "ring-1 ring-inset ring-[var(--mismatch)]";
+  if (validity === "unresolved") return "ring-1 ring-inset ring-[var(--warning)]";
+  return "";
+}
 
 const handleClass = "!h-3.5 !w-3.5 !border-2 !border-[var(--surface-card)] !bg-[var(--splurger)]";
 const handleFadeClass = "opacity-20 pointer-events-none transition-opacity";
@@ -40,7 +61,7 @@ function defaultLabel(node: NodeRecord): string {
 
 export const SinkNode = memo(function SinkNode({ id, data, selected }: NodeProps<CanvasNode>) {
   const { sfmDoc } = useCanvasDoc();
-  const { nodeResultById } = useSolverResult();
+  const { nodeResultById, edgeResultById } = useSolverResult();
   const numberFormats = useSettings(sfmDoc).numberFormats;
   const fromHandle = useConnection((connection) => connection.fromHandle);
   const node: NodeRecord | undefined = data.record;
@@ -49,7 +70,7 @@ export const SinkNode = memo(function SinkNode({ id, data, selected }: NodeProps
   const inHandleId = `in:${WILDCARD_PART}`;
   const isHandleFaded =
     !!fromHandle && !(fromHandle.nodeId === id && fromHandle.id === inHandleId) &&
-    !isValidDragCandidate(fromHandle, { nodeId: id, id: inHandleId, type: "target" });
+    !isValidDragCandidate(sfmDoc, fromHandle, { nodeId: id, id: inHandleId, type: "target" });
 
   const incoming = listEdges(sfmDoc).filter((edge) => edge.toNode === id);
   const distinctParts = [...new Set(incoming.map((edge) => edge.part))].sort();
@@ -107,9 +128,25 @@ export const SinkNode = memo(function SinkNode({ id, data, selected }: NodeProps
               .filter((edge) => edge.part === part)
               .map((edge) => getNode(sfmDoc, edge.fromNode)?.title || edge.fromNode)
               .join(", ");
+            const partIncidentEdges = incoming
+              .filter((edge) => edge.part === part)
+              .map((edge) => ({ edgeId: edge.id, part }));
+            const rowValidity = computeNodeValidityState(nodeResultById.get(consumerId), partIncidentEdges, edgeResultById);
+            const rowDetail =
+              rowValidity?.overall === "mismatched" ? computeMismatchDetails(partIncidentEdges, edgeResultById)[part] : undefined;
+            const rowTitle =
+              rowValidity?.overall === "mismatched"
+                ? `Rate mismatch: ${rowDetail ?? "doesn't reconcile with a connected neighbor"}.`
+                : rowValidity?.overall === "invalid"
+                  ? "This connection could not be resolved — see the source node for details."
+                  : neighborTitles;
             return (
-              <div key={part} className="flex items-center justify-between gap-1.5 px-2 py-1 text-[11px]">
-                <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]" title={neighborTitles}>
+              <div
+                key={part}
+                className={`flex items-center justify-between gap-1.5 px-2 py-1 text-[11px] ${rowRingClass(rowValidity?.overall)}`}
+                title={rowTitle}
+              >
+                <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]">
                   {part} <span className="text-[var(--text-muted)]">({neighborTitles})</span>
                 </span>
                 {rateStr !== undefined && (

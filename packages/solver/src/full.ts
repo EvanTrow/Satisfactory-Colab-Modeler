@@ -10,8 +10,16 @@
 //     share — the remainder redistributes among the siblings that still can.
 //   - TWO-TIER PRIORITY: an edge tagged `priorityTier: "bottom"`
 //     (`snapshot.ts`) only receives whatever's left over once every "top"
-//     sibling (the default) has taken its full share — "top drains first,
-//     bottom takes overflow."
+//     sibling has taken its full share — "top drains first, bottom takes
+//     overflow." When an edge has no EXPLICIT tag, its tier is INFERRED
+//     (`inferredTier` below): an edge whose other endpoint has a `limit` set
+//     (a fixed, finite demand/supply) defaults to "top"; one whose other
+//     endpoint has no limit (open-ended — e.g. an "unlimited" AWESOME
+//     Sink/Dimensional Depot) defaults to "bottom". This makes an explicitly
+//     limited node's demand get satisfied first from any shared source,
+//     ahead of unlimited siblings, without the user having to place a
+//     dedicated Priority Splitter/Merger — see `inferredTier`'s own doc
+//     comment.
 // Both are the SAME algorithm — max-min-fair water-filling, lexicographic
 // across the two tiers — implemented once in `waterFill.ts` and applied
 // once per (node, part, direction) sibling GROUP per propagation pass. See
@@ -195,6 +203,37 @@ function checkCancelled(signal: CancellationSignal | undefined): void {
   if (signal?.aborted) throw new SolveCancelledError();
 }
 
+/**
+ * `edge`'s effective priority tier for a group where `otherNode` is the
+ * OTHER endpoint (the target for an outgoing/splitter group, the source for
+ * an incoming/merger group) — `edge.priorityTier` if the user explicitly set
+ * one, else INFERRED from whether `otherNode` has an explicit `limit` set.
+ *
+ * A node with `limit !== null` has a fixed, finite demand/supply (Basic
+ * mode's own "pin" concept — see `nodeProfile.ts`'s `pinnedMachineCount`)
+ * that plain max-min-fair water-filling would otherwise only partially
+ * satisfy whenever an unbounded sibling (no limit — e.g. an AWESOME
+ * Sink/Dimensional Depot set to "unlimited", or a node that hasn't resolved
+ * yet) is in the same pool: fairness alone gives the limited sibling an
+ * equal share even when its own cap sits ABOVE that share, instead of
+ * routing it its full, already-known demand first. Defaulting a limited
+ * neighbor to `"top"` and an unlimited one to `"bottom"` makes every
+ * explicitly-limited node drain/fill first — "nodes with a machine limit set
+ * always get priority, even if that leaves nothing for unlimited siblings" —
+ * with NO change for a group where every sibling is limited (all `"top"`,
+ * still fair-shared among themselves) or every sibling is unlimited (all
+ * `"bottom"`, i.e. still just one pool, identical to the old undifferentiated
+ * default).
+ */
+function inferredTier(
+  edge: SolverEdge,
+  otherNode: string,
+  profiles: ReadonlyMap<string, NodeProfile>,
+): PriorityTier {
+  if (edge.priorityTier) return edge.priorityTier;
+  return profiles.get(otherNode)?.node.limit != null ? "top" : "bottom";
+}
+
 // ---------------------------------------------------------------------------
 // Group allocation — the water-fill call site.
 // ---------------------------------------------------------------------------
@@ -257,7 +296,7 @@ function computeGroupAllocations(
           cap = abs(partRateAtMachineCount(otherProfile, group.part, otherCount, otherDirection));
         }
       }
-      return { edgeId: edge.id, cap, tier: edge.priorityTier ?? "top" };
+      return { edgeId: edge.id, cap, tier: inferredTier(edge, otherNode, profiles) };
     });
 
     const { shares, overflow } = waterFillGroup(total, candidates, {
@@ -523,17 +562,35 @@ function solveFullInner(snapshot: SolverSnapshot, gameData: GameData, options: F
     else incomingGroupByOwnerPart.set(key, group);
   }
 
-  // Priority tiers (`edge.priorityTier`) aren't modeled by the joint
-  // resolver below (`jointFlow.ts`'s own header explains why: two-tier
-  // bipartite fairness is a harder, currently-unneeded problem) — any
-  // connected component (per part) containing a "bottom"-tier edge keeps
-  // using this mode's own tier-aware `finalAllocations` lookup, computed
-  // exactly as before. Every OTHER component — the untiered majority,
-  // including the byproduct-reuse topology this fix targets — gets
-  // resolved jointly instead of each edge's two independent per-group
-  // shares being compared in isolation (which is exactly what silently
-  // mis-split a shared consumer's supply across two adjacent splitter/
-  // merger points — see this fix's own investigation notes).
+  // Priority tiers aren't modeled by the joint resolver below (`jointFlow.ts`'s
+  // own header explains why: two-tier bipartite fairness is a harder,
+  // currently-unneeded problem) — any split/merge GROUP whose edges'
+  // `inferredTier` (explicit `edge.priorityTier`, or auto-inferred from an
+  // explicit `limit` on the other endpoint — see `inferredTier`'s own doc
+  // comment) isn't uniform across all its siblings is a genuine two-tier
+  // situation, and every edge in such a group, plus every edge in the same
+  // connected component (per part) as one of them, keeps using this mode's
+  // own tier-aware `finalAllocations` lookup, computed exactly as before.
+  // Every OTHER component — the untiered majority, including the
+  // byproduct-reuse topology this fix targets — gets resolved jointly
+  // instead of each edge's two independent per-group shares being compared
+  // in isolation (which is exactly what silently mis-split a shared
+  // consumer's supply across two adjacent splitter/merger points — see this
+  // fix's own investigation notes).
+  const forcedTierEdgeIds = new Set<string>();
+  for (const group of groups) {
+    let hasTop = false;
+    let hasBottom = false;
+    for (const edge of group.edges) {
+      const otherNode = group.direction === "outgoing" ? edge.toNode : edge.fromNode;
+      if (inferredTier(edge, otherNode, profiles) === "top") hasTop = true;
+      else hasBottom = true;
+    }
+    if (hasTop && hasBottom) {
+      for (const edge of group.edges) forcedTierEdgeIds.add(edge.id);
+    }
+  }
+
   const tieredEdgeIds = new Set<string>();
   const edgesByPartForTierCheck = new Map<string, SolverEdge[]>();
   for (const edge of snapshot.edges) {
@@ -543,10 +600,9 @@ function solveFullInner(snapshot: SolverSnapshot, gameData: GameData, options: F
   }
   for (const partEdges of edgesByPartForTierCheck.values()) {
     const flowEdges: JointFlowEdge[] = partEdges.map((e) => ({ id: e.id, from: sourceKey(e.fromNode), to: targetKey(e.toNode) }));
-    const edgeById2 = new Map(partEdges.map((e) => [e.id, e] as const));
     for (const component of groupConnectedComponents(flowEdges)) {
-      const hasBottomTier = component.some((fe) => edgeById2.get(fe.id)!.priorityTier === "bottom");
-      if (hasBottomTier) {
+      const hasForcedTier = component.some((fe) => forcedTierEdgeIds.has(fe.id));
+      if (hasForcedTier) {
         for (const fe of component) tieredEdgeIds.add(fe.id);
       }
     }

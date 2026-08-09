@@ -13,6 +13,20 @@
 // why outposts keep their own amber identity rather than adopting
 // Ferrumium's literal accent color) so an outpost reads as "a distinct kind
 // of node," not just "a recipe node with different data," at a glance.
+//
+// Calculation-validation visuals pass: an Outpost is never itself a
+// `SolverNode` (it's pure navigation/grouping, no recipe/machine of its
+// own), so there's no whole-card `.valid`/`.issues` to read the way
+// `RecipeNode.tsx`/`BlueprintNode.tsx` (a REAL compound node) can. What IS
+// available: each `DerivedOutpostPort` already carries the real `.edgeId`
+// of the one boundary-crossing edge it represents (`portMapping.ts`), so
+// each port's own `Handle` can be rung by that edge's own validity via
+// `classifyEdgeValidity` — the same function `ConnectionEdge.tsx` uses.
+// Known v1 limitation: this only catches a problem AT the boundary (an
+// edge actually crossing into/out of this outpost). A problem entirely
+// INSIDE the outpost, between two nodes that never cross its boundary,
+// stays invisible until the outpost is opened — a full recursive
+// descendant rollup is a separate, larger piece of work not attempted here.
 import { memo } from "react";
 
 import { Handle, Position, useConnection, type NodeProps } from "@xyflow/react";
@@ -20,8 +34,24 @@ import { Handle, Position, useConnection, type NodeProps } from "@xyflow/react";
 import { getOutpostIconUrl } from "../../assets/icons";
 import { useRemotePresence } from "../../collab";
 import { useCanvasDoc } from "../CanvasDocContext";
+import { classifyEdgeValidity } from "../edges/classifyEdgeValidity";
 import { isValidDragCandidate } from "../edges/connectionLogic";
+import { useSolverResult } from "../SolverResultContext";
 import type { CanvasNode } from "../useYjsSync";
+
+/**
+ * `"invalid"`/`"mismatched"` -> a ring only (never a `!bg-*` override —
+ * `PartRow`'s own `highlightRingClass` in `RecipeNode.tsx` establishes this
+ * exact convention: two `!important` background utilities on the same
+ * element race on stylesheet insertion order, not class-attribute order, so
+ * only ever ADD a ring around a Handle's existing background, never fight
+ * over it). `"valid"`/`"unknown"` -> `undefined` (no ring).
+ */
+function portRingClass(validity: ReturnType<typeof classifyEdgeValidity>): string | undefined {
+  if (validity === "invalid") return "ring-2 ring-[var(--danger)]";
+  if (validity === "mismatched") return "ring-2 ring-[var(--mismatch)]";
+  return undefined;
+}
 
 const outpostIconUrl = getOutpostIconUrl();
 
@@ -31,7 +61,8 @@ const outHandleClass = "!h-3.5 !w-3.5 !border-2 !border-[var(--surface-card)] !b
 const handleFadeClass = "opacity-20 pointer-events-none transition-opacity";
 
 export const OutpostNode = memo(function OutpostNode({ id, data, selected }: NodeProps<CanvasNode>) {
-  const { navigateToContainer, awareness } = useCanvasDoc();
+  const { sfmDoc, navigateToContainer, awareness } = useCanvasDoc();
+  const { edgeResultById } = useSolverResult();
   // Job 021: same remote-selection halo `RecipeNode.tsx` renders — an
   // outpost boundary node's id IS the container's id, and `selection: []`
   // (Awareness) is a flat list of node/container ids either kind can appear
@@ -55,7 +86,7 @@ export const OutpostNode = memo(function OutpostNode({ id, data, selected }: Nod
   function isHandleFaded(handleId: string, type: "source" | "target"): boolean {
     if (!fromHandle) return false;
     if (fromHandle.nodeId === id && fromHandle.id === handleId) return false;
-    return !isValidDragCandidate(fromHandle, { nodeId: id, id: handleId, type });
+    return !isValidDragCandidate(sfmDoc, fromHandle, { nodeId: id, id: handleId, type });
   }
 
   function open() {
@@ -116,34 +147,50 @@ export const OutpostNode = memo(function OutpostNode({ id, data, selected }: Nod
             No connections cross this outpost&apos;s boundary yet.
           </p>
         ) : (
-          ports.map((port) => (
-            <div
-              key={port.id}
-              className="relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)]"
-            >
-              {port.direction === "in" && (
-                <Handle
-                  type="target"
-                  position={Position.Left}
-                  id={port.id}
-                  className={`${inHandleClass} ${isHandleFaded(port.id, "target") ? handleFadeClass : ""}`}
-                />
-              )}
-              <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]">
-                {port.direction === "in" ? "→ " : ""}
-                {port.part}
-                {port.direction === "out" ? " →" : ""}
-              </span>
-              {port.direction === "out" && (
-                <Handle
-                  type="source"
-                  position={Position.Right}
-                  id={port.id}
-                  className={`${outHandleClass} ${isHandleFaded(port.id, "source") ? handleFadeClass : ""}`}
-                />
-              )}
-            </div>
-          ))
+          ports.map((port) => {
+            // `port.edgeId` (`portMapping.ts`'s `DerivedOutpostPort`) is the
+            // real, original edge id this boundary port stands in for — the
+            // exact same id space `edgeResultById` is keyed by, so this
+            // port can be rung by that edge's own validity exactly like
+            // `ConnectionEdge.tsx` colors the wire itself.
+            const validity = classifyEdgeValidity(edgeResultById.get(port.edgeId));
+            const ring = portRingClass(validity);
+            return (
+              <div
+                key={port.id}
+                className="relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)]"
+                title={
+                  validity === "invalid"
+                    ? "This connection could not be resolved — see the node/edge for details."
+                    : validity === "mismatched"
+                      ? "Rate mismatch on this boundary connection — see the connected node for details."
+                      : undefined
+                }
+              >
+                {port.direction === "in" && (
+                  <Handle
+                    type="target"
+                    position={Position.Left}
+                    id={port.id}
+                    className={`${inHandleClass} ${ring ?? ""} ${isHandleFaded(port.id, "target") ? handleFadeClass : ""}`}
+                  />
+                )}
+                <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]">
+                  {port.direction === "in" ? "→ " : ""}
+                  {port.part}
+                  {port.direction === "out" ? " →" : ""}
+                </span>
+                {port.direction === "out" && (
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={port.id}
+                    className={`${outHandleClass} ${ring ?? ""} ${isHandleFaded(port.id, "source") ? handleFadeClass : ""}`}
+                  />
+                )}
+              </div>
+            );
+          })
         )}
       </div>
     </div>

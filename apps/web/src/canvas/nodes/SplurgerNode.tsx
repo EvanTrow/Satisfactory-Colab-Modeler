@@ -113,7 +113,7 @@ export const SplurgerNode = memo(function SplurgerNode({ id, data, selected }: N
   function isHandleFaded(handleId: string, type: "source" | "target"): boolean {
     if (!fromHandle) return false;
     if (fromHandle.nodeId === id && fromHandle.id === handleId) return false;
-    return !isValidDragCandidate(fromHandle, { nodeId: id, id: handleId, type });
+    return !isValidDragCandidate(sfmDoc, fromHandle, { nodeId: id, id: handleId, type });
   }
 
   const caps: SplurgerPortCaps = splurgerPortCaps(node.splurgerVariant);
@@ -281,7 +281,7 @@ export const SplurgerNode = memo(function SplurgerNode({ id, data, selected }: N
         <p className="mx-2 mt-1.5 rounded-md bg-[var(--danger-soft)] px-2 py-1 text-[10px] text-[var(--danger)]">
           {danglingParts.join(", ")} {danglingParts.length === 1 ? "is" : "are"} wired on only one side —
           nothing to route {danglingParts.length === 1 ? "it" : "them"} to, so this flow is being dropped
-          from the solve.
+          from the solve. Connect the missing side, or remove this connection.
         </p>
       )}
 

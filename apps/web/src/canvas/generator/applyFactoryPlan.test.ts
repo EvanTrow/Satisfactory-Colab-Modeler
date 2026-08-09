@@ -466,4 +466,45 @@ describe("applyFactoryPlan", () => {
     )!;
     expect(byproductNode.id).not.toBe(byproduct2Node.id);
   });
+
+  it("routes a target's output to its own Dimensional Depot Uploader, limited to the requested rate", () => {
+    const { sfmDoc, root } = setUp();
+    const plan = planFactory(gameData, [{ part: "Iron Plate", rate: of(60) }], { routeOutputsToDepot: true });
+    expect(plan.depotTargets).toEqual(["Iron Plate"]);
+
+    applyFactoryPlan(sfmDoc, root.id, plan);
+
+    const nodes = listNodes(sfmDoc);
+    const depotNode = nodes.find((n) => n.kind === "depot");
+    expect(depotNode).toBeDefined();
+    expect(depotNode!.machine).toBe("Dimensional Depot Uploader");
+    expect(depotNode!.limitMode).toBe("ppm");
+    // Pinned to the requested rate, not left unlimited — same "every
+    // generated node gets an exact value" convention the main chain's own
+    // `limitMode: "machines"` nodes already follow.
+    expect(depotNode!.limit).toBe(toFractionString(of(60)));
+
+    const ironPlateNode = nodes.find((n) => n.recipe === "Iron Plate")!;
+    expect(listEdges(sfmDoc)).toContainEqual(
+      expect.objectContaining({
+        part: "Iron Plate",
+        fromNode: ironPlateNode.id,
+        fromPort: "out:Iron Plate",
+        toNode: depotNode!.id,
+        toPort: "in:*",
+      }),
+    );
+  });
+
+  it("excludes a fluid target from Dimensional Depot routing", () => {
+    const { sfmDoc, root } = setUp();
+    // Water is a fluid (`@scm/gamedata`'s `Part.fluid`) — a Dimensional
+    // Depot Uploader can't accept it, same restriction an AWESOME Sink has.
+    const plan = planFactory(gameData, [{ part: "Water", rate: of(60) }], { routeOutputsToDepot: true });
+    expect(plan.depotTargets).toEqual([]);
+
+    applyFactoryPlan(sfmDoc, root.id, plan);
+
+    expect(listNodes(sfmDoc).some((n) => n.kind === "depot")).toBe(false);
+  });
 });

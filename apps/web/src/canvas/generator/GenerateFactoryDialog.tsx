@@ -35,6 +35,8 @@ export interface GenerateFactoryDialogProps {
   /** The project's current calculator mode (`Settings.solverMode`) — only read to decide whether to show `generateFactoryBasicModeWarning` below; Basic mode's "no splitter/merger preference" model doesn't match a generated factory's intentionally uneven fan-out (see that string's own translation for the full reasoning). */
   solverMode: SolverMode;
   onClose: () => void;
+  /** Fires with the newly-created nodes' ids right after a successful generate, so `CanvasView.tsx` can pan/zoom the viewport to fit them — see that call site for why this can't just call `useReactFlow()` here directly (this dialog renders outside the `<ReactFlowProvider>`). */
+  onGenerated?: (nodeIds: string[]) => void;
 }
 
 const ITEM_LIST_LIMIT = 40;
@@ -84,6 +86,7 @@ export function GenerateFactoryDialog({
   basePosition,
   solverMode,
   onClose,
+  onGenerated,
 }: GenerateFactoryDialogProps) {
   const { t } = useTranslation("app");
   const gameTerm = useGameTerm();
@@ -110,11 +113,22 @@ export function GenerateFactoryDialog({
   // Tier (see `PlanFactoryOptions.allowConverters`'s doc comment).
   const [useConverters, setUseConverters] = useState(false);
 
-  // Byproduct disposal (`FactoryPlan.byproductDisposals`) — off by default,
-  // same reasoning as `useConverters`: it adds real nodes (a shared AWESOME
-  // Sink, plus one conversion machine per disposed byproduct) the user
-  // didn't necessarily ask for.
-  const [handleByproducts, setHandleByproducts] = useState(false);
+  // Byproduct disposal (`FactoryPlan.byproductDisposals`) — ON by default,
+  // unlike `useConverters`: leaving byproducts unhandled is rarely what a
+  // user actually wants from a *generated* factory (an unrouted byproduct
+  // output just dead-ends), so this starts checked; still a genuine opt-out; the
+  // extra AWESOME Sink/conversion nodes it adds are only ever created when
+  // there's a real byproduct to dispose of.
+  const [handleByproducts, setHandleByproducts] = useState(true);
+
+  // Output routing (`FactoryPlan.depotTargets`) — ON by default, same
+  // reasoning as `handleByproducts`: a generated factory's whole point is
+  // its outputs, so routing them straight into storage by default matches
+  // what most users want more often than leaving every output port
+  // dangling. Fluid/gas targets are silently skipped by `planFactory`
+  // itself (a Depot can't accept one) — `fluidTargets` below just surfaces
+  // that to the user.
+  const [routeOutputsToDepot, setRouteOutputsToDepot] = useState(true);
 
   // "Which alternate recipes are available" — every alternate is enabled by
   // default (matches `planFactory`'s own default: cheapest recipe wins
@@ -192,13 +206,26 @@ export function GenerateFactoryDialog({
           priority,
           allowConverters: useConverters,
           handleByproducts,
+          routeOutputsToDepot,
         })
       : null;
   const canGenerate = allRatesValid && !!plan && plan.nodes.length > 0;
 
+  // Every currently-listed target that's a fluid/gas — `planFactory` already
+  // silently excludes these from `plan.depotTargets` (a Dimensional Depot
+  // Uploader can't accept one), this is purely the UI surfacing why.
+  const fluidTargets =
+    routeOutputsToDepot && plan
+      ? validTargets.filter((target) => gameData.partsByName.get(target.part)?.fluid === true)
+      : [];
+
   function handleGenerate() {
     if (!canGenerate || !plan) return;
-    applyFactoryPlan(sfmDoc, containerId, plan, { basePosition, organize: organizeLayout });
+    const { createdNodeIds } = applyFactoryPlan(sfmDoc, containerId, plan, {
+      basePosition,
+      organize: organizeLayout,
+    });
+    onGenerated?.(createdNodeIds);
     onClose();
   }
 
@@ -376,6 +403,26 @@ export function GenerateFactoryDialog({
             {t("canvas.generateFactoryHandleByproducts")}
           </label>
 
+          <label
+            className="flex items-center gap-2 text-sm text-[var(--text-secondary)]"
+            title={t("canvas.generateFactoryRouteToDepotTitle")}
+          >
+            <input
+              type="checkbox"
+              checked={routeOutputsToDepot}
+              onChange={(event) => setRouteOutputsToDepot(event.target.checked)}
+              className="accent-[var(--accent)]"
+            />
+            {t("canvas.generateFactoryRouteToDepot")}
+          </label>
+          {fluidTargets.length > 0 && (
+            <p className="text-xs text-[var(--mismatch)]">
+              {t("canvas.generateFactoryDepotFluidWarning", {
+                parts: fluidTargets.map((target) => gameTerm(target.part)).join(", "),
+              })}
+            </p>
+          )}
+
           <div className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
             <button
               type="button"
@@ -529,6 +576,21 @@ export function GenerateFactoryDialog({
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+              )}
+              {plan.depotTargets.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <p className="text-xs font-medium text-[var(--text-secondary)]">
+                    {t("canvas.generateFactoryDepotTargetsHeading", { count: plan.depotTargets.length })}
+                  </p>
+                  <div className="rounded-md border border-[var(--border-subtle)] text-xs">
+                    {plan.depotTargets.map((part) => (
+                      <div key={part} className="flex items-center gap-1.5 px-2 py-1 odd:bg-[var(--surface-sunken)]">
+                        <PartIcon part={part} />
+                        <span className="truncate text-[var(--text-primary)]">{gameTerm(part)}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

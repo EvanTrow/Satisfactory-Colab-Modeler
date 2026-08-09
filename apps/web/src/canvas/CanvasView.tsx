@@ -17,6 +17,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -310,6 +311,13 @@ export function CanvasViewReady({
   // plain local `open` state mirrors `showMinimap`'s own scope note above
   // rather than anything persisted.
   const [showGenerateFactory, setShowGenerateFactory] = useState(false);
+  // Job (generate-factory fit-view): the ids handed back by the last
+  // successful generate, waiting for `CanvasFlow`'s `fitView` effect below to
+  // pick them up and pan/zoom the viewport to fit them. `GenerateFactoryDialog`
+  // itself renders outside `<ReactFlowProvider>` (see the provider comment
+  // at its call site) so it can't call `useReactFlow()` directly — this
+  // state is the hand-off between the two.
+  const [pendingFitNodeIds, setPendingFitNodeIds] = useState<string[] | null>(null);
 
   const docContext: CanvasDocContextValue = useMemo(
     () => ({
@@ -447,6 +455,12 @@ export function CanvasViewReady({
                 nodes={sync.nodes}
                 numberFormats={settings.numberFormats}
                 theme={theme}
+                // Calculation-validation visuals pass: reuses the exact same
+                // `pendingFitNodeIds`/`fitView` mechanism already used after
+                // Generate Factory (see `CanvasFlow`'s own effect below) —
+                // clicking an Issues-list entry just pans/zooms to it, no
+                // new camera code needed.
+                onJumpToNode={(nodeId) => setPendingFitNodeIds([nodeId])}
               />
               {/* Job 027: minimap show/hide — see `showMinimap`'s own comment above for why this is a persisted user setting. */}
               <button
@@ -517,7 +531,14 @@ export function CanvasViewReady({
             child of the explicit provider below so it can call the hook.
           */}
             <ReactFlowProvider>
-              <CanvasFlow sync={sync} settings={settings} theme={theme} showMinimap={showMinimap} />
+              <CanvasFlow
+                sync={sync}
+                settings={settings}
+                theme={theme}
+                showMinimap={showMinimap}
+                pendingFitNodeIds={pendingFitNodeIds}
+                onFitted={() => setPendingFitNodeIds(null)}
+              />
             </ReactFlowProvider>
           </div>
           {showGenerateFactory && (
@@ -528,6 +549,7 @@ export function CanvasViewReady({
               basePosition={generateFactoryBasePosition(sync.nodes)}
               solverMode={settings.solverMode}
               onClose={() => setShowGenerateFactory(false)}
+              onGenerated={setPendingFitNodeIds}
             />
           )}
         </div>
@@ -567,6 +589,10 @@ interface CanvasFlowProps {
   theme: ThemeMode;
   /** Job 027: minimap show/hide — see `CanvasViewReady`'s `showMinimap` state comment. */
   showMinimap: boolean;
+  /** Set right after a "Generate factory" run — the new nodes' ids to pan/zoom the viewport to fit, once they've actually reached `sync.nodes` (see the effect below). `null` when there's nothing pending. */
+  pendingFitNodeIds: string[] | null;
+  /** Called once the pending fit-view has actually run, so `CanvasViewReady` can clear `pendingFitNodeIds`. */
+  onFitted: () => void;
 }
 
 /** Pending Recipe Chooser state: both coordinate systems captured at the moment of the triggering click. */
@@ -592,11 +618,26 @@ function eventClientPoint(event: MouseEvent | TouchEvent): { x: number; y: numbe
  * Split out from `CanvasView` only so it can sit inside
  * `<ReactFlowProvider>` and call `useReactFlow()`.
  */
-function CanvasFlow({ sync, settings, theme, showMinimap }: CanvasFlowProps) {
+function CanvasFlow({ sync, settings, theme, showMinimap, pendingFitNodeIds, onFitted }: CanvasFlowProps) {
   const { t } = useTranslation("app");
   const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = sync;
   const { sfmDoc, containerId, undoManager, navigateToContainer, awareness, localPresence } = useCanvasDoc();
   const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
+
+  // Job (generate-factory fit-view): once a generate's own nodes have all
+  // landed in `sync.nodes` (Yjs's `observeDeep` → Zustand hand-off is
+  // synchronous, but React Flow's internal node registry — what `fitView`'s
+  // bounds computation actually reads — only catches up a render later, so
+  // this can't just run inline right after `applyFactoryPlan` returns), pan
+  // /zoom the viewport to fit exactly that batch, then clear the pending
+  // state so this doesn't re-fire on every subsequent node change.
+  useEffect(() => {
+    if (!pendingFitNodeIds || pendingFitNodeIds.length === 0) return;
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    if (!pendingFitNodeIds.every((id) => nodeIds.has(id))) return;
+    void fitView({ nodes: pendingFitNodeIds.map((id) => ({ id })), padding: 0.2, duration: 400 });
+    onFitted();
+  }, [pendingFitNodeIds, nodes, fitView, onFitted]);
   const [chooser, setChooser] = useState<ChooserState | null>(null);
   // Job (icon migration): backs the custom lock/unlock `ControlButton` below —
   // `<Controls>`'s own built-in interactive-toggle button has no icon-swap

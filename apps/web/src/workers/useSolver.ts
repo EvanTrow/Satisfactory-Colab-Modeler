@@ -39,6 +39,7 @@ import { expandBlueprintResults, type BlueprintDisplayInfo } from "./blueprintCo
 import { mergeComponentResults } from "./mergeResults";
 import type { HostToWorkerMessage, WorkerToHostMessage } from "./protocol";
 import { originalEdgeIdFromSinkEdgeId } from "./sinkPassthrough";
+import { originalEdgeIdFromStorageEdgeId } from "./storagePassthrough";
 import { createSolveScheduler, type SolveHostState, type SolveStaleness } from "./solveScheduler";
 
 interface SolveStoreState extends SolveHostState {
@@ -106,17 +107,24 @@ function indexNodes(result: SolveResult | null): ReadonlyMap<string, NodeSolveRe
 function indexEdges(result: SolveResult | null): ReadonlyMap<string, EdgeSolveResult> {
   if (!result || result.edges.length === 0) return EMPTY_EDGE_RESULTS;
   const map = new Map(result.edges.map((e) => [e.edgeId, e] as const));
-  // A sink-rewritten edge's `EdgeSolveResult` is keyed by its MINTED id
-  // (`sinkPassthrough.ts`'s `SINK_EDGE_ID_PREFIX` + the original edge id),
-  // not the real edge id `ConnectionEdge.tsx`'s label looks up by — alias it
-  // under the original id too so a connection feeding an AWESOME Sink shows
-  // its solved rate like any other connection. Set with `??=` semantics (via
-  // the `has` check) so a real, non-rewritten edge's own entry always wins if
-  // an id were ever to collide, though `originalEdgeIdFromSinkEdgeId` only
-  // ever recovers ids that were never valid standalone `SolverEdge` ids to
-  // begin with (they always carried the sink's minted prefix).
+  // A sink- or storage-rewritten edge's `EdgeSolveResult` is keyed by its
+  // MINTED id (`sinkPassthrough.ts`'s `SINK_EDGE_ID_PREFIX` /
+  // `storagePassthrough.ts`'s `STORAGE_EDGE_ID_PREFIX` + the original edge
+  // id), not the real edge id `ConnectionEdge.tsx`'s label/validity coloring
+  // looks up by — alias it under the original id too so a connection
+  // feeding an AWESOME Sink or a Storage Container shows its solved rate
+  // (and, since the calculation-validation visuals pass, its validity color)
+  // like any other connection. Set with `??=` semantics (via the `has`
+  // check) so a real, non-rewritten edge's own entry always wins if an id
+  // were ever to collide, though neither `originalEdgeIdFrom*EdgeId` helper
+  // ever recovers an id that was a valid standalone `SolverEdge` id to begin
+  // with (they always carried their own minted prefix). Splurger's own
+  // rewrite is deliberately NOT aliased here — it can genuinely MERGE two
+  // original edges into one synthetic edge with no single recoverable
+  // "original id" (see `splurgerPassthrough.ts`'s header), so there is
+  // nothing to alias.
   for (const e of result.edges) {
-    const originalId = originalEdgeIdFromSinkEdgeId(e.edgeId);
+    const originalId = originalEdgeIdFromSinkEdgeId(e.edgeId) ?? originalEdgeIdFromStorageEdgeId(e.edgeId);
     if (originalId && !map.has(originalId)) map.set(originalId, e);
   }
   return map;

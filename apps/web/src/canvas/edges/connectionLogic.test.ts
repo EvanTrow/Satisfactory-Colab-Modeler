@@ -76,9 +76,17 @@ describe("parsePortHandleId", () => {
   });
 });
 
+// Shared across every describe block below that only ever resolves
+// connections between fake/nonexistent node ids ("n1", "splurger1", etc.) —
+// `isDepotConnectionAllowed`'s `getNode`/`listEdges` lookups simply find
+// nothing for an id never written to this doc and fall through to "allowed",
+// so a single never-mutated doc is safe to reuse across all of them (real
+// depot-specific behavior gets its own dedicated docs further down).
+const pureLogicDoc = createDocument();
+
 describe("resolveEdgeEndpoints", () => {
   it("resolves a plain output -> input drag", () => {
-    const resolved = resolveEdgeEndpoints({
+    const resolved = resolveEdgeEndpoints(pureLogicDoc, {
       source: "n1",
       sourceHandle: "out:Iron Plate",
       target: "n2",
@@ -89,7 +97,7 @@ describe("resolveEdgeEndpoints", () => {
 
   it("resolves an input -> output drag to the same fromNode/toNode as the reverse direction (both directions work)", () => {
     // Physically dragged from the input handle first this time.
-    const resolved = resolveEdgeEndpoints({
+    const resolved = resolveEdgeEndpoints(pureLogicDoc, {
       source: "n2",
       sourceHandle: "in:Iron Plate",
       target: "n1",
@@ -101,29 +109,29 @@ describe("resolveEdgeEndpoints", () => {
 
   it("rejects mismatched parts", () => {
     expect(
-      resolveEdgeEndpoints({ source: "n1", sourceHandle: "out:Iron Ore", target: "n2", targetHandle: "in:Iron Ingot" }),
+      resolveEdgeEndpoints(pureLogicDoc, { source: "n1", sourceHandle: "out:Iron Ore", target: "n2", targetHandle: "in:Iron Ingot" }),
     ).toBeNull();
   });
 
   it("rejects two outputs", () => {
     expect(
-      resolveEdgeEndpoints({ source: "n1", sourceHandle: "out:Iron Plate", target: "n2", targetHandle: "out:Iron Plate" }),
+      resolveEdgeEndpoints(pureLogicDoc, { source: "n1", sourceHandle: "out:Iron Plate", target: "n2", targetHandle: "out:Iron Plate" }),
     ).toBeNull();
   });
 
   it("rejects two inputs", () => {
     expect(
-      resolveEdgeEndpoints({ source: "n1", sourceHandle: "in:Iron Plate", target: "n2", targetHandle: "in:Iron Plate" }),
+      resolveEdgeEndpoints(pureLogicDoc, { source: "n1", sourceHandle: "in:Iron Plate", target: "n2", targetHandle: "in:Iron Plate" }),
     ).toBeNull();
   });
 
   it("rejects a missing handle id", () => {
-    expect(resolveEdgeEndpoints({ source: "n1", sourceHandle: null, target: "n2", targetHandle: "in:Iron Plate" })).toBeNull();
+    expect(resolveEdgeEndpoints(pureLogicDoc, { source: "n1", sourceHandle: null, target: "n2", targetHandle: "in:Iron Plate" })).toBeNull();
   });
 
   it("rejects a missing node id", () => {
     expect(
-      resolveEdgeEndpoints({ source: null, sourceHandle: "out:Iron Plate", target: "n2", targetHandle: "in:Iron Plate" }),
+      resolveEdgeEndpoints(pureLogicDoc, { source: null, sourceHandle: "out:Iron Plate", target: "n2", targetHandle: "in:Iron Plate" }),
     ).toBeNull();
   });
 
@@ -131,7 +139,7 @@ describe("resolveEdgeEndpoints", () => {
   // so no fixed part list) defer to whichever real part is on the other
   // end — see `WILDCARD_PART`'s doc comment.
   it("resolves a wildcard output handle against a concrete input part", () => {
-    const resolved = resolveEdgeEndpoints({
+    const resolved = resolveEdgeEndpoints(pureLogicDoc, {
       source: "splurger1",
       sourceHandle: `out:${WILDCARD_PART}`,
       target: "n2",
@@ -147,7 +155,7 @@ describe("resolveEdgeEndpoints", () => {
   });
 
   it("resolves a concrete output part against a wildcard input handle", () => {
-    const resolved = resolveEdgeEndpoints({
+    const resolved = resolveEdgeEndpoints(pureLogicDoc, {
       source: "n1",
       sourceHandle: "out:Iron Plate",
       target: "splurger1",
@@ -164,7 +172,7 @@ describe("resolveEdgeEndpoints", () => {
 
   it("rejects two wildcard handles (no real part to assign — Splurger-to-Splurger chaining isn't a supported shape)", () => {
     expect(
-      resolveEdgeEndpoints({
+      resolveEdgeEndpoints(pureLogicDoc, {
         source: "splurger1",
         sourceHandle: `out:${WILDCARD_PART}`,
         target: "splurger2",
@@ -177,7 +185,7 @@ describe("resolveEdgeEndpoints", () => {
   // `*bottom` — `WILDCARD_PART_TOP`/`WILDCARD_PART_BOTTOM`) are wildcards
   // too, just individually addressable ones.
   it("resolves a tiered wildcard handle (*top/*bottom) against a concrete part, same as the plain wildcard", () => {
-    const top = resolveEdgeEndpoints({
+    const top = resolveEdgeEndpoints(pureLogicDoc, {
       source: "splurger1",
       sourceHandle: `out:${WILDCARD_PART_TOP}`,
       target: "n2",
@@ -191,7 +199,7 @@ describe("resolveEdgeEndpoints", () => {
       part: "Iron Plate",
     });
 
-    const bottom = resolveEdgeEndpoints({
+    const bottom = resolveEdgeEndpoints(pureLogicDoc, {
       source: "splurger1",
       sourceHandle: `out:${WILDCARD_PART_BOTTOM}`,
       target: "n2",
@@ -202,7 +210,7 @@ describe("resolveEdgeEndpoints", () => {
 
   it("rejects two tiered wildcard handles, and a tiered wildcard against a plain wildcard", () => {
     expect(
-      resolveEdgeEndpoints({
+      resolveEdgeEndpoints(pureLogicDoc, {
         source: "splurger1",
         sourceHandle: `out:${WILDCARD_PART_TOP}`,
         target: "splurger2",
@@ -210,7 +218,7 @@ describe("resolveEdgeEndpoints", () => {
       }),
     ).toBeNull();
     expect(
-      resolveEdgeEndpoints({
+      resolveEdgeEndpoints(pureLogicDoc, {
         source: "splurger1",
         sourceHandle: `out:${WILDCARD_PART_TOP}`,
         target: "splurger2",
@@ -232,10 +240,10 @@ describe("isWildcardPart", () => {
 describe("isValidPortConnection", () => {
   it("mirrors resolveEdgeEndpoints's accept/reject decision", () => {
     expect(
-      isValidPortConnection({ source: "n1", sourceHandle: "out:Iron Plate", target: "n2", targetHandle: "in:Iron Plate" }),
+      isValidPortConnection(pureLogicDoc, { source: "n1", sourceHandle: "out:Iron Plate", target: "n2", targetHandle: "in:Iron Plate" }),
     ).toBe(true);
     expect(
-      isValidPortConnection({ source: "n1", sourceHandle: "out:Iron Ore", target: "n2", targetHandle: "in:Iron Ingot" }),
+      isValidPortConnection(pureLogicDoc, { source: "n1", sourceHandle: "out:Iron Ore", target: "n2", targetHandle: "in:Iron Ingot" }),
     ).toBe(false);
   });
 });
@@ -244,6 +252,7 @@ describe("isValidDragCandidate", () => {
   it("accepts a source handle dragged onto a matching-part target handle", () => {
     expect(
       isValidDragCandidate(
+        pureLogicDoc,
         { nodeId: "n1", id: "out:Iron Plate", type: "source" },
         { nodeId: "n2", id: "in:Iron Plate", type: "target" },
       ),
@@ -253,6 +262,7 @@ describe("isValidDragCandidate", () => {
   it("accepts the drag starting from a target handle instead (either direction works)", () => {
     expect(
       isValidDragCandidate(
+        pureLogicDoc,
         { nodeId: "n2", id: "in:Iron Plate", type: "target" },
         { nodeId: "n1", id: "out:Iron Plate", type: "source" },
       ),
@@ -262,6 +272,7 @@ describe("isValidDragCandidate", () => {
   it("rejects a mismatched-part candidate", () => {
     expect(
       isValidDragCandidate(
+        pureLogicDoc,
         { nodeId: "n1", id: "out:Iron Ore", type: "source" },
         { nodeId: "n2", id: "in:Iron Ingot", type: "target" },
       ),
@@ -271,6 +282,7 @@ describe("isValidDragCandidate", () => {
   it("rejects two handles of the same type without even considering their parts", () => {
     expect(
       isValidDragCandidate(
+        pureLogicDoc,
         { nodeId: "n1", id: "out:Iron Plate", type: "source" },
         { nodeId: "n2", id: "out:Iron Plate", type: "source" },
       ),
@@ -280,6 +292,7 @@ describe("isValidDragCandidate", () => {
   it("accepts a wildcard (Splurger) candidate regardless of the dragged part", () => {
     expect(
       isValidDragCandidate(
+        pureLogicDoc,
         { nodeId: "n1", id: "out:Iron Plate", type: "source" },
         { nodeId: "splurger1", id: `in:${WILDCARD_PART}`, type: "target" },
       ),
@@ -289,6 +302,7 @@ describe("isValidDragCandidate", () => {
   it("rejects an unparseable candidate handle id (e.g. an outpost boundary handle)", () => {
     expect(
       isValidDragCandidate(
+        pureLogicDoc,
         { nodeId: "n1", id: "out:Iron Plate", type: "source" },
         { nodeId: "outpost1", id: "boundary:e1:in", type: "target" },
       ),
@@ -433,6 +447,131 @@ describe("reconnectEdge", () => {
     expect(result).toBeNull();
     expect(getEdge(sfmDoc, original.id)).toBeDefined();
     expect(listEdges(sfmDoc)).toHaveLength(1);
+  });
+});
+
+describe("Dimensional Depot connection restrictions", () => {
+  // Sources are deliberately never-created node ids ("producerA" etc.) —
+  // `isDepotConnectionAllowed` only reads the TARGET node's own kind/existing
+  // edges, so a real source node is unnecessary for these.
+  function makeDepotDoc() {
+    const sfmDoc = createDocument();
+    const root = addContainer(sfmDoc, {
+      kind: "root",
+      parentId: null,
+      title: "Root",
+      color: "#4b5563",
+      x: 0,
+      y: 0,
+      copiesLimit: null,
+    });
+    const baseNode = {
+      containerId: root.id,
+      recipe: null,
+      machine: null,
+      x: 400,
+      y: 0,
+      title: "",
+      color: "#7c3aed",
+      limit: null,
+      limitMode: "ppm" as const,
+      clock: null,
+      autoRound: false,
+      shards: 0,
+      purity: null,
+      beltTier: null,
+      storageMode: null,
+      splurgerVariant: null,
+    };
+    const depot = addNode(sfmDoc, { ...baseNode, kind: "depot", title: "Dimensional Depot" });
+    const sink = addNode(sfmDoc, { ...baseNode, kind: "sink", title: "AWESOME Sink" });
+    return { sfmDoc, containerId: root.id, depotId: depot.id, sinkId: sink.id };
+  }
+
+  it("rejects a fluid part connecting into a Depot", () => {
+    const { sfmDoc, depotId } = makeDepotDoc();
+    expect(
+      isValidPortConnection(sfmDoc, {
+        source: "producer",
+        sourceHandle: "out:Water",
+        target: depotId,
+        targetHandle: `in:${WILDCARD_PART}`,
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts a solid part connecting into an empty Depot", () => {
+    const { sfmDoc, depotId } = makeDepotDoc();
+    expect(
+      isValidPortConnection(sfmDoc, {
+        source: "producer",
+        sourceHandle: "out:Iron Plate",
+        target: depotId,
+        targetHandle: `in:${WILDCARD_PART}`,
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a second, different part once the Depot already has one connected", () => {
+    const { sfmDoc, containerId, depotId } = makeDepotDoc();
+    connectPorts(sfmDoc, containerId, {
+      source: "producerA",
+      sourceHandle: "out:Iron Plate",
+      target: depotId,
+      targetHandle: `in:${WILDCARD_PART}`,
+    });
+    expect(
+      isValidPortConnection(sfmDoc, {
+        source: "producerB",
+        sourceHandle: "out:Iron Rod",
+        target: depotId,
+        targetHandle: `in:${WILDCARD_PART}`,
+      }),
+    ).toBe(false);
+  });
+
+  it("still accepts more of the SAME part once the Depot already has one connected", () => {
+    const { sfmDoc, containerId, depotId } = makeDepotDoc();
+    connectPorts(sfmDoc, containerId, {
+      source: "producerA",
+      sourceHandle: "out:Iron Plate",
+      target: depotId,
+      targetHandle: `in:${WILDCARD_PART}`,
+    });
+    expect(
+      isValidPortConnection(sfmDoc, {
+        source: "producerB",
+        sourceHandle: "out:Iron Plate",
+        target: depotId,
+        targetHandle: `in:${WILDCARD_PART}`,
+      }),
+    ).toBe(true);
+  });
+
+  it("leaves an AWESOME Sink unaffected — still accepts fluids and multiple distinct parts", () => {
+    const { sfmDoc, containerId, sinkId } = makeDepotDoc();
+    expect(
+      isValidPortConnection(sfmDoc, {
+        source: "producer",
+        sourceHandle: "out:Water",
+        target: sinkId,
+        targetHandle: `in:${WILDCARD_PART}`,
+      }),
+    ).toBe(true);
+    connectPorts(sfmDoc, containerId, {
+      source: "producerA",
+      sourceHandle: "out:Iron Plate",
+      target: sinkId,
+      targetHandle: `in:${WILDCARD_PART}`,
+    });
+    expect(
+      isValidPortConnection(sfmDoc, {
+        source: "producerB",
+        sourceHandle: "out:Iron Rod",
+        target: sinkId,
+        targetHandle: `in:${WILDCARD_PART}`,
+      }),
+    ).toBe(true);
   });
 });
 

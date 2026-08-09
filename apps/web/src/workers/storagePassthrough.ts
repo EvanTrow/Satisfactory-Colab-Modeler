@@ -27,9 +27,26 @@
 // storage nodes are in that state so `StorageNode.tsx` can show a warning
 // banner, mirroring `splurgerPassthrough.ts`'s `unsupportedNodeIds`.
 //
-// Same accepted "no per-edge `EdgeSolveResult`" limitation as
-// `sinkPassthrough.ts` — see that module's header.
+// Calculation-validation visuals pass: unlike Splurger's rewrite (which can
+// genuinely MERGE two original edges into one synthetic edge with no single
+// recoverable "original id" — see that module's own header), THIS rewrite is
+// always exactly one-original-edge-in, one-synthetic-edge-out, same shape as
+// `sinkPassthrough.ts`'s. So it gets the exact same fix that module already
+// has: `originalEdgeIdFromStorageEdgeId` below lets `useSolver.ts`'s
+// `indexEdges` alias a storage-rewritten `EdgeSolveResult` back under the
+// real edge id, so a connection feeding/leaving a Storage Container shows
+// its solved rate AND validity coloring like any other connection — this
+// was previously a real, accepted gap (this comment used to say so), just
+// never actually fixed here the way Sink's own equivalent already was.
 import type { SolverEdge, SolverNode } from "@scm/solver";
+
+/** Prefix every rewritten storage edge id is minted with, ahead of the original edge's own id — mirrors `sinkPassthrough.ts`'s `SINK_EDGE_ID_PREFIX` exactly. */
+export const STORAGE_EDGE_ID_PREFIX = "stg-e:";
+
+/** Recovers the original (pre-rewrite) edge id from a storage-rewritten `SolverEdge.id`/`EdgeSolveResult.edgeId`, or `undefined` if `id` wasn't minted by this module — mirrors `sinkPassthrough.ts`'s `originalEdgeIdFromSinkEdgeId`. */
+export function originalEdgeIdFromStorageEdgeId(id: string): string | undefined {
+  return id.startsWith(STORAGE_EDGE_ID_PREFIX) ? id.slice(STORAGE_EDGE_ID_PREFIX.length) : undefined;
+}
 
 export interface StorageEdgeLike {
   readonly id: string;
@@ -90,8 +107,8 @@ function synthesizeSide(
     }
     rewrittenEdges.push(
       direction === "in"
-        ? { id: `stg-e:${edge.id}`, part: edge.part, fromNode: edge.fromNode, fromPort: edge.fromPort, toNode: syntheticId, toPort: `in:${edge.part}` }
-        : { id: `stg-e:${edge.id}`, part: edge.part, fromNode: syntheticId, fromPort: `out:${edge.part}`, toNode: edge.toNode, toPort: edge.toPort },
+        ? { id: `${STORAGE_EDGE_ID_PREFIX}${edge.id}`, part: edge.part, fromNode: edge.fromNode, fromPort: edge.fromPort, toNode: syntheticId, toPort: `in:${edge.part}` }
+        : { id: `${STORAGE_EDGE_ID_PREFIX}${edge.id}`, part: edge.part, fromNode: syntheticId, fromPort: `out:${edge.part}`, toNode: edge.toNode, toPort: edge.toPort },
     );
   }
 }

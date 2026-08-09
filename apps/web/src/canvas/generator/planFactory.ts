@@ -171,6 +171,18 @@ export interface FactoryPlan {
    * numbers.
    */
   byproductDisposals: ByproductDisposal[];
+  /**
+   * Present only when `options.routeOutputsToDepot` is set. Every part from
+   * `targets` that both (a) actually resolved to a producing node — a
+   * target with no recipe at all has nothing to route (`unresolvedParts`
+   * instead) — and (b) is a solid (`@scm/gamedata`'s `Part.fluid`): a
+   * Dimensional Depot Uploader, like an AWESOME Sink, has no way to accept a
+   * raw fluid/gas. A target requested more than once (`targets` doesn't
+   * forbid duplicates) only ever gets one entry here, matching `nodes`'
+   * own one-node-per-part rule — one Depot per item type, never one Depot
+   * shared across several.
+   */
+  depotTargets: string[];
 }
 
 interface DiscoveredRecipe {
@@ -278,6 +290,14 @@ export interface PlanFactoryOptions {
   priority?: GenerationPriority;
   allowConverters?: boolean;
   handleByproducts?: boolean;
+  /**
+   * Default `false`. Populates `FactoryPlan.depotTargets` with every target
+   * part eligible for a Dimensional Depot Uploader — see that field's own
+   * doc comment. Purely additive, same spirit as `handleByproducts`: never
+   * changes machine counts or demand, just marks which already-resolved
+   * target nodes should get a Depot wired to their output.
+   */
+  routeOutputsToDepot?: boolean;
 }
 
 const CONVERTER_MACHINE_NAME = "Converter";
@@ -507,7 +527,20 @@ export function planFactory(
     );
   }
 
-  return { targets, nodes, edges, unresolvedParts, byproductDisposals };
+  const depotTargets: string[] = [];
+  if (options.routeOutputsToDepot) {
+    const nodeParts = new Set(nodes.map((n) => n.part));
+    const seenTargets = new Set<string>();
+    for (const target of targets) {
+      if (seenTargets.has(target.part)) continue;
+      seenTargets.add(target.part);
+      if (nodeParts.has(target.part) && !isFluidPart(gameData, target.part)) {
+        depotTargets.push(target.part);
+      }
+    }
+  }
+
+  return { targets, nodes, edges, unresolvedParts, byproductDisposals, depotTargets };
 }
 
 /** `true` for a fluid or gas (`@scm/gamedata`'s `Part.fluid` doesn't distinguish the two — neither can go into an AWESOME Sink raw, so neither needs to here either). `false` (never blocks disposal) if the part is unknown for any reason — defensive; every real part has an entry. */
@@ -933,6 +966,43 @@ export function needsDisposalNode(disposal: ByproductDisposal): boolean {
 }
 
 /**
+ * Per-generation bump allocator shared by `layoutByproductDisposals` and
+ * `layoutDepotTargets`: the first placement request into a given column
+ * starts below every main-graph node already stacked there (mirroring
+ * `layoutFactoryPlan`'s own per-column loop); every subsequent request into
+ * that same column stacks below whatever was placed there most recently.
+ * `occupancy` is exposed to the caller (rather than kept as this function's
+ * own closed-over state) specifically so `applyFactoryPlan.ts` can pass ONE
+ * shared map to both `layoutByproductDisposals` and `layoutDepotTargets` in
+ * the same generate — otherwise a target node that's ALSO a byproduct
+ * source could get its Depot and its disposal Sink placed on top of each
+ * other, both independently thinking generation N+1 was empty. A caller
+ * that only needs one of the two layouts (the default, fresh `Map`) gets
+ * each function's previous, fully independent behavior.
+ */
+function createColumnPlacer(
+  plan: FactoryPlan,
+  options: LayoutOptions,
+  occupancy: Map<number, number>,
+): (generation: number, height: number) => { x: number; y: number } {
+  const columnWidth = options.columnWidth ?? DEFAULT_COLUMN_WIDTH;
+  const rowGap = options.rowGap ?? DEFAULT_ROW_GAP;
+  const base = options.basePosition ?? { x: 0, y: 0 };
+  return (generation, height) => {
+    if (!occupancy.has(generation)) {
+      let y = base.y;
+      for (const node of plan.nodes) {
+        if (node.generation === generation) y += estimateNodeHeight(node.recipe) + rowGap;
+      }
+      occupancy.set(generation, y);
+    }
+    const y = occupancy.get(generation)!;
+    occupancy.set(generation, y + height + rowGap);
+    return { x: base.x + generation * columnWidth, y };
+  };
+}
+
+/**
  * Positions each of `plan.byproductDisposals`' conversion nodes (if any) and
  * its own dedicated AWESOME Sink one "level" (`layoutFactoryPlan`'s own
  * generation column) to the right of wherever the byproduct is actually
@@ -947,39 +1017,22 @@ export function needsDisposalNode(disposal: ByproductDisposal): boolean {
  * before — this only stops DIFFERENT byproducts from sharing a node.)
  *
  * Column occupancy — every main-graph node already in a generation, plus
- * every other disposal's own conversion/sink node already placed there — is
- * tracked so nothing added here ever visually overlaps anything else, in
- * either this function's own output or `layoutFactoryPlan`'s. Deliberately
- * kept as a separate function (not folded into `layoutFactoryPlan` itself)
- * since disposal nodes aren't part of `plan.nodes`/generations at all, just
- * an additive side-chain.
+ * every other disposal's own conversion/sink node already placed there, plus
+ * (when `occupancy` is shared with a sibling `layoutDepotTargets` call) any
+ * Depot node already placed there — is tracked so nothing added here ever
+ * visually overlaps anything else, in this function's own output,
+ * `layoutFactoryPlan`'s, or `layoutDepotTargets`'. Deliberately kept as a
+ * separate function (not folded into `layoutFactoryPlan` itself) since
+ * disposal nodes aren't part of `plan.nodes`/generations at all, just an
+ * additive side-chain.
  */
-export function layoutByproductDisposals(plan: FactoryPlan, options: LayoutOptions = {}): DisposalLayout {
-  const columnWidth = options.columnWidth ?? DEFAULT_COLUMN_WIDTH;
-  const rowGap = options.rowGap ?? DEFAULT_ROW_GAP;
-  const base = options.basePosition ?? { x: 0, y: 0 };
-
+export function layoutByproductDisposals(
+  plan: FactoryPlan,
+  options: LayoutOptions = {},
+  occupancy: Map<number, number> = new Map(),
+): DisposalLayout {
+  const place = createColumnPlacer(plan, options, occupancy);
   const generationByPart = new Map(plan.nodes.map((n) => [n.part, n.generation]));
-
-  // Per-generation bump allocator: the first placement request into a given
-  // column starts below every main-graph node already stacked there
-  // (mirroring `layoutFactoryPlan`'s own per-column loop); every subsequent
-  // request into that same column — main graph is fixed, but multiple
-  // disposals' conversion/sink nodes can legitimately land in the same
-  // column — stacks below whatever was placed there most recently.
-  const nextY = new Map<number, number>();
-  function place(generation: number, height: number): { x: number; y: number } {
-    if (!nextY.has(generation)) {
-      let y = base.y;
-      for (const node of plan.nodes) {
-        if (node.generation === generation) y += estimateNodeHeight(node.recipe) + rowGap;
-      }
-      nextY.set(generation, y);
-    }
-    const y = nextY.get(generation)!;
-    nextY.set(generation, y + height + rowGap);
-    return { x: base.x + generation * columnWidth, y };
-  }
 
   const sourceGeneration = (disposal: ByproductDisposal): number =>
     disposal.sources.reduce((max, s) => Math.max(max, generationByPart.get(s.fromPart) ?? 0), 0);
@@ -1016,4 +1069,37 @@ export function layoutByproductDisposals(plan: FactoryPlan, options: LayoutOptio
   }
 
   return { sinkPositions, conversionPositions, supportChainPositions };
+}
+
+/**
+ * Positions one Dimensional Depot Uploader node per `plan.depotTargets`
+ * entry, one generation column right of that target's own producing node —
+ * same "additive side-chain, not part of `plan.nodes`'s own generations"
+ * pattern `layoutByproductDisposals` follows for its sink/conversion nodes.
+ * Pass the SAME `occupancy` map used for a sibling `layoutByproductDisposals`
+ * call in the same `applyFactoryPlan` run (see `createColumnPlacer`'s own
+ * doc comment) so a target that's ALSO a byproduct source doesn't get its
+ * Depot and its disposal Sink placed on top of each other.
+ */
+export function layoutDepotTargets(
+  plan: FactoryPlan,
+  options: LayoutOptions = {},
+  occupancy: Map<number, number> = new Map(),
+): Map<string, { x: number; y: number }> {
+  const place = createColumnPlacer(plan, options, occupancy);
+  const generationByPart = new Map(plan.nodes.map((n) => [n.part, n.generation]));
+
+  // Deterministic left-to-right, top-to-bottom order, same rationale as
+  // `layoutByproductDisposals`'s own `ordered` sort.
+  const ordered = [...plan.depotTargets].sort((a, b) => {
+    const generationDiff = (generationByPart.get(a) ?? 0) - (generationByPart.get(b) ?? 0);
+    return generationDiff !== 0 ? generationDiff : a.localeCompare(b);
+  });
+
+  const positions = new Map<string, { x: number; y: number }>();
+  for (const part of ordered) {
+    const generation = generationByPart.get(part) ?? 0;
+    positions.set(part, place(generation + 1, SINK_NODE_HEIGHT));
+  }
+  return positions;
 }

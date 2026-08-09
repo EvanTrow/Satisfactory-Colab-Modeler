@@ -43,6 +43,7 @@ import { useSolverResult } from "../SolverResultContext";
 import { useSettings } from "../useSettings";
 import type { CanvasNode } from "../useYjsSync";
 import { computeInputShortages, type PartShortage } from "./computeInputShortage";
+import { computeMismatchDetails } from "./computeMismatchDetails";
 import { computeNodeValidityState } from "./computeValidity";
 import { computeUnhandledByproducts } from "./computeUnhandledByproducts";
 import { autoRoundFieldClass, fieldInputClass } from "./nodeFieldStyles";
@@ -52,10 +53,18 @@ import type { RecipeNodeValidity } from "./validityState";
 
 const gameData = defaultGameData;
 
-/** "invalid" -> red border, "mismatched" -> orange border, "valid"/undefined -> no highlight. See `computeValidity.ts`'s header for the exact mapping this reflects. */
+/**
+ * "invalid" -> red border, "mismatched" -> orange border, "unresolved" ->
+ * dashed warning-yellow border (the lowest-severity tier — see
+ * `computeValidity.ts`'s header for the fourth-tier addition; dashed rather
+ * than solid so it reads distinctly from the solid yellow ring an unhandled
+ * byproduct uses, even though both share the `--warning` color), "valid"/
+ * `undefined` -> no highlight.
+ */
 function highlightBorderClass(state: RecipeNodeValidity | undefined): string | undefined {
   if (state === "invalid") return "border-[var(--danger)]";
   if (state === "mismatched") return "border-[var(--mismatch)]";
+  if (state === "unresolved") return "border-dashed border-[var(--warning)]";
   return undefined;
 }
 
@@ -63,11 +72,15 @@ function highlightBorderClass(state: RecipeNodeValidity | undefined): string | u
  * Same mapping as `highlightBorderClass`, for elements (Handles, the limit
  * text input) that highlight via a `ring` (box-shadow-based, so it never
  * fights the element's own `border-color` utility for specificity the way
- * overriding `border-[...]` a second time would).
+ * overriding `border-[...]` a second time would). Rings can't render dashed
+ * (they're a box-shadow, not a real border), so "unresolved" is just the
+ * plain warning-colored ring here — still visually distinct by color alone
+ * from the solid danger/mismatch rings.
  */
 function highlightRingClass(state: RecipeNodeValidity | undefined): string | undefined {
   if (state === "invalid") return "ring-2 ring-[var(--danger)]";
   if (state === "mismatched") return "ring-2 ring-[var(--mismatch)]";
+  if (state === "unresolved") return "ring-2 ring-[var(--warning)]";
   return undefined;
 }
 
@@ -81,6 +94,8 @@ interface PartRowProps {
   isConnected: boolean;
   /** Set only for an input part that isn't receiving as much per minute as this node's own solved rate needs — see `computeInputShortage.ts`'s header. `undefined` (the common case) renders this row exactly as before. */
   shortage?: PartShortage;
+  /** The solver's own explanation for this row's "mismatched" (orange) state, if any — see `computeMismatchDetails.ts`'s header. Only meaningful when `portValidity === "mismatched"`; falls back to a generic message in the tooltip when absent. */
+  mismatchDetail?: string;
   /**
    * `true` only for a secondary (non-primary) positive-amount output — a
    * byproduct, per `recipeNodeMath.ts`'s `primaryPart` — that has zero
@@ -127,6 +142,7 @@ function PartRow({
   portValidity,
   isConnected,
   shortage,
+  mismatchDetail,
   isUnhandledByproduct,
   onRemovePortEdges,
   isDragging,
@@ -165,7 +181,7 @@ function PartRow({
     portValidity === "invalid"
       ? t("node.portTooltip.invalid")
       : portValidity === "mismatched"
-        ? t("node.portTooltip.mismatched")
+        ? t("node.portTooltip.mismatched", { detail: mismatchDetail ?? t("node.mismatchDetailFallback") })
         : isUnhandledByproduct
           ? t("node.portTooltip.unhandledByproduct")
           : !isConnected
@@ -476,17 +492,41 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
   const unhandledByproductNames = recipe ? computeUnhandledByproducts(recipe, connectedPorts) : [];
   const byproductsSummary = unhandledByproductNames.map(gameTerm).join(", ");
 
-  // The orange "mismatched" card border (`highlightBorderClass` above) had
-  // no accompanying explanation — a user sees the border but nothing tells
-  // them a rate mismatch is the cause. Mirrors `shortPartNames`/
-  // `unhandledByproductNames` above: pull the actual affected part names out
-  // of `validityState.ports` so the tooltip/banner can name them instead of
-  // just saying "something's wrong."
+  // The orange "mismatched" card border (`highlightBorderClass` above) used
+  // to have no accompanying explanation beyond a bare part name — a user saw
+  // the border but not WHY the two sides disagreed. `computeMismatchDetails`
+  // recovers the solver's own already-computed explanation (the exact
+  // numbers behind the disagreement) per part, so the tooltip/banner can
+  // show that instead of just "something's wrong." Mirrors
+  // `shortPartNames`/`unhandledByproductNames` above: pull the actual
+  // affected part names out of `validityState.ports` first.
   const validityPorts = validityState?.ports;
   const mismatchedPartNames = validityPorts
     ? Object.keys(validityPorts).filter((partName) => validityPorts[partName] === "mismatched")
     : [];
-  const mismatchSummary = mismatchedPartNames.map(gameTerm).join(", ");
+  const mismatchDetails = computeMismatchDetails(incidentEdges, edgeResultById);
+  const mismatchSummary = mismatchedPartNames
+    .map((partName) =>
+      t("node.mismatchDetail", {
+        part: gameTerm(partName),
+        detail: mismatchDetails[partName] ?? t("node.mismatchDetailFallback"),
+      }),
+    )
+    .join("; ");
+
+  // Full mode's own "this node's splitter/merger couldn't route everything
+  // across its sibling edges (all sibling capacities saturated)" advisory
+  // (`full.ts`'s `computeGroupAllocations`/`overflowByOwner`) — a REAL solver
+  // output that, before this pass, no UI code ever read at all (it lands in
+  // `NodeSolveResult.issues` but deliberately never flips `.valid`, per that
+  // module's own "non-invalidating" comment, so it never reached this card's
+  // red/orange `validityState` system). Surfaced at the same `--warning`
+  // tier as an unresolved/unhandled-byproduct node, not orange — it isn't a
+  // disagreement between two resolved values (this node itself IS valid),
+  // just leftover flow this node's own split/merge point couldn't place.
+  const OVERFLOW_ISSUE_PATTERN = /could not be routed across its sibling edges/i;
+  const overflowIssues = (nodeResult?.issues ?? []).filter((issue) => OVERFLOW_ISSUE_PATTERN.test(issue));
+  const overflowSummary = overflowIssues.join("; ");
 
   // A machine-count-mode node with no `limit` set is meant to read as
   // genuinely blank — "nothing limiting this machine, the solver derives it
@@ -678,15 +718,18 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
       // byproduct (see `unhandledByproductNames`' own comment above) is a
       // third, yellow tier below both of those — real, but less severe than
       // a value that's actively wrong — so it only wins the border once
-      // nothing red/orange applies. Job 018's staleness state
-      // (`opacity-60` here, applied to the WHOLE card, not just the
-      // numbers) greys the card out while a recompute is in flight, per
-      // PLAN.md §5 point 3 ("show the last result greyed/stale while
+      // nothing red/orange applies. The "unresolved" fourth tier
+      // (`highlightBorderClass`) and the overflow advisory (`overflowSummary`
+      // — also yellow, also below red/orange) share that same low-severity
+      // slot; either one wins once nothing above it applies. Job 018's
+      // staleness state (`opacity-60` here, applied to the WHOLE card, not
+      // just the numbers) greys the card out while a recompute is in flight,
+      // per PLAN.md §5 point 3 ("show the last result greyed/stale while
       // recomputing rather than blanking values") — the last-known values
       // stay exactly as they were underneath, this only dims them.
       className={`relative w-64 rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors ${
         (shortPartNames.length > 0 ? "border-[var(--danger)]" : highlightBorderClass(validityState?.overall)) ??
-        (unhandledByproductNames.length > 0 ? "border-[var(--warning)]" : undefined) ??
+        (unhandledByproductNames.length > 0 || overflowSummary ? "border-[var(--warning)]" : undefined) ??
         (selected ? "border-[var(--accent)]" : "border-[var(--border-strong)]")
       } ${staleness === "stale-recomputing" ? "opacity-60" : ""}`}
       // Job 021: remote-selection halo — one or more *other* users currently
@@ -710,7 +753,11 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               ? t("node.mismatchedMessage", { details: mismatchSummary })
               : unhandledByproductNames.length > 0
                 ? t("node.unhandledByproductMessage", { details: byproductsSummary })
-                : undefined
+                : validityState?.overall === "unresolved"
+                  ? t("node.unresolvedMessage")
+                  : overflowSummary
+                    ? t("node.overflowMessage", { details: overflowSummary })
+                    : undefined
       }
     >
       {remoteSelectors.length > 0 && (
@@ -784,7 +831,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               const handleId = partHandleId(part);
               const isFaded = fromHandle
                 ? !(fromHandle.nodeId === id && fromHandle.id === handleId) &&
-                  !isValidDragCandidate(fromHandle, {
+                  !isValidDragCandidate(sfmDoc, fromHandle, {
                     nodeId: id,
                     id: handleId,
                     type: isNegative(part.amount) ? "target" : "source",
@@ -824,6 +871,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
                   // this guard a duplicated part name's OTHER-direction row would
                   // wrongly inherit its sibling's indicator.
                   shortage={isNegative(part.amount) ? inputShortages[part.part] : undefined}
+                  mismatchDetail={mismatchDetails[part.part]}
                   isUnhandledByproduct={!isNegative(part.amount) && unhandledByproductNames.includes(part.part)}
                   onRemovePortEdges={removeEdgesForPort}
                   isDragging={draggingPartId === handleId}
@@ -866,6 +914,26 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
       {unhandledByproductNames.length > 0 && (
         <p className="mx-2 mt-1.5 rounded-md bg-[var(--warning-soft)] px-2 py-1 text-[10px] text-[var(--warning)]">
           {t("node.unhandledByproductMessage", { details: byproductsSummary })}
+        </p>
+      )}
+
+      {/* The "unresolved" fourth tier's own always-visible explanation —
+          only when nothing more severe (red/orange) already applies, same
+          precedence the border itself uses. */}
+      {shortPartNames.length === 0 && validityState?.overall === "unresolved" && (
+        <p className="mx-2 mt-1.5 rounded-md bg-[var(--warning-soft)] px-2 py-1 text-[10px] text-[var(--warning)]">
+          {t("node.unresolvedMessage")}
+        </p>
+      )}
+
+      {/* Full mode's own splitter/merger overflow advisory — see
+          `overflowSummary`'s own comment above for why this was previously
+          invisible everywhere. Independent of every banner above (a node can
+          be simultaneously unresolved/mismatched on one part AND have
+          overflow on another). */}
+      {overflowSummary && (
+        <p className="mx-2 mt-1.5 rounded-md bg-[var(--warning-soft)] px-2 py-1 text-[10px] text-[var(--warning)]">
+          {t("node.overflowMessage", { details: overflowSummary })}
         </p>
       )}
 

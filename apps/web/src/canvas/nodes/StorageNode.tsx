@@ -22,7 +22,19 @@
 // A Storage Container is allowed to carry more than one distinct part at
 // once (this job's own scope decision — allow it, flag visually, rather
 // than blocking the connection) — the banner below fires whenever this
-// node's own incident edges touch more than one distinct part.
+// node's own incident edges touch more than one distinct part. Downgraded
+// from `--danger`/red to `--warning`/yellow in the calculation-validation
+// visuals pass: per this file's own header, multi-part is an ALLOWED,
+// deliberately-supported state (each part tracked independently below), not
+// a broken one — red overstated it.
+//
+// Calculation-validation visuals pass: each per-part row's validity now also
+// reuses `computeNodeValidityState`/`computeMismatchDetails` (the exact same
+// functions `RecipeNode.tsx`/`SinkNode.tsx` use) against BOTH the synthetic
+// consumer (incoming edges) and synthetic producer (outgoing edges) for that
+// part, combined via `worseValidity` below — a row can be mismatched on
+// either its intake or its outflow independently, since (unlike a Splurger)
+// the two sides are deliberately decoupled here.
 import { memo } from "react";
 
 import { getNode, listEdges, updateNode, STORAGE_MODES, type NodeRecord, type StorageMode } from "@scm/ydoc";
@@ -37,9 +49,28 @@ import { formatRate } from "../formatRate";
 import { useSolverResult } from "../SolverResultContext";
 import { useSettings } from "../useSettings";
 import type { CanvasNode } from "../useYjsSync";
+import { computeMismatchDetails } from "./computeMismatchDetails";
+import { computeNodeValidityState } from "./computeValidity";
+import type { RecipeNodeValidity } from "./validityState";
 
 const handleClass = "!h-3.5 !w-3.5 !border-2 !border-[var(--surface-card)] !bg-[var(--splurger)]";
 const handleFadeClass = "opacity-20 pointer-events-none transition-opacity";
+
+/** Same mapping `RecipeNode.tsx`'s own `highlightRingClass` uses — see `SinkNode.tsx`'s identical local copy for why this isn't shared/exported. */
+function rowRingClass(validity: RecipeNodeValidity | undefined): string {
+  if (validity === "invalid") return "ring-1 ring-inset ring-[var(--danger)]";
+  if (validity === "mismatched") return "ring-1 ring-inset ring-[var(--mismatch)]";
+  if (validity === "unresolved") return "ring-1 ring-inset ring-[var(--warning)]";
+  return "";
+}
+
+/** `invalid > mismatched > unresolved > valid` — same severity order `computeValidity.ts`'s own `escalate` uses, for combining a row's independent in-side and out-side validity into one. `undefined` (no result for that side at all) never wins over an actual reading from the other side. */
+const SEVERITY_ORDER: readonly RecipeNodeValidity[] = ["invalid", "mismatched", "unresolved", "valid"];
+function worseValidity(a: RecipeNodeValidity | undefined, b: RecipeNodeValidity | undefined): RecipeNodeValidity | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return SEVERITY_ORDER.indexOf(a) <= SEVERITY_ORDER.indexOf(b) ? a : b;
+}
 
 const STORAGE_MODE_LABELS: Record<StorageMode, string> = {
   partiallyFull: "Partially Full",
@@ -50,7 +81,7 @@ const STORAGE_MODE_LABELS: Record<StorageMode, string> = {
 
 export const StorageNode = memo(function StorageNode({ id, data, selected }: NodeProps<CanvasNode>) {
   const { sfmDoc } = useCanvasDoc();
-  const { nodeResultById } = useSolverResult();
+  const { nodeResultById, edgeResultById } = useSolverResult();
   const numberFormats = useSettings(sfmDoc).numberFormats;
   const fromHandle = useConnection((connection) => connection.fromHandle);
   const node: NodeRecord | undefined = data.record;
@@ -59,7 +90,7 @@ export const StorageNode = memo(function StorageNode({ id, data, selected }: Nod
   function isHandleFaded(handleId: string, type: "source" | "target"): boolean {
     if (!fromHandle) return false;
     if (fromHandle.nodeId === id && fromHandle.id === handleId) return false;
-    return !isValidDragCandidate(fromHandle, { nodeId: id, id: handleId, type });
+    return !isValidDragCandidate(sfmDoc, fromHandle, { nodeId: id, id: handleId, type });
   }
 
   const allEdges = listEdges(sfmDoc);
@@ -112,7 +143,7 @@ export const StorageNode = memo(function StorageNode({ id, data, selected }: Nod
       />
 
       {isMultiPart && (
-        <p className="mx-2 mt-1.5 rounded-md bg-[var(--danger-soft)] px-2 py-1 text-[10px] text-[var(--danger)]">
+        <p className="mx-2 mt-1.5 rounded-md bg-[var(--warning-soft)] px-2 py-1 text-[10px] text-[var(--warning)]">
           This Storage Container is carrying more than one item type at once — each is tracked independently below.
         </p>
       )}
@@ -129,8 +160,30 @@ export const StorageNode = memo(function StorageNode({ id, data, selected }: Nod
             // positive — a supply. Net = how fast the container is FILLING
             // (positive) or DRAINING (negative): intake magnitude minus outflow.
             const net = subtract(inRate ? abs(inRate) : ZERO, outRate ?? ZERO);
+
+            const inEdges = incoming.filter((e) => e.part === part).map((e) => ({ edgeId: e.id, part }));
+            const outEdges = outgoing.filter((e) => e.part === part).map((e) => ({ edgeId: e.id, part }));
+            const inValidity = computeNodeValidityState(nodeResultById.get(storageConsumerNodeId(id, part)), inEdges, edgeResultById);
+            const outValidity = computeNodeValidityState(nodeResultById.get(storageProducerNodeId(id, part)), outEdges, edgeResultById);
+            const rowSeverity = worseValidity(inValidity?.overall, outValidity?.overall);
+            const rowDetail =
+              rowSeverity === "mismatched"
+                ? [computeMismatchDetails(inEdges, edgeResultById)[part], computeMismatchDetails(outEdges, edgeResultById)[part]]
+                    .filter((d): d is string => !!d)
+                    .join("; ")
+                : undefined;
+            const rowTitle =
+              rowSeverity === "mismatched"
+                ? `Rate mismatch: ${rowDetail || "doesn't reconcile with a connected neighbor"}.`
+                : rowSeverity === "invalid"
+                  ? "This connection could not be resolved — see the source/target node for details."
+                  : neighborTitles(part);
             return (
-              <div key={part} className="flex flex-col gap-0.5 px-2 py-1 text-[11px]" title={neighborTitles(part)}>
+              <div
+                key={part}
+                className={`flex flex-col gap-0.5 px-2 py-1 text-[11px] ${rowRingClass(rowSeverity)}`}
+                title={rowTitle}
+              >
                 <span className="truncate text-[var(--text-primary)]">{part}</span>
                 <div className="flex items-center justify-between text-[var(--text-muted)]">
                   <span>in {inRate ? formatRate(inRate, numberFormats) : "0"}/min</span>

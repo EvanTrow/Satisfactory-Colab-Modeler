@@ -58,7 +58,10 @@ export function useConnectionHandlers(sfmDoc: SfmDocument, containerId: string):
   // own doc comment above for why `CanvasFlow` needs this.
   const reconnectInProgressRef = useRef(false);
 
-  const isValidConnection = useCallback((connection: ConnectionLike) => isValidPortConnection(connection), []);
+  const isValidConnection = useCallback(
+    (connection: ConnectionLike) => isValidPortConnection(sfmDoc, connection),
+    [sfmDoc],
+  );
 
   const onConnect = useCallback(
     (connection: Connection) => {

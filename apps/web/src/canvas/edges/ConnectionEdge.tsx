@@ -54,6 +54,7 @@
 // falls out for free from which element physically exists under the
 // cursor, without either handler needing to check the other's state.
 import { memo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useTranslation } from "react-i18next";
 
 import { parseRational } from "@scm/rational";
 import { addWaypoint, getNode, getSettings, removeEdge, removeWaypoint, updateWaypoint } from "@scm/ydoc";
@@ -63,12 +64,21 @@ import { getIconUrl } from "../../assets/icons";
 import { useCanvasDoc } from "../CanvasDocContext";
 import { isDoubleClick, type ClickPoint } from "../doubleClick";
 import { formatRate } from "../formatRate";
+import { computeMismatchDetails } from "../nodes/computeMismatchDetails";
 import { snapPointToGrid } from "../snapToGrid";
 import { useSolverResult } from "../SolverResultContext";
 import { useSettings } from "../useSettings";
 import type { CanvasEdge } from "../useYjsSync";
+import { classifyEdgeValidity, type EdgeValidity } from "./classifyEdgeValidity";
 import { buildStyledPathD, resolveConnectionStyle } from "./connectionStyle";
 import { buildPolyline, nearestSegmentIndex, pointAtT, type Point } from "./edgeGeometry";
+
+/** `"invalid"`/`"mismatched"` -> the same red/orange every other validity indicator in this app uses; `"valid"`/`"unknown"` -> `undefined` (keep this edge's normal muted/accent look). */
+function strokeColorFor(validity: EdgeValidity): string | undefined {
+  if (validity === "invalid") return "var(--danger)";
+  if (validity === "mismatched") return "var(--mismatch)";
+  return undefined;
+}
 
 // `transform` is set entirely via inline `style` below (both the
 // -50%/-50% centering offset and the flow-position translate need to
@@ -122,6 +132,7 @@ export const ConnectionEdge = memo(function ConnectionEdge({
 }: EdgeProps<CanvasEdge>) {
   const { sfmDoc } = useCanvasDoc();
   const { screenToFlowPosition } = useReactFlow();
+  const { t } = useTranslation("app");
   // Job 027: document-wide default + per-edge override (`record.style`) —
   // see `connectionStyle.ts`'s header for the precedence rule and the
   // Direct/Curves/Horizontal <-> straight/bezier/step
@@ -254,6 +265,31 @@ export const ConnectionEdge = memo(function ConnectionEdge({
   const edgeResult = edgeResultById.get(id);
   const iconUrl = getIconUrl(record.part);
   const labelText = edgeResult ? formatRate(parseRational(edgeResult.rate), settings.numberFormats) : record.part;
+
+  // Calculation-validation visuals: color the wire itself, not just the
+  // nodes at either end — a user shouldn't have to trace a red/orange
+  // border back to figure out WHICH connection caused it. `"unknown"` (no
+  // `EdgeSolveResult` at all — None mode, pre-first-solve, or an edge
+  // incident to a Splurger, whose rewrite genuinely has no per-edge result
+  // to look up — see `splurgerPassthrough.ts`'s header) renders exactly as
+  // before this pass: no color change, no regression.
+  const edgeValidity = classifyEdgeValidity(edgeResult);
+  const validityStroke = strokeColorFor(edgeValidity);
+  // Reuses the exact same solver-authored explanation text
+  // `computeMismatchDetails.ts`/`RecipeNode.tsx`'s card banner already show
+  // (never re-derived here) — a mismatched wire's tooltip says WHY, not just
+  // "something's wrong."
+  const mismatchDetail =
+    edgeValidity === "mismatched" ? computeMismatchDetails([{ edgeId: id, part: record.part }], edgeResultById)[record.part] : undefined;
+  // `undefined` (valid/unknown) means "no validity story to tell" — each
+  // label div below falls back to its own normal gesture-hint title in that
+  // case, unchanged from before this pass.
+  const validityTitle =
+    edgeValidity === "invalid"
+      ? t("node.portTooltip.invalid")
+      : edgeValidity === "mismatched"
+        ? t("node.portTooltip.mismatched", { detail: mismatchDetail ?? t("node.mismatchDetailFallback") })
+        : undefined;
 
   /**
    * Inserts a new waypoint immediately after `index`, at the midpoint
@@ -464,8 +500,13 @@ export const ConnectionEdge = memo(function ConnectionEdge({
         path={pathD}
         markerEnd={markerEnd}
         style={{
-          stroke: selected ? "var(--accent)" : "var(--text-muted)",
-          strokeWidth: selected ? 2 : 1.5,
+          // Validity wins over the plain "selected" look — same precedence
+          // `RecipeNode.tsx`'s own border cascade already established
+          // (`highlightBorderClass(...) ?? ... ?? (selected ? accent : ...)`):
+          // a broken/mismatched wire needs to stay visible even while
+          // selected, not get masked by the accent color.
+          stroke: validityStroke ?? (selected ? "var(--accent)" : "var(--text-muted)"),
+          strokeWidth: validityStroke ? 2.5 : selected ? 2 : 1.5,
           ...style,
         }}
         interactionWidth={16}
@@ -473,17 +514,18 @@ export const ConnectionEdge = memo(function ConnectionEdge({
       <EdgeLabelRenderer>
         {storedWaypoints.length === 0 && (
           <div
-            className={`${labelClass} ${selected ? "border-[var(--accent)] text-[var(--accent)]" : ""}`}
+            className={`${labelClass} ${!validityStroke && selected ? "border-[var(--accent)] text-[var(--accent)]" : ""}`}
             style={{
               transform: `translate(-50%, -50%) translate(${displayLabelPoint.x}px, ${displayLabelPoint.y}px)`,
               pointerEvents: "all",
               zIndex: EDGE_OVERLAY_Z_INDEX,
+              ...(validityStroke ? { borderColor: validityStroke, color: validityStroke } : {}),
             }}
             onPointerDown={handleLabelPointerDown}
             onPointerMove={handleLabelPointerMove}
             onPointerUp={handleLabelPointerUp}
             onContextMenu={handleLabelContextMenu}
-            title="Drag to create a waypoint. Double-right-click: delete connection."
+            title={validityTitle ?? "Drag to create a waypoint. Double-right-click: delete connection."}
           >
             {iconUrl && <img src={iconUrl} alt="" className={labelIconClass} />}
             {labelText}
@@ -495,18 +537,19 @@ export const ConnectionEdge = memo(function ConnectionEdge({
             // `addWaypoint`/`removeWaypoint`/`updateWaypoint` address by) —
             // there's no other stable id to key on.
             key={index}
-            className={`${labelClass} ${selected ? "border-[var(--accent)] text-[var(--accent)]" : ""}`}
+            className={`${labelClass} ${!validityStroke && selected ? "border-[var(--accent)] text-[var(--accent)]" : ""}`}
             style={{
               transform: `translate(-50%, -50%) translate(${point.x}px, ${point.y}px)`,
               pointerEvents: "all",
               zIndex: EDGE_OVERLAY_Z_INDEX + 1,
+              ...(validityStroke ? { borderColor: validityStroke, color: validityStroke } : {}),
             }}
             onClick={(event) => handleWaypointClick(index, event)}
             onContextMenu={(event) => handleWaypointContextMenu(index, event)}
             onPointerDown={(event) => handleWaypointPointerDown(index, event)}
             onPointerMove={handleWaypointPointerMove}
             onPointerUp={handleWaypointPointerUp}
-            title="Drag to move. Double-click: insert a waypoint after this one. Double-right-click: remove this waypoint."
+            title={validityTitle ?? "Drag to move. Double-click: insert a waypoint after this one. Double-right-click: remove this waypoint."}
           >
             {iconUrl && <img src={iconUrl} alt="" className={labelIconClass} />}
             {labelText}

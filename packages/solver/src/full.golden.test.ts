@@ -265,3 +265,82 @@ describe("Full mode golden values — two-tier priority (hand-derived: \"top dra
     expect(equals(parseRational(bottomNode.machineCount), of(1))).toBe(true);
   });
 });
+
+describe("Full mode golden values — auto-inferred priority (no explicit priorityTier tag)", () => {
+  it("a limited sibling gets its FULL demand ahead of an unlimited one, even when that demand is ABOVE the fair equal share", () => {
+    // Regression test for the reported bug: a splitter feeding one node with
+    // an explicit machine limit and one with no limit at all used to split
+    // perfectly evenly (45/45 of a 90/min supply) even though the limited
+    // node ("plateA", pinned to 2 machines, a hard 60/min Iron Ingot demand)
+    // needed MORE than the equal share — max-min fairness alone only yields
+    // to a cap that's BELOW the equal share, so a cap of 60 (above the 45
+    // equal share) never triggered saturation and "plateA" was left 15/min
+    // short while "plateB" (which can accept any amount) sat on an
+    // unnecessary surplus. No edge here sets `priorityTier` explicitly —
+    // "plateA"'s tier is inferred purely from having a `limit` at all.
+    const producer = miner("producer", "90");
+    const smelter = unconstrainedSmelter("smelter");
+    const plateA: SolverNode = {
+      id: "plateA",
+      recipe: "Iron Plate",
+      machine: "Constructor",
+      purity: null,
+      limit: "2",
+      limitMode: "machines",
+      clock: null,
+      shards: 0,
+    };
+    const plateB: SolverNode = {
+      id: "plateB",
+      recipe: "Iron Plate",
+      machine: "Constructor",
+      purity: null,
+      limit: null,
+      limitMode: "machines",
+      clock: null,
+      shards: 0,
+    };
+    const edges: SolverEdge[] = [
+      { id: "e-ore", part: "Iron Ore", fromNode: "producer", fromPort: "out", toNode: "smelter", toPort: "in" },
+      { id: "e-a", part: "Iron Ingot", fromNode: "smelter", fromPort: "out", toNode: "plateA", toPort: "in" },
+      { id: "e-b", part: "Iron Ingot", fromNode: "smelter", fromPort: "out", toNode: "plateB", toPort: "in" },
+    ];
+    const result = solveFull({ nodes: [producer, smelter, plateA, plateB], edges });
+
+    expect(result.valid).toBe(true);
+    const edgeA = result.edges.find((e) => e.edgeId === "e-a")!;
+    const edgeB = result.edges.find((e) => e.edgeId === "e-b")!;
+    expect(equals(parseRational(edgeA.rate), of(60))).toBe(true);
+    expect(equals(parseRational(edgeB.rate), of(30))).toBe(true);
+    expect(edgeA.valid).toBe(true);
+    expect(edgeB.valid).toBe(true);
+
+    const plateANode = result.nodes.find((n) => n.nodeId === "plateA")!;
+    expect(plateANode.valid).toBe(true);
+    expect(equals(parseRational(plateANode.machineCount), of(2))).toBe(true);
+  });
+
+  it("two limited siblings still fair-share between themselves (both auto-inferred to the same top tier)", () => {
+    // Both pinned to a 45/min demand each (summing to the producer's full
+    // 90/min supply) so this stays a clean, valid graph — the point isn't
+    // saturation math (already covered elsewhere), just that two EQUALLY
+    // limited siblings land in the same tier and neither starves the other.
+    const nodes = [miner("producer", "90"), pinnedSmelter("a", "45"), pinnedSmelter("b", "45")];
+    const edges = [edge("e-a", "producer", "a"), edge("e-b", "producer", "b")];
+    const result = solveFull({ nodes, edges });
+
+    expect(result.valid).toBe(true);
+    expect(equals(ingotRate(result, "a"), of(45))).toBe(true);
+    expect(equals(ingotRate(result, "b"), of(45))).toBe(true);
+  });
+
+  it("two unlimited siblings still fair-share between themselves (both auto-inferred to the same bottom tier)", () => {
+    const nodes = [miner("producer", "90"), unconstrainedSmelter("a"), unconstrainedSmelter("b")];
+    const edges = [edge("e-a", "producer", "a"), edge("e-b", "producer", "b")];
+    const result = solveFull({ nodes, edges });
+
+    expect(result.valid).toBe(true);
+    expect(equals(ingotRate(result, "a"), of(45))).toBe(true);
+    expect(equals(ingotRate(result, "b"), of(45))).toBe(true);
+  });
+});

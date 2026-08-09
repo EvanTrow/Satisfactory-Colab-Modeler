@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   computeStorageBufferNodes,
+  originalEdgeIdFromStorageEdgeId,
   storageConsumerNodeId,
   storageProducerNodeId,
   type StorageEdgeLike,
@@ -97,5 +98,16 @@ describe("computeStorageBufferNodes", () => {
     );
     expect(result.nodes).toHaveLength(2);
     expect(result.multiPartNodeIds.size).toBe(0);
+  });
+});
+
+describe("originalEdgeIdFromStorageEdgeId", () => {
+  it("recovers the original edge id from a storage-rewritten one", () => {
+    expect(originalEdgeIdFromStorageEdgeId("stg-e:e1")).toBe("e1");
+  });
+
+  it("returns undefined for an id that was never storage-rewritten", () => {
+    expect(originalEdgeIdFromStorageEdgeId("e1")).toBeUndefined();
+    expect(originalEdgeIdFromStorageEdgeId("sk-e:e1")).toBeUndefined();
   });
 });

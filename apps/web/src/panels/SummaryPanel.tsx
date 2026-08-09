@@ -11,13 +11,26 @@ import { useTranslation } from "react-i18next";
 
 import { defaultGameData } from "@scm/gamedata";
 import { formatRational, parseRational } from "@scm/rational";
-import { listNodes, type NodeRecord, type NumberFormats, type SfmDocument } from "@scm/ydoc";
+import {
+  listContainers,
+  listEdges,
+  listNodes,
+  type Container,
+  type EdgeRecord,
+  type NodeRecord,
+  type NumberFormats,
+  type SfmDocument,
+} from "@scm/ydoc";
 
 import { useFocusTrap } from "../a11y";
 import { useGameTerm } from "../i18n";
 import { useSolverResult } from "../canvas/SolverResultContext";
 import type { ThemeMode } from "../theme";
 import type { CanvasNode } from "../canvas/useYjsSync";
+import { blueprintCompoundNodeId } from "../workers";
+import { originalEdgeIdFromSinkEdgeId, sinkConsumerNodeId } from "../workers/sinkPassthrough";
+import { originalEdgeIdFromStorageEdgeId, storageConsumerNodeId, storageProducerNodeId } from "../workers/storagePassthrough";
+import { computeIssueList, type EdgeResolution, type IssueEntry, type NodeResolution } from "./summary/computeIssueList";
 import {
   nodeIdsForScope,
   summarizeScope,
@@ -27,6 +40,90 @@ import {
 import { usePopoutWindow } from "./summary/usePopoutWindow";
 
 const gameData = defaultGameData;
+
+/** A friendly display name for any real, on-canvas node — mirrors each node component's own default-label convention (`RecipeNode.tsx`'s `gameTerm(recipe.name)`, `SinkNode.tsx`'s `defaultLabel`, `StorageNode.tsx`'s literal "Storage Container") without importing those component files into this panel. */
+function nodeDisplayName(node: NodeRecord, gameTerm: (key: string) => string): string {
+  if (node.title) return node.title;
+  if (node.kind === "recipe") {
+    const recipe = node.recipe ? gameData.recipesByName.get(node.recipe) : undefined;
+    return recipe ? gameTerm(recipe.name) : node.recipe || node.id;
+  }
+  if (node.kind === "depot") return "Dimensional Depot Uploader";
+  if (node.kind === "sink") return "AWESOME Sink";
+  if (node.kind === "storage") return "Storage Container";
+  if (node.kind === "splurger") return "Splurger";
+  return node.id;
+}
+
+/**
+ * Builds the `computeIssueList.ts` resolver callbacks from a snapshot of
+ * live doc state — the "which synthetic solver id maps back to which real,
+ * on-canvas node" unwinding this panel owns so `computeIssueList` itself
+ * can stay a small, pure function with no `@scm/ydoc`/passthrough-worker
+ * knowledge. Every synthetic id family this app currently mints
+ * (`sinkConsumerNodeId`, `storageConsumerNodeId`/`storageProducerNodeId`,
+ * `blueprintCompoundNodeId`) is covered; a Splurger never appears in solver
+ * output at all (`splurgerPassthrough.ts`'s own header — it's never a
+ * `SolverNode`), so there's nothing to map for it.
+ */
+function buildIssueResolvers(
+  allNodes: readonly NodeRecord[],
+  allEdges: readonly EdgeRecord[],
+  allContainers: readonly Container[],
+  gameTerm: (key: string) => string,
+): { resolveNode: (id: string) => NodeResolution | undefined; resolveEdge: (id: string) => EdgeResolution | undefined } {
+  const nodeById = new Map(allNodes.map((n) => [n.id, n] as const));
+  const edgeById = new Map(allEdges.map((e) => [e.id, e] as const));
+
+  // Every synthetic per-part id a Sink/Storage node could produce, precomputed once — mirrors `SinkNode.tsx`'s/`StorageNode.tsx`'s own `distinctParts` derivation (every distinct part touching that node's incident edges).
+  const syntheticNodeById = new Map<string, NodeRecord>();
+  for (const node of allNodes) {
+    if (node.kind !== "sink" && node.kind !== "depot" && node.kind !== "storage") continue;
+    const parts = new Set(allEdges.filter((e) => e.fromNode === node.id || e.toNode === node.id).map((e) => e.part));
+    for (const part of parts) {
+      if (node.kind === "storage") {
+        syntheticNodeById.set(storageConsumerNodeId(node.id, part), node);
+        syntheticNodeById.set(storageProducerNodeId(node.id, part), node);
+      } else {
+        syntheticNodeById.set(sinkConsumerNodeId(node.id, part), node);
+      }
+    }
+  }
+
+  // Every blueprint container's own compound-node id, precomputed the same way (using the real `blueprintCompoundNodeId` builder, not a hardcoded prefix, so this can never drift from `blueprintCollapse.ts`'s own convention).
+  const blueprintContainerById = new Map<string, Container>();
+  for (const container of allContainers) {
+    if (container.kind === "blueprint") blueprintContainerById.set(blueprintCompoundNodeId(container.id), container);
+  }
+
+  function resolveNode(solverNodeId: string): NodeResolution | undefined {
+    const direct = nodeById.get(solverNodeId);
+    if (direct) return { navigateNodeId: direct.id, label: nodeDisplayName(direct, gameTerm) };
+
+    const container = blueprintContainerById.get(solverNodeId);
+    if (container) return { navigateNodeId: container.id, label: container.title || "Blueprint" };
+
+    const synthetic = syntheticNodeById.get(solverNodeId);
+    return synthetic ? { navigateNodeId: synthetic.id, label: nodeDisplayName(synthetic, gameTerm) } : undefined;
+  }
+
+  function resolveEdge(solverEdgeId: string): EdgeResolution | undefined {
+    const realId = originalEdgeIdFromSinkEdgeId(solverEdgeId) ?? originalEdgeIdFromStorageEdgeId(solverEdgeId) ?? solverEdgeId;
+    const edge = edgeById.get(realId);
+    if (!edge) return undefined;
+    const fromNode = nodeById.get(edge.fromNode);
+    const toNode = nodeById.get(edge.toNode);
+    if (!fromNode || !toNode) return undefined;
+    return {
+      fromNavigateNodeId: fromNode.id,
+      toNavigateNodeId: toNode.id,
+      fromLabel: nodeDisplayName(fromNode, gameTerm),
+      toLabel: nodeDisplayName(toNode, gameTerm),
+    };
+  }
+
+  return { resolveNode, resolveEdge };
+}
 
 /**
  * The whole document's recipe nodes, reactively — deliberately NOT
@@ -52,15 +149,60 @@ function useAllRecipeNodes(sfmDoc: SfmDocument): NodeRecord[] {
   return nodes;
 }
 
+/** Same reactive pattern as `useAllRecipeNodes`, but every node kind (Sink/Storage/Splurger included) — the Issues section below needs to resolve a synthetic solver id back to whatever REAL node produced it, regardless of kind. */
+function useAllNodes(sfmDoc: SfmDocument): NodeRecord[] {
+  const [nodes, setNodes] = useState<NodeRecord[]>(() => listNodes(sfmDoc));
+  useEffect(() => {
+    const sync = () => setNodes(listNodes(sfmDoc));
+    sync();
+    sfmDoc.nodes.observeDeep(sync);
+    return () => sfmDoc.nodes.unobserveDeep(sync);
+  }, [sfmDoc]);
+  return nodes;
+}
+
+/** Same reactive pattern, over `sfmDoc.edges` — the Issues section needs every edge document-wide (not just the current view's) to resolve a rewritten Sink/Storage edge id back to its real endpoints. */
+function useAllEdges(sfmDoc: SfmDocument): EdgeRecord[] {
+  const [edges, setEdges] = useState<EdgeRecord[]>(() => listEdges(sfmDoc));
+  useEffect(() => {
+    const sync = () => setEdges(listEdges(sfmDoc));
+    sync();
+    sfmDoc.edges.observeDeep(sync);
+    return () => sfmDoc.edges.unobserveDeep(sync);
+  }, [sfmDoc]);
+  return edges;
+}
+
+/** Same reactive pattern, over `sfmDoc.containers` — needed to resolve a Blueprint compound node id (`bp:<containerId>`) back to that container's own title. */
+function useAllContainers(sfmDoc: SfmDocument): Container[] {
+  const [containers, setContainers] = useState<Container[]>(() => listContainers(sfmDoc));
+  useEffect(() => {
+    const sync = () => setContainers(listContainers(sfmDoc));
+    sync();
+    sfmDoc.containers.observeDeep(sync);
+    return () => sfmDoc.containers.unobserveDeep(sync);
+  }, [sfmDoc]);
+  return containers;
+}
+
 export interface SummaryPanelProps {
   sfmDoc: SfmDocument;
   /** The container currently being viewed (Job 013's `containerId`) — the anchor for the "Current Outpost" scope. */
   containerId: string;
-  /** The currently-rendered canvas nodes (`useYjsSync`'s own scoped list) — used only to read Job 012's `.selected` flags for the "Selected" scope. */
+  /** The currently-rendered canvas nodes (`useYjsSync`'s own scoped list) — used to read Job 012's `.selected` flags for the "Selected" scope, AND (calculation-validation visuals pass) to know which Issues-list entries are actually clickable right now (a node in a different, unopened container can't be `fitView`-ed to). */
   nodes: CanvasNode[];
   numberFormats: NumberFormats;
   /** Job 027: threaded through so the popped-out window's own `<html>` gets the same `dark`/`light` class as the main window — see `SummaryPanel`'s theme-sync effect below. */
   theme: ThemeMode;
+  /**
+   * Calculation-validation visuals pass: clicking an Issues-list entry calls
+   * this with a real, on-canvas node id — `CanvasView.tsx` wires it straight
+   * into the exact same `pendingFitNodeIds`/`fitView` mechanism it already
+   * uses after Generate Factory, no new camera code. Only ever called for a
+   * node id present in `nodes` (this component's own `nodes` prop) — see
+   * `IssueRow`'s own `isNavigable` check.
+   */
+  onJumpToNode?: (nodeId: string) => void;
 }
 
 const SCOPES: readonly SummaryScope[] = ["everything", "outpost", "selected"];
@@ -126,23 +268,65 @@ function BalanceRow({ part, balance, numberFormats }: BalanceRowProps) {
   );
 }
 
+/** One severity's `--danger`/`--mismatch`/`--warning` color pair — matches the exact tokens `RecipeNode.tsx`'s own red/orange/yellow tiers use, so an Issues-list entry reads as the same problem the node/edge itself is already showing. */
+const ISSUE_SEVERITY_STYLE: Record<IssueEntry["severity"], { text: string; bg: string }> = {
+  invalid: { text: "text-[var(--danger)]", bg: "bg-[var(--danger-soft)]" },
+  mismatched: { text: "text-[var(--mismatch)]", bg: "bg-[var(--mismatch-soft)]" },
+  unresolved: { text: "text-[var(--warning)]", bg: "bg-[var(--warning-soft)]" },
+};
+
+interface IssueRowProps {
+  issue: IssueEntry;
+  navigableNodeIds: ReadonlySet<string>;
+  onJumpToNode?: (nodeId: string) => void;
+}
+
+/** One Issues-list entry — clickable (jumps the canvas to it) only when at least one of its `navigateNodeIds` is actually in the current view; otherwise a plain, non-interactive row (still tells the user what's wrong and where, just can't fly them there from a different container). */
+function IssueRow({ issue, navigableNodeIds, onJumpToNode }: IssueRowProps) {
+  const style = ISSUE_SEVERITY_STYLE[issue.severity];
+  const target = issue.navigateNodeIds.find((id) => navigableNodeIds.has(id));
+  const content = (
+    <>
+      <p className={`truncate text-[11px] font-medium ${style.text}`}>{issue.label}</p>
+      <p className="text-[10px] text-[var(--text-secondary)]">{issue.message}</p>
+    </>
+  );
+  if (target && onJumpToNode) {
+    return (
+      <button
+        type="button"
+        onClick={() => onJumpToNode(target)}
+        className={`w-full rounded-md ${style.bg} px-2 py-1 text-left transition-opacity hover:opacity-80`}
+        title="Jump to this node"
+      >
+        {content}
+      </button>
+    );
+  }
+  return <div className={`rounded-md ${style.bg} px-2 py-1`}>{content}</div>;
+}
+
 interface SummaryBodyProps {
   scope: SummaryScope;
   onScopeChange: (scope: SummaryScope) => void;
   summary: ScopedSummary;
   numberFormats: NumberFormats;
   stale: boolean;
+  /** Calculation-validation visuals pass — see `SummaryPanelProps.onJumpToNode`'s own doc comment. Document-wide, independent of `scope` (a user wants to know about every problem, not just the ones inside whichever scope the balance table below happens to be filtered to). */
+  issues: readonly IssueEntry[];
+  navigableNodeIds: ReadonlySet<string>;
+  onJumpToNode?: (nodeId: string) => void;
 }
 
 /**
- * The actual content — scope tabs + balance table + power/sink readouts +
- * cost-to-build list — extracted so it can be rendered in EITHER the inline
- * popover OR (Job 027) the popped-out window's portal without duplicating
- * this JSX. Contains no popover/portal-specific chrome of its own (no
- * backdrop, no pop-out button) — the two call sites below each wrap it in
- * whatever container makes sense for where it's rendered.
+ * The actual content — Issues list + scope tabs + balance table + power/sink
+ * readouts + cost-to-build list — extracted so it can be rendered in EITHER
+ * the inline popover OR (Job 027) the popped-out window's portal without
+ * duplicating this JSX. Contains no popover/portal-specific chrome of its
+ * own (no backdrop, no pop-out button) — the two call sites below each wrap
+ * it in whatever container makes sense for where it's rendered.
  */
-function SummaryBody({ scope, onScopeChange, summary, numberFormats, stale }: SummaryBodyProps) {
+function SummaryBody({ scope, onScopeChange, summary, numberFormats, stale, issues, navigableNodeIds, onJumpToNode }: SummaryBodyProps) {
   const { t } = useTranslation("app");
   const { t: tRaw } = useTranslation();
   const gameTerm = useGameTerm();
@@ -150,6 +334,19 @@ function SummaryBody({ scope, onScopeChange, summary, numberFormats, stale }: Su
 
   return (
     <>
+      {issues.length > 0 && (
+        <div className="mb-3">
+          <p className="mb-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+            Issues ({issues.length})
+          </p>
+          <div className="max-h-40 space-y-1 overflow-y-auto">
+            {issues.map((issue) => (
+              <IssueRow key={issue.key} issue={issue} navigableNodeIds={navigableNodeIds} onJumpToNode={onJumpToNode} />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="mb-3 flex gap-1" role="tablist" aria-label={t("summary.scopeAriaLabel")}>
         {SCOPES.map((s) => (
           <button
@@ -254,13 +451,20 @@ function SummaryBody({ scope, onScopeChange, summary, numberFormats, stale }: Su
   );
 }
 
-export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme }: SummaryPanelProps) {
+export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme, onJumpToNode }: SummaryPanelProps) {
   const { t } = useTranslation("app");
   const { t: tRaw } = useTranslation();
+  const gameTerm = useGameTerm();
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<SummaryScope>("everything");
   const { result, staleness } = useSolverResult();
   const allNodes = useAllRecipeNodes(sfmDoc);
+  // Calculation-validation visuals pass — see `buildIssueResolvers`'s own
+  // header for why the Issues list needs every node/edge/container
+  // document-wide (not just recipe nodes, not just the current view).
+  const allNodesUnfiltered = useAllNodes(sfmDoc);
+  const allEdges = useAllEdges(sfmDoc);
+  const allContainers = useAllContainers(sfmDoc);
   // Job 027: the pop-out window — see `usePopoutWindow.ts`'s own header for
   // why this is a portal, not a second React root.
   const popout = usePopoutWindow();
@@ -289,6 +493,10 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme 
   const summary = summarizeScope(nodeIds, result?.nodes ?? [], nodeRecordById, gameData);
   const stale = staleness === "stale-recomputing";
 
+  const { resolveNode, resolveEdge } = buildIssueResolvers(allNodesUnfiltered, allEdges, allContainers, gameTerm);
+  const issues = computeIssueList(result?.nodes ?? [], result?.edges ?? [], resolveNode, resolveEdge);
+  const navigableNodeIds = new Set(nodes.map((n) => n.id));
+
   // Job 027: keep the popped-out window's own `<html>` in sync with the
   // main window's theme — `usePopoutWindow.ts` copies stylesheets once at
   // open time, but the `dark`/`light` CLASS those tokens key off (Job 014's
@@ -316,7 +524,16 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme 
   }
 
   const body = (
-    <SummaryBody scope={scope} onScopeChange={setScope} summary={summary} numberFormats={numberFormats} stale={stale} />
+    <SummaryBody
+      scope={scope}
+      onScopeChange={setScope}
+      summary={summary}
+      numberFormats={numberFormats}
+      stale={stale}
+      issues={issues}
+      navigableNodeIds={navigableNodeIds}
+      onJumpToNode={onJumpToNode}
+    />
   );
 
   return (
@@ -331,6 +548,15 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme 
       >
         {tRaw("SUMMARY")}
         {popout.isOpen ? ` ${t("summary.poppedOutSuffix")}` : ""}
+        {/* Calculation-validation visuals pass: a quick "something's wrong" signal visible without opening the panel at all — same `--danger` token every other invalid indicator in this app uses. */}
+        {issues.length > 0 && (
+          <span
+            className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--danger)] px-1 text-[10px] font-semibold text-[var(--accent-contrast)]"
+            title={`${issues.length} issue${issues.length === 1 ? "" : "s"}`}
+          >
+            {issues.length}
+          </span>
+        )}
       </button>
       {open && !popout.isOpen && (
         <>

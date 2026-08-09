@@ -14,6 +14,17 @@
 // PLAN.md §10.3 was resolved" writeup. This card never computes anything
 // itself; it just displays whatever the live solve already produced, same
 // as `RecipeNode.tsx` does for a real node's machine count.
+//
+// Calculation-validation visuals pass: same port-boundary ring treatment
+// `OutpostNode.tsx` gained (each `DerivedOutpostPort.edgeId` -> that edge's
+// own `classifyEdgeValidity`), PLUS — unlike a plain outpost — a real
+// whole-card border/banner from `copiesResult` itself: a blueprint compound
+// node IS a genuine `SolverNode` (its copy count solves exactly like any
+// other node's machine count), so `computeNodeValidityState` applies to it
+// directly, the same as `RecipeNode.tsx`'s own card. Same known v1
+// limitation as `OutpostNode.tsx`: a problem entirely internal to the
+// blueprint (never touching a boundary edge or the copies pin itself) stays
+// invisible until it's opened.
 import { memo, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 
 import { formatRational, parseRational, toFractionString } from "@scm/rational";
@@ -24,7 +35,9 @@ import { getBlueprintIconUrl } from "../../assets/icons";
 import { useRemotePresence } from "../../collab";
 import { blueprintCompoundNodeId } from "../../workers";
 import { useCanvasDoc } from "../CanvasDocContext";
+import { classifyEdgeValidity } from "../edges/classifyEdgeValidity";
 import { isValidDragCandidate } from "../edges/connectionLogic";
+import { computeNodeValidityState } from "../nodes/computeValidity";
 import { useSolverResult } from "../SolverResultContext";
 import { useSettings } from "../useSettings";
 import type { CanvasNode } from "../useYjsSync";
@@ -35,6 +48,18 @@ const inHandleClass = "!h-3.5 !w-3.5 !border-2 !border-[var(--surface-card)] !bg
 const outHandleClass = "!h-3.5 !w-3.5 !border-2 !border-[var(--surface-card)] !bg-[var(--blueprint)]";
 /** Applied to a `Handle` while a connection is being dragged from elsewhere and dropping it here wouldn't be valid — see `RecipeNode.tsx`'s identical `handleFadeClass`. */
 const handleFadeClass = "opacity-20 pointer-events-none transition-opacity";
+/** Ring-only, no `!bg-*` override — see `OutpostNode.tsx`'s identical `portRingClass` for why. */
+function portRingClass(validity: ReturnType<typeof classifyEdgeValidity>): string | undefined {
+  if (validity === "invalid") return "ring-2 ring-[var(--danger)]";
+  if (validity === "mismatched") return "ring-2 ring-[var(--mismatch)]";
+  return undefined;
+}
+/** Same mapping `RecipeNode.tsx`'s own `highlightBorderClass` uses (minus the dashed "unresolved" treatment — a blueprint's own copy count defaulting is already shown via the existing `"(unresolved — defaulted)"` suffix below, no need to double up on the border too). */
+function cardBorderClass(validity: ReturnType<typeof computeNodeValidityState>): string | undefined {
+  if (validity?.overall === "invalid") return "border-[var(--danger)]";
+  if (validity?.overall === "mismatched") return "border-[var(--mismatch)]";
+  return undefined;
+}
 
 /** A tiny committed-on-blur/Enter numeric field for `Container.copiesLimit` — mirrors `RecipeNode.tsx`'s `useCommittedTextField` pattern (local text while focused, commit on blur/Enter, revert on a failed parse) at a scale not worth extracting a shared hook for two call sites. */
 function useCopiesLimitField(container: { id: string; copiesLimit: number | null }, sfmDoc: Parameters<typeof updateContainer>[0]) {
@@ -84,7 +109,7 @@ export const BlueprintNode = memo(function BlueprintNode({ id, data, selected }:
   const { sfmDoc, navigateToContainer, awareness } = useCanvasDoc();
   const remotePresence = useRemotePresence(awareness);
   const remoteSelectors = remotePresence.filter((peer) => peer.state.selection.includes(id));
-  const { nodeResultById, staleness } = useSolverResult();
+  const { nodeResultById, edgeResultById, staleness } = useSolverResult();
   const numberFormats = useSettings(sfmDoc).numberFormats;
   // See `OutpostNode.tsx`'s identical hook — same `boundary:<edgeId>:<dir>`
   // handle ids, same "always fades during any drag" consequence.
@@ -96,11 +121,18 @@ export const BlueprintNode = memo(function BlueprintNode({ id, data, selected }:
 
   const copiesResult = nodeResultById.get(blueprintCompoundNodeId(container.id));
   const copiesLimitField = useCopiesLimitField(container, sfmDoc);
+  // The compound node's own incident edges, from the solver's perspective,
+  // are exactly this container's boundary-crossing edges — a blueprint
+  // compound node is a real `SolverNode` whose ports ARE these boundary
+  // edges (`blueprintCollapse.ts`'s own header). Reused for both the
+  // whole-card validity below and each individual port's own ring.
+  const boundaryIncidentEdges = ports.map((port) => ({ edgeId: port.edgeId, part: port.part }));
+  const copiesValidity = computeNodeValidityState(copiesResult, boundaryIncidentEdges, edgeResultById);
 
   function isHandleFaded(handleId: string, type: "source" | "target"): boolean {
     if (!fromHandle) return false;
     if (fromHandle.nodeId === id && fromHandle.id === handleId) return false;
-    return !isValidDragCandidate(fromHandle, { nodeId: id, id: handleId, type });
+    return !isValidDragCandidate(sfmDoc, fromHandle, { nodeId: id, id: handleId, type });
   }
 
   function open() {
@@ -110,7 +142,7 @@ export const BlueprintNode = memo(function BlueprintNode({ id, data, selected }:
   return (
     <div
       className={`w-60 cursor-grab rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors active:cursor-grabbing ${
-        selected ? "border-[var(--accent)]" : "border-[var(--blueprint-border)]"
+        cardBorderClass(copiesValidity) ?? (selected ? "border-[var(--accent)]" : "border-[var(--blueprint-border)]")
       } ${staleness === "stale-recomputing" ? "opacity-60" : ""}`}
       style={
         remoteSelectors.length > 0
@@ -157,34 +189,45 @@ export const BlueprintNode = memo(function BlueprintNode({ id, data, selected }:
             No connections cross this blueprint&apos;s boundary yet.
           </p>
         ) : (
-          ports.map((port) => (
-            <div
-              key={port.id}
-              className="relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)]"
-            >
-              {port.direction === "in" && (
-                <Handle
-                  type="target"
-                  position={Position.Left}
-                  id={port.id}
-                  className={`${inHandleClass} ${isHandleFaded(port.id, "target") ? handleFadeClass : ""}`}
-                />
-              )}
-              <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]">
-                {port.direction === "in" ? "→ " : ""}
-                {port.part}
-                {port.direction === "out" ? " →" : ""}
-              </span>
-              {port.direction === "out" && (
-                <Handle
-                  type="source"
-                  position={Position.Right}
-                  id={port.id}
-                  className={`${outHandleClass} ${isHandleFaded(port.id, "source") ? handleFadeClass : ""}`}
-                />
-              )}
-            </div>
-          ))
+          ports.map((port) => {
+            const validity = classifyEdgeValidity(edgeResultById.get(port.edgeId));
+            const ring = portRingClass(validity);
+            return (
+              <div
+                key={port.id}
+                className="relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)]"
+                title={
+                  validity === "invalid"
+                    ? "This connection could not be resolved — see the node/edge for details."
+                    : validity === "mismatched"
+                      ? "Rate mismatch on this boundary connection — see the connected node for details."
+                      : undefined
+                }
+              >
+                {port.direction === "in" && (
+                  <Handle
+                    type="target"
+                    position={Position.Left}
+                    id={port.id}
+                    className={`${inHandleClass} ${ring ?? ""} ${isHandleFaded(port.id, "target") ? handleFadeClass : ""}`}
+                  />
+                )}
+                <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]">
+                  {port.direction === "in" ? "→ " : ""}
+                  {port.part}
+                  {port.direction === "out" ? " →" : ""}
+                </span>
+                {port.direction === "out" && (
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={port.id}
+                    className={`${outHandleClass} ${ring ?? ""} ${isHandleFaded(port.id, "source") ? handleFadeClass : ""}`}
+                  />
+                )}
+              </div>
+            );
+          })
         )}
       </div>
 

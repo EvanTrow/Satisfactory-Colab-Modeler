@@ -10,16 +10,34 @@
 // smoothstep path plus a part-name label is enough to satisfy this job's
 // "correctly shows... a port for that connection" acceptance criterion;
 // Job 014's visual pass owns making this prettier.
+//
+// Calculation-validation visuals pass: this edge's `id` prop is always the
+// real, un-rewritten `EdgeRecord.id` (`useYjsSync.ts`'s
+// `projectedEdgeToFlowEdge`: `id: projected.record.id` — the *projection*
+// changes where it visually terminates, never its identity), the exact same
+// id `edgeResultById` is keyed by. So this can look up the same
+// `EdgeSolveResult` `ConnectionEdge.tsx` does and color the stroke the same
+// way, instead of always hardcoding the outpost amber.
 import { memo } from "react";
 
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps } from "@xyflow/react";
 
+import { classifyEdgeValidity } from "../edges/classifyEdgeValidity";
+import { useSolverResult } from "../SolverResultContext";
 import type { CanvasEdge } from "../useYjsSync";
 
 const labelClass =
   "pointer-events-none absolute select-none whitespace-nowrap rounded-md border border-[var(--outpost-border)] bg-[var(--surface-overlay)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--outpost)] shadow-[var(--shadow-card)]";
 
+/** `"invalid"`/`"mismatched"` -> the same stroke colors `ConnectionEdge.tsx` uses; `"valid"`/`"unknown"` -> `undefined`, i.e. keep the outpost amber. */
+function strokeColorFor(validity: ReturnType<typeof classifyEdgeValidity>): string | undefined {
+  if (validity === "invalid") return "var(--danger)";
+  if (validity === "mismatched") return "var(--mismatch)";
+  return undefined;
+}
+
 export const BoundaryEdge = memo(function BoundaryEdge({
+  id,
   data,
   sourceX,
   sourceY,
@@ -31,23 +49,35 @@ export const BoundaryEdge = memo(function BoundaryEdge({
   markerEnd,
   style,
 }: EdgeProps<CanvasEdge>) {
+  const { edgeResultById } = useSolverResult();
   const record = data?.record;
   if (!record) return null; // defensive: `projectedEdgeToFlowEdge` always sets `data.record`.
 
   const [path, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  const validity = classifyEdgeValidity(edgeResultById.get(id));
+  const validityStroke = strokeColorFor(validity);
 
   return (
     <>
       <BaseEdge
         path={path}
         markerEnd={markerEnd}
-        style={{ ...style, strokeDasharray: "5 4", stroke: "var(--outpost)", strokeWidth: 1.5, opacity: 0.85 }}
+        style={{
+          ...style,
+          strokeDasharray: "5 4",
+          stroke: validityStroke ?? "var(--outpost)",
+          strokeWidth: validityStroke ? 2.5 : 1.5,
+          opacity: 0.85,
+        }}
         interactionWidth={16}
       />
       <EdgeLabelRenderer>
         <div
           className={`${labelClass} ${selected ? "border-[var(--accent)] text-[var(--accent)]" : ""}`}
-          style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+          style={{
+            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            ...(validityStroke ? { borderColor: validityStroke, color: validityStroke } : {}),
+          }}
           title="Boundary connection — crosses an outpost's edge. Move the node in/out of the outpost to change this."
         >
           {record.part}

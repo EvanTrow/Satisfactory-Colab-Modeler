@@ -10,7 +10,18 @@
 // connected neighbor is sending/expecting (a Basic-mode split/merge rate
 // disagreement). Invalid always wins over mismatched when a node/port has
 // both.
-export type RecipeNodeValidity = "valid" | "invalid" | "mismatched";
+//
+// A later pass (the calculation-validation visuals review) added a fourth,
+// lower-severity tier: `"unresolved"` — Basic/Full mode's "no limit and no
+// resolvable neighbor, defaulted to 1 machine" case (`NodeSolveResult.resolved
+// === false` with `.valid === true`). This was a documented gap since Job
+// 019 itself (this file's own original comment: "PLAN.md's two-color scheme
+// has no color for" it) — the node isn't wrong, and there's no neighbor
+// value to disagree with, but the count shown is genuinely undetermined
+// rather than authoritative. Severity order is now
+// `invalid > mismatched > unresolved > valid` — see `computeValidity.ts`'s
+// `escalate`.
+export type RecipeNodeValidity = "valid" | "invalid" | "mismatched" | "unresolved";
 
 export interface RecipeNodeValidityState {
   /** Overall highlight for the node card's border/background — the worst (most severe) state among the node's own fields and every port below. */

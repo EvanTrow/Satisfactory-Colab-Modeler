@@ -103,12 +103,17 @@ export interface SolverNode {
  * point; `"bottom"` only receives whatever's left over once every
  * `"top"`-tier sibling edge (same owning node + part + direction — see
  * `full.ts`'s `buildSplitGroups`) has taken its share, up to its own
- * capacity. `undefined` (the only value None/Manual/Basic mode ever see,
- * and the default for any edge that doesn't set it) behaves identically to
- * `"top"` — every edge participates in the same even-split-preferred pool
- * unless at least one sibling is explicitly tagged `"bottom"`, so existing
- * snapshots with no priority metadata at all behave exactly as before this
- * field existed.
+ * capacity. `undefined` (the only value None/Manual/Basic mode ever see) is
+ * INFERRED by `full.ts`'s `inferredTier` for any edge that doesn't set it
+ * explicitly: an edge whose other endpoint has an explicit `limit` set (a
+ * fixed, finite demand/supply) defaults to `"top"`; one whose other endpoint
+ * has no limit (open-ended — e.g. an "unlimited" AWESOME Sink/Dimensional
+ * Depot, or a node with no resolvable neighbor of its own) defaults to
+ * `"bottom"`. This means a limited node's demand is always satisfied first
+ * from a shared source, ahead of unlimited siblings, even with no priority
+ * metadata set at all — a group where EVERY sibling is limited (or every
+ * sibling is unlimited) still behaves as one plain even-split-preferred
+ * pool, since every candidate lands in the same tier.
  *
  * This is deliberately a single, direction-agnostic property of the edge
  * itself (not "priority as a splitter output" vs "priority as a merger
