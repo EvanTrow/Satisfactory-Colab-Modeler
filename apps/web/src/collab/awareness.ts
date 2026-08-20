@@ -56,7 +56,77 @@ export interface AwarenessEditingField {
   field: string;
 }
 
-/** PLAN.md §5's exact Awareness state shape. */
+export interface AwarenessDraggingNode {
+  /** A real `NodeRecord` id or (Job 013) an outpost/blueprint `Container` id — the same dual id space `useYjsSync.ts`'s `onNodeDragStop` already writes back through, so no separate "is this a container" flag is needed on the wire. */
+  id: string;
+  x: number;
+  y: number;
+}
+
+export interface AwarenessDraggingWaypoint {
+  /** The `EdgeRecord.id` this waypoint belongs to. */
+  edgeId: string;
+  /** Index into that edge's `waypoints` array. */
+  index: number;
+  x: number;
+  y: number;
+}
+
+/**
+ * Live, in-flight drag positions — extends the same "ephemeral, never
+ * persisted" Awareness channel cursors/selection already use to also cover
+ * "where is this node right now, mid-drag" so every peer sees a node glide
+ * across the canvas as it's dragged, not just jump to its final spot once
+ * the dragger releases (`useYjsSync.ts`'s `onNodeDragStop` remains the only
+ * place a drag ever writes into the persisted `sfmDoc`). `containerId`
+ * scopes visibility exactly like `AwarenessCursor.containerId` — a drag
+ * happening inside an outpost peers aren't currently viewing shouldn't
+ * render at all (`isDraggingVisibleInContainer` below).
+ */
+export interface AwarenessDragging {
+  containerId: string;
+  /** Every node/container currently moving in this one drag gesture — a multi-selection drag moves more than one, mirroring `onNodeDragStop`'s own "every dragged node gets its own write-back" handling. */
+  nodes: AwarenessDraggingNode[];
+  /**
+   * Waypoints riding along with this same node-driven group drag —
+   * marquee-selected waypoints (`GroupSelectionContext.ts`'s
+   * `selectedWaypoints`, itself pure per-client UI state that's never
+   * synced) publish their live positions here too, so a remote peer sees
+   * them glide along with the nodes in real time instead of only jumping
+   * to their final spot once the drag commits to the doc. Empty (not
+   * omitted) when this drag isn't carrying any — kept as a plain array
+   * rather than optional so `parseDragging` always produces a consistent
+   * shape.
+   */
+  waypoints: AwarenessDraggingWaypoint[];
+}
+
+/**
+ * Live, in-flight *waypoint/connection-label* drag — the edge-level sibling
+ * of `AwarenessDragging` above, since `ConnectionEdge.tsx`'s waypoint
+ * gestures are their own local optimistic-drag state (`dragIndex`/
+ * `dragPoint`, `labelDragIndex`/`labelDragPoint`), entirely separate from
+ * node dragging, and need their own broadcast. At most one of these is ever
+ * live per peer (a person only drags one waypoint/label at a time).
+ */
+export interface AwarenessEdgeDragging {
+  containerId: string;
+  /** The `EdgeRecord.id` this drag belongs to. */
+  edgeId: string;
+  /**
+   * `"move"` — repositioning the existing waypoint at `waypointIndex`
+   * (`ConnectionEdge.tsx`'s `dragIndex`/`dragPoint`). `"insert"` — dragging
+   * the bare (no-waypoint-yet) label to create the connection's first
+   * waypoint (`labelDragIndex`/`labelDragPoint`); `waypointIndex` is then
+   * the insertion index, not an existing waypoint's.
+   */
+  mode: "move" | "insert";
+  waypointIndex: number;
+  x: number;
+  y: number;
+}
+
+/** PLAN.md §5's Awareness state shape, plus `dragging`/`edgeDragging` (live in-flight node and waypoint drag positions — not part of PLAN.md §5's original four fields, added alongside them on the same ephemeral channel). */
 export interface AwarenessState {
   userId: string;
   displayName: string;
@@ -65,6 +135,8 @@ export interface AwarenessState {
   cursor: AwarenessCursor | null;
   selection: string[];
   editingField: AwarenessEditingField | null;
+  dragging: AwarenessDragging | null;
+  edgeDragging: AwarenessEdgeDragging | null;
 }
 
 /** The subset of a logged-in user's own identity needed to publish this client's local Awareness state — `App.tsx` derives this from `GET /auth/me`'s response (see that file's header comment) and threads it down to `CanvasView`. */
@@ -111,6 +183,8 @@ export function createLocalAwarenessState(user: LocalUserIdentity): AwarenessSta
     cursor: null,
     selection: [],
     editingField: null,
+    dragging: null,
+    edgeDragging: null,
   };
 }
 
@@ -130,6 +204,73 @@ function parseEditingField(raw: unknown): AwarenessEditingField | null {
   const value = raw as Record<string, unknown>;
   if (typeof value.nodeId !== "string" || typeof value.field !== "string") return null;
   return { nodeId: value.nodeId, field: value.field };
+}
+
+function parseDraggingNode(raw: unknown): AwarenessDraggingNode | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.id !== "string" || typeof value.x !== "number" || typeof value.y !== "number") return null;
+  return { id: value.id, x: value.x, y: value.y };
+}
+
+function parseDraggingWaypoint(raw: unknown): AwarenessDraggingWaypoint | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  if (
+    typeof value.edgeId !== "string" ||
+    typeof value.index !== "number" ||
+    typeof value.x !== "number" ||
+    typeof value.y !== "number"
+  ) {
+    return null;
+  }
+  return { edgeId: value.edgeId, index: value.index, x: value.x, y: value.y };
+}
+
+function parseDragging(raw: unknown): AwarenessDragging | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.containerId !== "string" || !Array.isArray(value.nodes)) return null;
+  const nodes: AwarenessDraggingNode[] = [];
+  for (const entry of value.nodes) {
+    const parsed = parseDraggingNode(entry);
+    if (!parsed) return null;
+    nodes.push(parsed);
+  }
+  // `waypoints` is a later addition — tolerate an older/partial peer state
+  // that predates it (missing entirely) by treating that as "none", rather
+  // than rejecting the whole `dragging` payload (which would also hide that
+  // peer's node positions).
+  const rawWaypoints = value.waypoints;
+  const waypoints: AwarenessDraggingWaypoint[] = [];
+  if (Array.isArray(rawWaypoints)) {
+    for (const entry of rawWaypoints) {
+      const parsed = parseDraggingWaypoint(entry);
+      if (!parsed) return null;
+      waypoints.push(parsed);
+    }
+  } else if (rawWaypoints !== undefined) {
+    return null;
+  }
+  return { containerId: value.containerId, nodes, waypoints };
+}
+
+function parseEdgeDragging(raw: unknown): AwarenessEdgeDragging | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.containerId !== "string" || typeof value.edgeId !== "string") return null;
+  if (value.mode !== "move" && value.mode !== "insert") return null;
+  if (typeof value.waypointIndex !== "number" || typeof value.x !== "number" || typeof value.y !== "number") return null;
+  return {
+    containerId: value.containerId,
+    edgeId: value.edgeId,
+    mode: value.mode,
+    waypointIndex: value.waypointIndex,
+    x: value.x,
+    y: value.y,
+  };
 }
 
 /**
@@ -159,6 +300,12 @@ export function parseAwarenessState(raw: unknown): AwarenessState | null {
   if (value.editingField !== null && value.editingField !== undefined && parseEditingField(value.editingField) === null) {
     return null;
   }
+  if (value.dragging !== null && value.dragging !== undefined && parseDragging(value.dragging) === null) {
+    return null;
+  }
+  if (value.edgeDragging !== null && value.edgeDragging !== undefined && parseEdgeDragging(value.edgeDragging) === null) {
+    return null;
+  }
 
   return {
     userId: value.userId,
@@ -168,6 +315,8 @@ export function parseAwarenessState(raw: unknown): AwarenessState | null {
     cursor: parseCursor(value.cursor),
     selection: value.selection as string[],
     editingField: parseEditingField(value.editingField),
+    dragging: parseDragging(value.dragging),
+    edgeDragging: parseEdgeDragging(value.edgeDragging),
   };
 }
 
@@ -196,4 +345,20 @@ export function selectVisibleCursors(
   viewingContainerId: string,
 ): AwarenessState[] {
   return states.filter((state) => isCursorVisibleInContainer(state.cursor, viewingContainerId));
+}
+
+/** Same scoping rule as `isCursorVisibleInContainer`, applied to `AwarenessDragging` instead — a peer's in-flight drag only renders while `viewingContainerId` matches the container they're dragging inside. */
+export function isDraggingVisibleInContainer(
+  dragging: AwarenessDragging | null,
+  viewingContainerId: string,
+): boolean {
+  return dragging !== null && dragging.containerId === viewingContainerId;
+}
+
+/** Same scoping rule again, applied to `AwarenessEdgeDragging` — a peer's in-flight waypoint/label drag only renders while `viewingContainerId` matches the container they're dragging inside. */
+export function isEdgeDraggingVisibleInContainer(
+  edgeDragging: AwarenessEdgeDragging | null,
+  viewingContainerId: string,
+): boolean {
+  return edgeDragging !== null && edgeDragging.containerId === viewingContainerId;
 }

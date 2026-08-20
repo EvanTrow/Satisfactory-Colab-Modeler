@@ -420,19 +420,47 @@ export interface PinnedMachineCountResult {
 /**
  * The machine count directly implied by `node.limit`/`limitMode` — no
  * graph awareness. Returns `{}` (neither field set) when `node.limit` is
- * `null`, meaning "not pinned; the caller decides the default" (Manual
- * mode always defaults to `ONE`; Basic mode tries graph propagation first
- * and only then falls back to `ONE` — see `manual.ts`/`basic.ts`).
+ * `null` AND `limitMode` is `"machines"`, meaning "not pinned; the caller
+ * decides the default" (Manual mode always defaults to `ONE`; Basic mode
+ * tries graph propagation first and only then falls back to `ONE` — see
+ * `manual.ts`/`basic.ts`).
+ *
+ * A `null` limit in `"ppm"` mode (Miners/AWESOME Sinks, per
+ * `recipeNodeMath.ts`'s `defaultLimitMode`) is a DELIBERATE exception to
+ * that: it's still treated as pinned, to the recipe's own 100%-clock
+ * reference rate for its primary part — the exact value
+ * `recipeNodeMath.ts`'s `effectiveLimitValue` already shows in the UI's
+ * ppm field for an untouched node (e.g. "60" for a Miner). Without this,
+ * the field displayed a concrete rate that wasn't actually anchored to
+ * anything: two freshly-placed, connected, never-touched nodes (a Miner
+ * showing "60/min" wired straight into a Smelter showing "1 machine")
+ * would each independently fall back to `ONE` machine and silently
+ * disagree (60 supplied vs. 30 consumed) until the user retyped the exact
+ * value already on screen just to "confirm" it. ppm mode has no upstream
+ * to derive a rate from anyway (that's the whole reason it defaults to
+ * ppm instead of machine-count — see PLAN.md §2), so there's no
+ * "derive from the graph" behavior this could be shadowing, unlike
+ * machine-count mode's blank state (`RecipeNode.tsx`'s `limitIsBlank`),
+ * which still means exactly that.
  */
 export function pinnedMachineCount(profile: NodeProfile): PinnedMachineCountResult {
   const { node } = profile;
-  if (node.limit === null || !profile.recipe) return {};
+  if (!profile.recipe) return {};
 
   let limitValue: Rational;
-  try {
-    limitValue = parseRational(node.limit);
-  } catch {
-    return { issue: `invalid limit "${node.limit}"` };
+  if (node.limit === null) {
+    if (node.limitMode !== "ppm") return {};
+    const part = profile.primaryPart;
+    if (!part) return {};
+    const ref = profile.refRatePerPart.get(part.part);
+    if (!ref || isZero(ref)) return {};
+    limitValue = abs(ref);
+  } else {
+    try {
+      limitValue = parseRational(node.limit);
+    } catch {
+      return { issue: `invalid limit "${node.limit}"` };
+    }
   }
 
   if (node.limitMode === "machines") {

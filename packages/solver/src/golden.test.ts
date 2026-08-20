@@ -77,6 +77,68 @@ describe("golden values (PLAN.md §9)", () => {
     expect(equals(parseRational(edge!.rate), of(30))).toBe(true);
   });
 
+  it("a freshly-placed, never-touched Miner wired straight to a freshly-placed Smelter resolves at the Miner's own displayed 60/min — no mismatch", () => {
+    // Regression test: a brand-new Miner (`limit: null`, `limitMode: "ppm"`)
+    // shows "60/min" in the UI without the user typing anything (Job 010's
+    // `effectiveLimitValue` display default). Before this fix, `null` in
+    // ppm mode was treated as fully unpinned, so Basic mode's graph
+    // propagation had no pinned starting point on either side: the Miner
+    // fell back to its own default of exactly 1 machine (which happens to
+    // read as 60/min) and the Smelter *independently* fell back to its own
+    // default of 1 machine (30/min) — connecting them produced a real
+    // mismatch (edge capped at 30/min, both cards orange) that only went
+    // away once the user retyped the Miner's already-displayed "60" to
+    // force it to actually commit. Neither node's `limit` is set here —
+    // this must resolve cleanly with no user interaction at all.
+    const snapshot: SolverSnapshot = {
+      nodes: [
+        {
+          id: "miner",
+          recipe: "Iron Ore",
+          machine: "Miner Mk.1",
+          purity: "normal",
+          limit: null,
+          limitMode: "ppm",
+          clock: null,
+          shards: 0,
+        },
+        {
+          id: "smelter",
+          recipe: "Iron Ingot",
+          machine: "Smelter",
+          purity: null,
+          limit: null,
+          limitMode: "machines",
+          clock: null,
+          shards: 0,
+        },
+      ],
+      edges: [
+        {
+          id: "edge-1",
+          part: "Iron Ore",
+          fromNode: "miner",
+          fromPort: "out",
+          toNode: "smelter",
+          toPort: "in",
+        },
+      ],
+    };
+
+    const minerOre = rate(snapshot, "miner", "Iron Ore");
+    expect(equals(minerOre.rate, of(60))).toBe(true);
+    expect(minerOre.node.resolved).toBe(true);
+
+    const smelterIngotOut = rate(snapshot, "smelter", "Iron Ingot");
+    expect(equals(smelterIngotOut.rate, of(60))).toBe(true);
+    expect(smelterIngotOut.node.resolved).toBe(true);
+    expect(smelterIngotOut.result.valid).toBe(true);
+
+    const edge = smelterIngotOut.result.edges.find((e) => e.edgeId === "edge-1");
+    expect(edge?.valid).toBe(true);
+    expect(equals(parseRational(edge!.rate), of(60))).toBe(true);
+  });
+
   it("Miner Mk.3 on a Pure node = 480/min", () => {
     const snapshot: SolverSnapshot = {
       nodes: [

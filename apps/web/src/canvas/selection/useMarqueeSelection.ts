@@ -30,7 +30,15 @@ import { useRef, useState } from "react";
 import type { EdgeChange, NodeChange } from "@xyflow/react";
 
 import type { CanvasEdge, CanvasNode, UseYjsSyncResult } from "../useYjsSync";
-import { type Point, type Rect, polylineIntersectsRect, rectFromPoints, rectsIntersect } from "./marqueeGeometry";
+import {
+  type Point,
+  type Rect,
+  pointInRect,
+  polylineIntersectsRect,
+  rectFromPoints,
+  rectsIntersect,
+} from "./marqueeGeometry";
+import { waypointKey } from "./waypointKey";
 
 /** How far (in screen px) the pointer has to move past the right-button-down point before this counts as a drag (a marquee) rather than a quick right-click (which should fall through to `onPaneContextMenu`'s Recipe Chooser, per Job 009). Matches `doubleClick.ts`'s general click-vs-drag tolerance philosophy, kept smaller here since a marquee's own visual feedback (the overlay rect) makes an over-eager "is this a drag yet" call much less confusing than a mistimed double-click would be. */
 const MARQUEE_DRAG_THRESHOLD_PX = 4;
@@ -59,7 +67,12 @@ const FALLBACK_NODE_WIDTH = 256;
 const FALLBACK_NODE_HEIGHT = 160;
 
 function fallbackSize(node: CanvasNode): { width: number; height: number } {
-  return FALLBACK_SIZE_BY_TYPE[node.type ?? ""] ?? { width: FALLBACK_NODE_WIDTH, height: FALLBACK_NODE_HEIGHT };
+  return (
+    FALLBACK_SIZE_BY_TYPE[node.type ?? ""] ?? {
+      width: FALLBACK_NODE_WIDTH,
+      height: FALLBACK_NODE_HEIGHT,
+    }
+  );
 }
 
 export interface MarqueeOverlayRect {
@@ -74,6 +87,16 @@ export interface UseMarqueeSelectionOptions {
   edges: CanvasEdge[];
   onNodesChange: UseYjsSyncResult["onNodesChange"];
   onEdgesChange: UseYjsSyncResult["onEdgesChange"];
+  /**
+   * Replaces the whole waypoint selection with whatever the completed
+   * marquee touched — the waypoint-level sibling of `onNodesChange`/
+   * `onEdgesChange` above, since a waypoint has no `NodeChange`/`EdgeChange`
+   * of its own to go through (see `waypointKey.ts`'s header comment for why
+   * `selectedWaypoints` is a flat `Set<string>` instead). Optional purely so
+   * every other existing caller of this hook doesn't need updating —
+   * `CanvasView.tsx`'s `CanvasFlow` is the only real one.
+   */
+  setSelectedWaypoints?: (keys: Set<string>) => void;
   /** Converts a screen/client point into flow/document coordinates — pass `useReactFlow().screenToFlowPosition` straight through. */
   screenToFlowPosition: (point: Point) => Point;
   /** False while e.g. the Recipe Chooser modal is open, so a right-drag over it doesn't start a marquee underneath. */
@@ -126,15 +149,28 @@ function nodeRect(node: CanvasNode): Rect {
   return { x: node.position.x, y: node.position.y, width, height };
 }
 
-export function useMarqueeSelection(options: UseMarqueeSelectionOptions): UseMarqueeSelectionResult {
-  const { nodes, edges, onNodesChange, onEdgesChange, screenToFlowPosition, enabled } = options;
+export function useMarqueeSelection(
+  options: UseMarqueeSelectionOptions,
+): UseMarqueeSelectionResult {
+  const {
+    nodes,
+    edges,
+    onNodesChange,
+    onEdgesChange,
+    setSelectedWaypoints,
+    screenToFlowPosition,
+    enabled,
+  } = options;
 
   const dragStateRef = useRef<DragState | null>(null);
   const justDraggedRef = useRef(false);
   const [overlayRect, setOverlayRect] = useState<MarqueeOverlayRect | null>(null);
 
   function applySelection(startScreen: Point, endScreen: Point) {
-    const flowRect = rectFromPoints(screenToFlowPosition(startScreen), screenToFlowPosition(endScreen));
+    const flowRect = rectFromPoints(
+      screenToFlowPosition(startScreen),
+      screenToFlowPosition(endScreen),
+    );
 
     const centers = new Map<string, Point>();
     const hitNodeIds = new Set<string>();
@@ -144,10 +180,29 @@ export function useMarqueeSelection(options: UseMarqueeSelectionOptions): UseMar
     }
 
     const hitEdgeIds = new Set<string>();
+    // Every waypoint the marquee rect directly touches, regardless of
+    // whether its own edge got fully hit above — a marquee dragged over
+    // just a mid-route waypoint (without crossing either endpoint node)
+    // should still select that one point, same as it would a lone node.
+    const hitWaypointKeys = new Set<string>();
     for (const edge of edges) {
       const sourceCenter = centers.get(edge.source);
       const targetCenter = centers.get(edge.target);
       if (!sourceCenter || !targetCenter) continue; // endpoint node not in this container's current node list — shouldn't happen, defensive only
+      // Job 013: a boundary-projected edge's `data.record.waypoints` belong
+      // to a *different* container's coordinate space (see
+      // `useYjsSync.ts`'s `CanvasEdgeData.projected` doc comment) — skip
+      // them for marquee hit-testing too, same reasoning `BoundaryEdge.tsx`
+      // uses for rendering, so a stale/foreign waypoint coordinate can't
+      // produce a spurious hit against this view's own marquee rect. This
+      // also means a projected edge's waypoints are never individually
+      // selectable, only ever moved as a whole via its two endpoint nodes.
+      const waypoints = edge.data?.projected ? [] : (edge.data?.record?.waypoints ?? []);
+      if (setSelectedWaypoints) {
+        waypoints.forEach((waypoint, index) => {
+          if (pointInRect(waypoint, flowRect)) hitWaypointKeys.add(waypointKey(edge.id, index));
+        });
+      }
       // An edge between two marquee-hit nodes counts as "under the marquee"
       // even if its particular path (e.g. a short edge between two large,
       // barely-overlapping nodes) happens not to cross the rect itself —
@@ -158,13 +213,6 @@ export function useMarqueeSelection(options: UseMarqueeSelectionOptions): UseMar
         hitEdgeIds.add(edge.id);
         continue;
       }
-      // Job 013: a boundary-projected edge's `data.record.waypoints` belong
-      // to a *different* container's coordinate space (see
-      // `useYjsSync.ts`'s `CanvasEdgeData.projected` doc comment) — skip
-      // them for marquee hit-testing too, same reasoning `BoundaryEdge.tsx`
-      // uses for rendering, so a stale/foreign waypoint coordinate can't
-      // produce a spurious hit against this view's own marquee rect.
-      const waypoints = edge.data?.projected ? [] : (edge.data?.record?.waypoints ?? []);
       const polyline: Point[] = [sourceCenter, ...waypoints, targetCenter];
       if (polylineIntersectsRect(polyline, flowRect)) hitEdgeIds.add(edge.id);
     }
@@ -181,6 +229,7 @@ export function useMarqueeSelection(options: UseMarqueeSelectionOptions): UseMar
     }));
     onNodesChange(nodeChanges);
     onEdgesChange(edgeChanges);
+    setSelectedWaypoints?.(hitWaypointKeys);
   }
 
   function onPointerDown(event: React.PointerEvent) {

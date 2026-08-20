@@ -11,10 +11,21 @@
 // breadcrumb trail, and a node-level context menu for moving nodes
 // into/out of an outpost and deleting one (reparenting its contents rather
 // than destroying them).
-import { Lock, Map as MapIcon, Maximize, Redo2, Undo2, Unlock, Wand2, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  Lock,
+  Map as MapIcon,
+  Maximize,
+  Redo2,
+  Undo2,
+  Unlock,
+  Wand2,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -24,7 +35,17 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 
-import { updateContainer, type SfmDocument, type Settings } from "@scm/ydoc";
+import {
+  getContainer,
+  getEdge,
+  getNode,
+  getSettings,
+  moveNode,
+  updateContainer,
+  updateWaypoint,
+  type SfmDocument,
+  type Settings,
+} from "@scm/ydoc";
 import {
   Background,
   BackgroundVariant,
@@ -35,6 +56,7 @@ import {
   ReactFlowProvider,
   useReactFlow,
   type FinalConnectionState,
+  type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -42,9 +64,15 @@ import type { ProjectRole } from "../api/projects";
 import {
   PresenceAvatarList,
   PresenceCursors,
+  isDraggingVisibleInContainer,
+  isEdgeDraggingVisibleInContainer,
   useCursorPublisher,
+  useDragPublisher,
   useLocalPresence,
+  useRemotePresence,
   useSelectionPublisher,
+  type AwarenessDraggingNode,
+  type AwarenessDraggingWaypoint,
   type LocalUserIdentity,
 } from "../collab";
 import { RecipeChooser, type PendingConnectionInfo } from "../panels";
@@ -52,13 +80,23 @@ import { SummaryPanel } from "../panels";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
 import { GenerateFactoryDialog } from "./generator";
+import {
+  GroupSelectionContext,
+  useGroupSelection,
+  type GroupSelectionContextValue,
+} from "./GroupSelectionContext";
 import { SettingsMenu } from "./SettingsMenu";
 import { SolverResultContext } from "./SolverResultContext";
 import { type ClickPoint, isDoubleClick } from "./doubleClick";
 import { parsePortHandleId, useConnectionHandlers } from "./edges";
 import { edgeTypes, nodeTypes } from "./flowTypes";
 import { useAutoRound } from "./nodes";
-import { NodeContextMenu, deleteOutpost, moveNodeToContainer, type NodeContextMenuState } from "./outposts";
+import {
+  NodeContextMenu,
+  deleteOutpost,
+  moveNodeToContainer,
+  type NodeContextMenuState,
+} from "./outposts";
 import { ConnectionStatusIndicator } from "./persistence/ConnectionStatusIndicator";
 import type { ConnectionStatus } from "./persistence/connectionStatus";
 import { SaveStatusIndicator } from "./persistence/SaveStatusIndicator";
@@ -68,15 +106,22 @@ import { VersionPanel } from "./persistence/VersionPanel";
 import { SharingPanel } from "../sharing";
 import {
   MarqueeOverlay,
+  parseWaypointKey,
   useMarqueeSelection,
   useSelectionKeybinds,
   useUndoRedoState,
 } from "./selection";
+import { snapPointToGrid } from "./snapToGrid";
 import { ThemeToggle, useTheme, type ThemeMode } from "../theme";
 import { useMinimapVisible } from "./useMinimapVisible";
 import { useSettings } from "./useSettings";
 import { useSolver } from "../workers";
-import { useYjsSync, type UseYjsSyncResult } from "./useYjsSync";
+import {
+  useYjsSync,
+  type CanvasEdgeData,
+  type CanvasNode,
+  type UseYjsSyncResult,
+} from "./useYjsSync";
 import { SolveStatusIndicator } from "./SolveStatusIndicator";
 
 /** Node kinds whose right-click menu shows `RecipeNodeQuickSettings.tsx` (at minimum the Name field, plus recipe-only fields it gates itself). */
@@ -89,7 +134,13 @@ const QUICK_SETTINGS_KINDS = new Set(["recipe", "splurger", "sink", "depot", "st
 // Inline styles beat an external stylesheet's element selector (no
 // `!important` needed), so this re-asserts `fill: none` and a real size on
 // every custom `ControlButton` icon below.
-const controlButtonIconStyle: CSSProperties = { fill: "none", width: 16, height: 16, maxWidth: "none", maxHeight: "none" };
+const controlButtonIconStyle: CSSProperties = {
+  fill: "none",
+  width: 16,
+  height: 16,
+  maxWidth: "none",
+  maxHeight: "none",
+};
 
 /**
  * How close together (in ms) and how close together (in screen px) two
@@ -300,6 +351,111 @@ export function CanvasViewReady({
   const [containerId, setContainerId] = useState(rootContainerId);
   const navigateToContainer = useCallback((id: string) => setContainerId(id), []);
 
+  // Moved up from just before this component's `return` (still the ONLY
+  // call site) so the group-selection machinery below — and `docContext`
+  // further down — can both read `sync.nodes`/`sync.edges`/`sync.onNodesChange`.
+  const sync = useYjsSync(sfmDoc, containerId);
+
+  // Marquee-selected waypoints (`selection/waypointKey.ts`) + the group-drag
+  // machinery that carries them along with a node or waypoint drag — see
+  // `GroupSelectionContext.ts`'s header comment for why this lives in its
+  // own, narrower context instead of on `docContext` below.
+  const [selectedWaypoints, setSelectedWaypoints] = useState<Set<string>>(new Set());
+  const [waypointGroupDragDelta, setWaypointGroupDragDelta] = useState<{
+    dx: number;
+    dy: number;
+  } | null>(null);
+
+  // Drops any selected waypoint whose edge no longer exists in the current
+  // view, or whose index no longer exists on that edge (the waypoint was
+  // deleted, its edge was removed, or the view navigated to a different
+  // container — `sync.edges` is already scoped to `containerId`, see
+  // `useYjsSync.ts`'s own header comment) — the waypoint-selection
+  // equivalent of the "carry `selected` forward by id, drop what's gone"
+  // behavior node/edge selection already gets for free from that hook's
+  // own resync.
+  useEffect(() => {
+    if (selectedWaypoints.size === 0) return;
+    const next = new Set<string>();
+    for (const key of selectedWaypoints) {
+      const parsed = parseWaypointKey(key);
+      if (!parsed) continue;
+      const edge = sync.edges.find((candidate) => candidate.id === parsed.edgeId);
+      const waypointCount =
+        edge && !edge.data?.projected ? (edge.data?.record?.waypoints.length ?? 0) : 0;
+      if (parsed.index < waypointCount) next.add(key);
+    }
+    if (next.size !== selectedWaypoints.size) setSelectedWaypoints(next);
+  }, [sync.edges, selectedWaypoints]);
+
+  // The node-moving half of a WAYPOINT-initiated group drag — the other
+  // direction (a NODE drag carrying selected waypoints along) lives in
+  // `CanvasFlow`'s own `handleNodesChange`/`handleNodeDragStop` instead,
+  // since React Flow already moves every selected node there natively and
+  // only needs the waypoint side bolted on; this direction has no such
+  // native mechanism to lean on; see `GroupSelectionContext.ts`.
+  // `groupNodeMoveOriginRef` snapshots every currently-selected node's
+  // PRE-drag position the first time `preview` is called in a gesture
+  // (cleared by `commit`), so every subsequent call in the same gesture
+  // computes from a fixed origin instead of compounding deltas onto an
+  // already-shifted position.
+  const groupNodeMoveOriginRef = useRef<Map<string, { x: number; y: number }> | null>(null);
+  // A second, independent `useDragPublisher` instance — broadcasts a
+  // waypoint-driven group node move to remote peers exactly like a normal
+  // node drag does (`CanvasFlow`'s own instance below handles the native-
+  // drag path). Safe to run two instances: only one gesture is ever active
+  // at a time, so they never race to publish conflicting state.
+  const groupNodeDragPublisher = useDragPublisher(localPresence.setDragging, containerId);
+  const previewGroupNodeMove = useCallback(
+    (dx: number, dy: number) => {
+      const selectedNodes = sync.nodes.filter((node) => node.selected);
+      if (selectedNodes.length === 0) return;
+      if (!groupNodeMoveOriginRef.current) {
+        groupNodeMoveOriginRef.current = new Map(
+          selectedNodes.map((node) => [node.id, node.position]),
+        );
+      }
+      const origin = groupNodeMoveOriginRef.current;
+      const changes: NodeChange<CanvasNode>[] = [];
+      const broadcastNodes: AwarenessDraggingNode[] = [];
+      for (const [nodeId, position] of origin) {
+        const next = { x: position.x + dx, y: position.y + dy };
+        changes.push({ id: nodeId, type: "position", position: next, dragging: true });
+        broadcastNodes.push({ id: nodeId, x: next.x, y: next.y });
+      }
+      sync.onNodesChange(changes);
+      groupNodeDragPublisher.publish(broadcastNodes);
+    },
+    [sync.nodes, sync.onNodesChange, groupNodeDragPublisher],
+  );
+  const commitGroupNodeMove = useCallback(() => {
+    const origin = groupNodeMoveOriginRef.current;
+    if (!origin) return;
+    const dragSettings = getSettings(sfmDoc);
+    for (const nodeId of origin.keys()) {
+      const node = sync.nodes.find((candidate) => candidate.id === nodeId);
+      if (!node) continue;
+      const position = dragSettings.snapMachines
+        ? snapPointToGrid(node.position, dragSettings.gridMachine)
+        : node.position;
+      if (node.data.container) updateContainer(sfmDoc, nodeId, { x: position.x, y: position.y });
+      else moveNode(sfmDoc, nodeId, position.x, position.y);
+    }
+    groupNodeMoveOriginRef.current = null;
+    groupNodeDragPublisher.clear();
+  }, [sync.nodes, sfmDoc, groupNodeDragPublisher]);
+
+  const groupSelectionValue: GroupSelectionContextValue = useMemo(
+    () => ({
+      selectedWaypoints,
+      setSelectedWaypoints,
+      waypointGroupDragDelta,
+      setWaypointGroupDragDelta,
+      groupNodeMove: { preview: previewGroupNodeMove, commit: commitGroupNodeMove },
+    }),
+    [selectedWaypoints, waypointGroupDragDelta, previewGroupNodeMove, commitGroupNodeMove],
+  );
+
   // Job 027: minimap show/hide — persisted as a `localStorage`-backed user
   // setting (see `useMinimapVisible.ts`'s header comment for why it's this
   // and not a per-document CRDT `Settings` field), matching
@@ -329,7 +485,15 @@ export function CanvasViewReady({
       awareness,
       localPresence,
     }),
-    [sfmDoc, containerId, rootContainerId, navigateToContainer, undoManager, awareness, localPresence],
+    [
+      sfmDoc,
+      containerId,
+      rootContainerId,
+      navigateToContainer,
+      undoManager,
+      awareness,
+      localPresence,
+    ],
   );
 
   // Job 019: Job 018's live solver output, called exactly ONCE here (not
@@ -383,25 +547,24 @@ export function CanvasViewReady({
     (window as unknown as { __sfmDoc?: SfmDocument }).__sfmDoc = sfmDoc;
   }
 
-  const sync = useYjsSync(sfmDoc, containerId);
-
   return (
     <CanvasDocContext.Provider value={docContext}>
-      <SolverResultContext.Provider value={solverContextValue}>
-        <div className="flex h-svh w-full flex-col bg-[var(--surface-app)] text-[var(--text-primary)]">
-          <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-2">
-            <div className="min-w-0">
-              <button
-                type="button"
-                onClick={onBack}
-                className="text-xs text-[var(--text-muted)] underline hover:text-[var(--text-primary)]"
-              >
-                ← {t("canvas.backToProjects")}
-              </button>
-              <h2 className="truncate text-sm font-medium text-[var(--text-primary)]">
-                {projectTitle}
-              </h2>
-              {/*
+      <GroupSelectionContext.Provider value={groupSelectionValue}>
+        <SolverResultContext.Provider value={solverContextValue}>
+          <div className="flex h-svh w-full flex-col bg-[var(--surface-app)] text-[var(--text-primary)]">
+            <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-2">
+              <div className="min-w-0">
+                <button
+                  type="button"
+                  onClick={onBack}
+                  className="text-xs text-[var(--text-muted)] underline hover:text-[var(--text-primary)]"
+                >
+                  ← {t("canvas.backToProjects")}
+                </button>
+                <h2 className="truncate text-sm font-medium text-[var(--text-primary)]">
+                  {projectTitle}
+                </h2>
+                {/*
               Job 013: the breadcrumb trail — "drill in to edit contents...
               a breadcrumb trail" (this job's own Scope wording). `sync
               .containers` is the *whole document's* containers (not just
@@ -410,14 +573,14 @@ export function CanvasViewReady({
               `computeBreadcrumbPath` walk the full ancestor chain
               regardless of how deep `containerId` currently is.
             */}
-              <Breadcrumbs
-                containers={sync.containers}
-                currentContainerId={containerId}
-                onNavigate={navigateToContainer}
-              />
-            </div>
-            <div className="flex shrink-0 items-center gap-3">
-              {/*
+                <Breadcrumbs
+                  containers={sync.containers}
+                  currentContainerId={containerId}
+                  onNavigate={navigateToContainer}
+                />
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                {/*
               Job 012: Undo/Redo toolbar buttons, wired straight to the
               document's `Y.UndoManager` (created in
               `persistence/useProjectDocument.ts`, once the doc has
@@ -426,71 +589,71 @@ export function CanvasViewReady({
               second, discoverable entry point to the identical operation,
               not a separate code path.
             */}
-              <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => undoManager.undo()}
+                    disabled={!canUndo}
+                    title={t("canvas.undo", { label: tRaw("UNDO") })}
+                    className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Undo2 className="inline h-3.5 w-3.5" aria-hidden /> {tRaw("UNDO")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => undoManager.redo()}
+                    disabled={!canRedo}
+                    title={t("canvas.redo", { label: tRaw("REDO") })}
+                    className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Redo2 className="inline h-3.5 w-3.5" aria-hidden /> {tRaw("REDO")}
+                  </button>
+                </div>
+                {/* Job 024: "Solving… [STOP]" — visible only while a Full-mode solve is genuinely in flight. */}
+                <SolveStatusIndicator sfmDoc={sfmDoc} />
+                {/* Job 019: the real summary panel — made/used/unmade/unused, power, sink points, cost-to-build, scoped Everything/Current Outpost/Selected. */}
+                <SummaryPanel
+                  sfmDoc={sfmDoc}
+                  containerId={containerId}
+                  nodes={sync.nodes}
+                  numberFormats={settings.numberFormats}
+                  theme={theme}
+                  // Calculation-validation visuals pass: reuses the exact same
+                  // `pendingFitNodeIds`/`fitView` mechanism already used after
+                  // Generate Factory (see `CanvasFlow`'s own effect below) —
+                  // clicking an Issues-list entry just pans/zooms to it, no
+                  // new camera code needed.
+                  onJumpToNode={(nodeId) => setPendingFitNodeIds([nodeId])}
+                />
+                {/* Job 027: minimap show/hide — see `showMinimap`'s own comment above for why this is a persisted user setting. */}
                 <button
                   type="button"
-                  onClick={() => undoManager.undo()}
-                  disabled={!canUndo}
-                  title={t("canvas.undo", { label: tRaw("UNDO") })}
-                  className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={toggleMinimap}
+                  title={showMinimap ? t("canvas.hideMinimap") : t("canvas.showMinimap")}
+                  aria-label={showMinimap ? t("canvas.hideMinimap") : t("canvas.showMinimap")}
+                  aria-pressed={showMinimap}
+                  className={`nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border text-xs transition-colors ${
+                    showMinimap
+                      ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+                      : "border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+                  }`}
                 >
-                  <Undo2 className="inline h-3.5 w-3.5" aria-hidden /> {tRaw("UNDO")}
+                  <MapIcon className="h-4 w-4" aria-hidden />
                 </button>
+                {/* "Generate factory" — auto-build a production chain from a target item + desired rate (`canvas/generator/`). */}
                 <button
                   type="button"
-                  onClick={() => undoManager.redo()}
-                  disabled={!canRedo}
-                  title={t("canvas.redo", { label: tRaw("REDO") })}
-                  className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => setShowGenerateFactory(true)}
+                  title={t("canvas.generateFactoryTitle")}
+                  aria-label={t("canvas.generateFactory")}
+                  className="nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
                 >
-                  <Redo2 className="inline h-3.5 w-3.5" aria-hidden /> {tRaw("REDO")}
+                  <Wand2 className="h-4 w-4" aria-hidden />
                 </button>
-              </div>
-              {/* Job 024: "Solving… [STOP]" — visible only while a Full-mode solve is genuinely in flight. */}
-              <SolveStatusIndicator sfmDoc={sfmDoc} />
-              {/* Job 019: the real summary panel — made/used/unmade/unused, power, sink points, cost-to-build, scoped Everything/Current Outpost/Selected. */}
-              <SummaryPanel
-                sfmDoc={sfmDoc}
-                containerId={containerId}
-                nodes={sync.nodes}
-                numberFormats={settings.numberFormats}
-                theme={theme}
-                // Calculation-validation visuals pass: reuses the exact same
-                // `pendingFitNodeIds`/`fitView` mechanism already used after
-                // Generate Factory (see `CanvasFlow`'s own effect below) —
-                // clicking an Issues-list entry just pans/zooms to it, no
-                // new camera code needed.
-                onJumpToNode={(nodeId) => setPendingFitNodeIds([nodeId])}
-              />
-              {/* Job 027: minimap show/hide — see `showMinimap`'s own comment above for why this is a persisted user setting. */}
-              <button
-                type="button"
-                onClick={toggleMinimap}
-                title={showMinimap ? t("canvas.hideMinimap") : t("canvas.showMinimap")}
-                aria-label={showMinimap ? t("canvas.hideMinimap") : t("canvas.showMinimap")}
-                aria-pressed={showMinimap}
-                className={`nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border text-xs transition-colors ${
-                  showMinimap
-                    ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
-                    : "border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                <MapIcon className="h-4 w-4" aria-hidden />
-              </button>
-              {/* "Generate factory" — auto-build a production chain from a target item + desired rate (`canvas/generator/`). */}
-              <button
-                type="button"
-                onClick={() => setShowGenerateFactory(true)}
-                title={t("canvas.generateFactoryTitle")}
-                aria-label={t("canvas.generateFactory")}
-                className="nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
-              >
-                <Wand2 className="h-4 w-4" aria-hidden />
-              </button>
-              {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. Job 019 added the solver-mode/number-format sections. */}
-              <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
-              <ThemeToggle theme={theme} onToggle={toggleTheme} />
-              {/*
+                {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. Job 019 added the solver-mode/number-format sections. */}
+                <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
+                <ThemeToggle theme={theme} onToggle={toggleTheme} />
+                {/*
                 Guest-mode work: version history, sharing, live presence, and
                 transport-connection state all assume a server-synced
                 project — none apply to a solo local guest document, so they
@@ -499,30 +662,30 @@ export function CanvasViewReady({
                 settle approximation of the same `saveStatus` shape (see
                 `useLocalOnlyProjectDocument.ts`).
               */}
-              {mode === "cloud" && (
-                <>
-                  {/* Job 016: version history + restore, and the live autosave-status indicator (replaces Job 015's static "autosaves ~1.5s..." placeholder text). */}
-                  <VersionPanel projectId={projectId} role={role} onRestored={onRestored!} />
-                  {/* Job 022: real sharing UI — invite links + member management, extending Job 020's owner-only routes. */}
-                  <SharingPanel projectId={projectId} role={role} currentUserId={localUser.id} />
-                  <span className="text-xs text-[var(--text-muted)]">{projectShortId}</span>
-                  {/* Job 021: "who's currently connected" — every role (owner/editor/viewer, Job 020) gets a live provider connection, so a viewer shows up here too. */}
-                  <PresenceAvatarList awareness={awareness} localUser={localUser} />
-                  {/* Job 022: transport-level connection state, distinct from `SaveStatusIndicator`'s save-durability signal — see `connectionStatus.ts`'s header comment. */}
-                  <ConnectionStatusIndicator status={connectionStatus!} />
-                </>
-              )}
-              {mode === "guest" && (
-                <span className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)]">
-                  {t("guestMode.canvasBadge")}
-                </span>
-              )}
-              <SaveStatusIndicator status={saveStatus} role={role} />
+                {mode === "cloud" && (
+                  <>
+                    {/* Job 016: version history + restore, and the live autosave-status indicator (replaces Job 015's static "autosaves ~1.5s..." placeholder text). */}
+                    <VersionPanel projectId={projectId} role={role} onRestored={onRestored!} />
+                    {/* Job 022: real sharing UI — invite links + member management, extending Job 020's owner-only routes. */}
+                    <SharingPanel projectId={projectId} role={role} currentUserId={localUser.id} />
+                    <span className="text-xs text-[var(--text-muted)]">{projectShortId}</span>
+                    {/* Job 021: "who's currently connected" — every role (owner/editor/viewer, Job 020) gets a live provider connection, so a viewer shows up here too. */}
+                    <PresenceAvatarList awareness={awareness} localUser={localUser} />
+                    {/* Job 022: transport-level connection state, distinct from `SaveStatusIndicator`'s save-durability signal — see `connectionStatus.ts`'s header comment. */}
+                    <ConnectionStatusIndicator status={connectionStatus!} />
+                  </>
+                )}
+                {mode === "guest" && (
+                  <span className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)]">
+                    {t("guestMode.canvasBadge")}
+                  </span>
+                )}
+                <SaveStatusIndicator status={saveStatus} role={role} />
+              </div>
             </div>
-          </div>
 
-          <div className="relative flex-1">
-            {/*
+            <div className="relative flex-1">
+              {/*
             `useReactFlow()` (needed below to convert a click's screen
             coordinates into document/flow coordinates for the Recipe
             Chooser) only works inside a `<ReactFlowProvider>` — the
@@ -530,36 +693,40 @@ export function CanvasViewReady({
             subtree, not this component's own scope. `CanvasFlow` is a
             child of the explicit provider below so it can call the hook.
           */}
-            <ReactFlowProvider>
-              <CanvasFlow
-                sync={sync}
-                settings={settings}
-                theme={theme}
-                showMinimap={showMinimap}
-                pendingFitNodeIds={pendingFitNodeIds}
-                onFitted={() => setPendingFitNodeIds(null)}
+              <ReactFlowProvider>
+                <CanvasFlow
+                  sync={sync}
+                  settings={settings}
+                  theme={theme}
+                  showMinimap={showMinimap}
+                  pendingFitNodeIds={pendingFitNodeIds}
+                  onFitted={() => setPendingFitNodeIds(null)}
+                />
+              </ReactFlowProvider>
+            </div>
+            {showGenerateFactory && (
+              <GenerateFactoryDialog
+                sfmDoc={sfmDoc}
+                containerId={containerId}
+                numberFormats={settings.numberFormats}
+                basePosition={generateFactoryBasePosition(sync.nodes)}
+                solverMode={settings.solverMode}
+                onClose={() => setShowGenerateFactory(false)}
+                onGenerated={setPendingFitNodeIds}
               />
-            </ReactFlowProvider>
+            )}
           </div>
-          {showGenerateFactory && (
-            <GenerateFactoryDialog
-              sfmDoc={sfmDoc}
-              containerId={containerId}
-              numberFormats={settings.numberFormats}
-              basePosition={generateFactoryBasePosition(sync.nodes)}
-              solverMode={settings.solverMode}
-              onClose={() => setShowGenerateFactory(false)}
-              onGenerated={setPendingFitNodeIds}
-            />
-          )}
-        </div>
-      </SolverResultContext.Provider>
+        </SolverResultContext.Provider>
+      </GroupSelectionContext.Provider>
     </CanvasDocContext.Provider>
   );
 }
 
 /** Where a freshly-generated chain should start — clear of whatever's already on the canvas (to the right of the current rightmost node), or the origin for an empty container. */
-function generateFactoryBasePosition(nodes: readonly { position: { x: number; y: number } }[]): { x: number; y: number } {
+function generateFactoryBasePosition(nodes: readonly { position: { x: number; y: number } }[]): {
+  x: number;
+  y: number;
+} {
   if (nodes.length === 0) return { x: 0, y: 0 };
   const maxX = Math.max(...nodes.map((n) => n.position.x));
   const minY = Math.min(...nodes.map((n) => n.position.y));
@@ -618,10 +785,24 @@ function eventClientPoint(event: MouseEvent | TouchEvent): { x: number; y: numbe
  * Split out from `CanvasView` only so it can sit inside
  * `<ReactFlowProvider>` and call `useReactFlow()`.
  */
-function CanvasFlow({ sync, settings, theme, showMinimap, pendingFitNodeIds, onFitted }: CanvasFlowProps) {
+function CanvasFlow({
+  sync,
+  settings,
+  theme,
+  showMinimap,
+  pendingFitNodeIds,
+  onFitted,
+}: CanvasFlowProps) {
   const { t } = useTranslation("app");
   const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = sync;
-  const { sfmDoc, containerId, undoManager, navigateToContainer, awareness, localPresence } = useCanvasDoc();
+  const { sfmDoc, containerId, undoManager, navigateToContainer, awareness, localPresence } =
+    useCanvasDoc();
+  const {
+    selectedWaypoints,
+    setSelectedWaypoints,
+    waypointGroupDragDelta,
+    setWaypointGroupDragDelta,
+  } = useGroupSelection();
   const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
 
   // Job (generate-factory fit-view): once a generate's own nodes have all
@@ -652,9 +833,287 @@ function CanvasFlow({ sync, settings, theme, showMinimap, pendingFitNodeIds, onF
   // a separate mechanism from Awareness, see `RecipeNode.tsx`'s halo
   // comment) — see `useCursorPublisher.ts`/`useSelectionPublisher.ts` for
   // why each is its own small hook rather than inline effects here.
-  const cursorHandlers = useCursorPublisher(localPresence.setCursor, containerId, screenToFlowPosition);
-  const selectedNodeIds = useMemo(() => nodes.filter((node) => node.selected).map((node) => node.id), [nodes]);
+  const cursorHandlers = useCursorPublisher(
+    localPresence.setCursor,
+    containerId,
+    screenToFlowPosition,
+  );
+  const selectedNodeIds = useMemo(
+    () => nodes.filter((node) => node.selected).map((node) => node.id),
+    [nodes],
+  );
   useSelectionPublisher(localPresence.setSelection, selectedNodeIds);
+
+  // Live drag broadcasting: every in-progress drag position (not just the
+  // single write `onNodeDragStop` makes into the Yjs doc once the gesture
+  // ends) gets throttled-published over Awareness, so other peers see a
+  // node — or a Job 013 outpost/blueprint boundary node, same id space —
+  // glide across the canvas in real time as it moves. `draggingPositionsRef`
+  // holds every id *this* client currently has in flight (React Flow fires
+  // one `onNodesChange` batch per pointer-move with a `NodePositionChange`
+  // per moved node, `dragging: true`, and a final `dragging: false` batch
+  // right before `onNodeDragStop`); the remote-overlay merge below reads its
+  // keys so a peer's slightly-stale broadcast of a node this client is
+  // *itself* dragging never fights the local gesture.
+  const dragPublisher = useDragPublisher(localPresence.setDragging, containerId);
+  const draggingPositionsRef = useRef<Map<string, AwarenessDraggingNode>>(new Map());
+  const handleNodesChange = useCallback<UseYjsSyncResult["onNodesChange"]>(
+    (changes) => {
+      onNodesChange(changes);
+      let sawPositionChange = false;
+      for (const change of changes) {
+        if (change.type !== "position") continue;
+        sawPositionChange = true;
+        if (change.dragging === false) {
+          draggingPositionsRef.current.delete(change.id);
+        } else if (change.dragging && change.position) {
+          draggingPositionsRef.current.set(change.id, {
+            id: change.id,
+            x: change.position.x,
+            y: change.position.y,
+          });
+        }
+      }
+      if (!sawPositionChange) return;
+
+      if (draggingPositionsRef.current.size === 0) {
+        dragPublisher.clear();
+        if (waypointGroupDragDelta) setWaypointGroupDragDelta(null);
+        return;
+      }
+
+      // Selected waypoints ride along with a NATIVE node drag too — see
+      // `GroupSelectionContext.ts`'s header comment. Delta computed from
+      // whichever dragging node happens to come first out of the map;
+      // every node in a rigid multi-select drag moves by the identical
+      // delta (confirmed against `@xyflow/system`'s own drag math, and
+      // already relied on by `useYjsSync.ts`'s own connected-pair waypoint
+      // follow logic), so any one of them works. Broadcast alongside the
+      // node positions below (not a separate publish call) so a remote
+      // peer sees them glide together in the SAME awareness update,
+      // instead of only jumping to their final spot once this drag commits
+      // to the doc — that broadcast-less gap is exactly what made a
+      // group-dragged waypoint "not showing the position in realtime" for
+      // remote viewers, even though it moved for the person doing the
+      // dragging.
+      const broadcastWaypoints: AwarenessDraggingWaypoint[] = [];
+      if (selectedWaypoints.size > 0) {
+        const primary = draggingPositionsRef.current.values().next().value as
+          | AwarenessDraggingNode
+          | undefined;
+        const persisted = primary ? (getNode(sfmDoc, primary.id) ?? getContainer(sfmDoc, primary.id)) : undefined;
+        const dx = primary && persisted ? primary.x - persisted.x : 0;
+        const dy = primary && persisted ? primary.y - persisted.y : 0;
+        const hasDelta = persisted && (dx !== 0 || dy !== 0);
+        setWaypointGroupDragDelta(hasDelta ? { dx, dy } : null);
+        if (hasDelta) {
+          // Ids currently dragging in THIS gesture — a waypoint whose
+          // edge's BOTH endpoints are in this set is already covered by
+          // `ConnectionEdge.tsx`'s own two-endpoint-rigid-move `liveDelta`
+          // (which every peer, local or remote, derives independently from
+          // live-vs-persisted NODE position — no broadcast needed for it),
+          // so it's skipped here to avoid double-shifting it on the
+          // receiving end, mirroring `handleNodeDragStop`'s identical
+          // commit-time guard below.
+          const draggedIds = new Set(draggingPositionsRef.current.keys());
+          for (const key of selectedWaypoints) {
+            const parsed = parseWaypointKey(key);
+            if (!parsed) continue;
+            const edgeRecord = getEdge(sfmDoc, parsed.edgeId);
+            if (!edgeRecord) continue;
+            if (draggedIds.has(edgeRecord.fromNode) && draggedIds.has(edgeRecord.toNode)) continue;
+            const waypoint = edgeRecord.waypoints[parsed.index];
+            if (!waypoint) continue;
+            broadcastWaypoints.push({
+              edgeId: parsed.edgeId,
+              index: parsed.index,
+              x: waypoint.x + dx,
+              y: waypoint.y + dy,
+            });
+          }
+        }
+      }
+
+      dragPublisher.publish(Array.from(draggingPositionsRef.current.values()), broadcastWaypoints);
+    },
+    [onNodesChange, dragPublisher, selectedWaypoints, sfmDoc, waypointGroupDragDelta, setWaypointGroupDragDelta],
+  );
+  const handleNodeDragStop = useCallback<UseYjsSyncResult["onNodeDragStop"]>(
+    (event, node, draggedNodes) => {
+      // Defensive clear alongside the `dragging: false` handling above — the
+      // gesture is unambiguously over the moment this fires either way.
+      draggingPositionsRef.current.clear();
+      dragPublisher.clear();
+
+      // Commits selected waypoints' final positions alongside this drag —
+      // computed BEFORE `onNodeDragStop` below commits the new node
+      // positions, since this needs the delta between the OLD persisted
+      // position and the NEW (about-to-be-committed) one. Same "any one
+      // dragged node's delta" reasoning as `handleNodesChange` above.
+      const primary = selectedWaypoints.size > 0 ? draggedNodes[0] : undefined;
+      if (primary) {
+        const persisted = primary.data.container
+          ? getContainer(sfmDoc, primary.id)
+          : getNode(sfmDoc, primary.id);
+        if (persisted) {
+          const dx = primary.position.x - persisted.x;
+          const dy = primary.position.y - persisted.y;
+          if (dx !== 0 || dy !== 0) {
+            // Ids of every node ALSO being dragged in this same gesture —
+            // needed below to avoid double-shifting a waypoint whose edge's
+            // both endpoints are in this set: `onNodeDragStop` (called at
+            // the end of this function) has its OWN "rigid pair" logic that
+            // already rides those waypoints along by the identical delta,
+            // so this loop skips them rather than applying the same shift
+            // twice.
+            const draggedNodeIds = new Set(draggedNodes.map((n) => n.id));
+            for (const key of selectedWaypoints) {
+              const parsed = parseWaypointKey(key);
+              if (!parsed) continue;
+              const edgeRecord = getEdge(sfmDoc, parsed.edgeId);
+              if (!edgeRecord) continue;
+              if (draggedNodeIds.has(edgeRecord.fromNode) && draggedNodeIds.has(edgeRecord.toNode)) {
+                continue;
+              }
+              const waypoint = edgeRecord.waypoints[parsed.index];
+              if (!waypoint) continue;
+              updateWaypoint(sfmDoc, parsed.edgeId, parsed.index, {
+                x: waypoint.x + dx,
+                y: waypoint.y + dy,
+              });
+            }
+          }
+        }
+        setWaypointGroupDragDelta(null);
+      }
+
+      onNodeDragStop(event, node, draggedNodes);
+    },
+    [onNodeDragStop, dragPublisher, selectedWaypoints, sfmDoc, setWaypointGroupDragDelta],
+  );
+
+  // The other half of live drag broadcasting: every *other* peer's
+  // currently-dragging nodes, scoped to `containerId` exactly like
+  // `PresenceCursors.tsx`'s cursor visibility (a drag inside an outpost
+  // nobody else is viewing shouldn't render for them). Rendered by
+  // overriding the affected node's position (and giving it a colored
+  // outline in the dragger's own presence color) in the array actually
+  // handed to `<ReactFlow>` — `nodes` itself stays the untouched,
+  // doc-derived list everything else in this component (selection,
+  // marquee, keybinds, the node context menu) keeps reading, so a remote
+  // drag overlay can never leak into a local selection/edit operation.
+  const remotePresence = useRemotePresence(awareness);
+  const remoteDraggingByNodeId = useMemo(() => {
+    const map = new Map<string, { x: number; y: number; color: string; displayName: string }>();
+    for (const { state } of remotePresence) {
+      if (!isDraggingVisibleInContainer(state.dragging, containerId)) continue;
+      for (const dragged of state.dragging!.nodes) {
+        map.set(dragged.id, {
+          x: dragged.x,
+          y: dragged.y,
+          color: state.color,
+          displayName: state.displayName,
+        });
+      }
+    }
+    return map;
+  }, [remotePresence, containerId]);
+  const renderedNodes = useMemo(() => {
+    if (remoteDraggingByNodeId.size === 0) return nodes;
+    return nodes.map((node) => {
+      const remote = remoteDraggingByNodeId.get(node.id);
+      if (!remote || draggingPositionsRef.current.has(node.id)) return node;
+      return {
+        ...node,
+        position: { x: remote.x, y: remote.y },
+        style: {
+          ...node.style,
+          outline: `2px solid ${remote.color}`,
+          outlineOffset: 2,
+          borderRadius: 8,
+        },
+      };
+    });
+    // `draggingPositionsRef` is a ref (mutated inside `handleNodesChange`,
+    // read here without being a dependency) — safe because every local drag
+    // frame that touches it also changes `nodes` itself (`onNodesChange` →
+    // `applyNodeChanges` → the store), which re-triggers this memo anyway.
+  }, [nodes, remoteDraggingByNodeId]);
+
+  // The connection/waypoint sibling of the node-drag overlay above: every
+  // *other* peer's currently-dragging waypoint or connection label
+  // (`ConnectionEdge.tsx`'s own `dragIndex`/`dragPoint`/`labelDragIndex`/
+  // `labelDragPoint` local state, broadcast via `useEdgeDragPublisher.ts`),
+  // scoped to `containerId` the same way. Reuses `remotePresence` (already
+  // subscribed above for node dragging) rather than a second
+  // `useRemotePresence` call. Threaded onto the relevant edge's own `data`
+  // (`remoteWaypointDrag`) instead of a separate context, mirroring how
+  // `record`/`projected` already ride along on every edge — `ConnectionEdge`
+  // reads it exactly like its own local drag state.
+  const remoteEdgeDraggingByEdgeId = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        mode: "move" | "insert";
+        waypointIndex: number;
+        x: number;
+        y: number;
+        color: string;
+        displayName: string;
+      }
+    >();
+    for (const { state } of remotePresence) {
+      if (!isEdgeDraggingVisibleInContainer(state.edgeDragging, containerId)) continue;
+      const { edgeId, mode, waypointIndex, x, y } = state.edgeDragging!;
+      map.set(edgeId, {
+        mode,
+        waypointIndex,
+        x,
+        y,
+        color: state.color,
+        displayName: state.displayName,
+      });
+    }
+    return map;
+  }, [remotePresence, containerId]);
+  // The group-drag sibling of the map above: every waypoint a REMOTE peer's
+  // node-driven GROUP drag (their own marquee selection — pure per-client
+  // UI state, never synced) is carrying along, keyed by edge id then
+  // waypoint index — see `useYjsSync.ts`'s `CanvasEdgeData.remoteGroupWaypoints`
+  // doc comment for why this can't just be read off `selectedWaypoints`
+  // locally the way this client's OWN group drag is.
+  const remoteGroupWaypointsByEdgeId = useMemo(() => {
+    const map = new Map<string, Map<number, { x: number; y: number; color: string; displayName: string }>>();
+    for (const { state } of remotePresence) {
+      if (!isDraggingVisibleInContainer(state.dragging, containerId)) continue;
+      for (const wp of state.dragging!.waypoints) {
+        let byIndex = map.get(wp.edgeId);
+        if (!byIndex) {
+          byIndex = new Map();
+          map.set(wp.edgeId, byIndex);
+        }
+        byIndex.set(wp.index, { x: wp.x, y: wp.y, color: state.color, displayName: state.displayName });
+      }
+    }
+    return map;
+  }, [remotePresence, containerId]);
+  const renderedEdges = useMemo(() => {
+    if (remoteEdgeDraggingByEdgeId.size === 0 && remoteGroupWaypointsByEdgeId.size === 0) return edges;
+    return edges.map((edge) => {
+      const remoteWaypointDrag = remoteEdgeDraggingByEdgeId.get(edge.id);
+      const remoteGroupWaypoints = remoteGroupWaypointsByEdgeId.get(edge.id);
+      const record = edge.data?.record;
+      if ((!remoteWaypointDrag && !remoteGroupWaypoints) || !record) return edge;
+      // `record` explicit (not just spread from `edge.data`) so this stays
+      // typed as a real `CanvasEdgeData` — `edge.data` is optional on React
+      // Flow's own base edge type, which would otherwise widen `record` to
+      // possibly-`undefined` here even though the guard above already
+      // ensures it exists.
+      const data: CanvasEdgeData = { ...edge.data, record, remoteWaypointDrag, remoteGroupWaypoints };
+      return { ...edge, data };
+    });
+  }, [edges, remoteEdgeDraggingByEdgeId, remoteGroupWaypointsByEdgeId]);
+
   // Job 013: right-click-on-a-node menu state — "move to container" for a
   // real node, "open"/"delete (reparent, don't destroy)" for an outpost
   // boundary node. See `outposts/NodeContextMenu.tsx`.
@@ -683,8 +1142,14 @@ function CanvasFlow({ sync, settings, theme, showMinimap, pendingFitNodeIds, onF
   // Job 011: drag-to-connect, edge removal via re-drag, and mismatched-part
   // rejection. See `useConnectionHandlers.ts`'s header comment for exactly
   // how the reconnect-vs-remove-by-drag split works.
-  const { isValidConnection, onConnect, onReconnectStart, onReconnect, onReconnectEnd, isReconnecting } =
-    useConnectionHandlers(sfmDoc, containerId);
+  const {
+    isValidConnection,
+    onConnect,
+    onReconnectStart,
+    onReconnect,
+    onReconnectEnd,
+    isReconnecting,
+  } = useConnectionHandlers(sfmDoc, containerId);
 
   // Job 012: right-click-drag marquee multi-select. `enabled` also gates
   // off the Job 013 node context menu, mirroring the existing Recipe
@@ -694,6 +1159,7 @@ function CanvasFlow({ sync, settings, theme, showMinimap, pendingFitNodeIds, onF
     edges,
     onNodesChange,
     onEdgesChange,
+    setSelectedWaypoints,
     screenToFlowPosition,
     enabled: chooser === null && nodeMenu === null,
   });
@@ -714,7 +1180,11 @@ function CanvasFlow({ sync, settings, theme, showMinimap, pendingFitNodeIds, onF
     getPasteCenter,
   });
 
-  function openChooserAt(clientX: number, clientY: number, pendingConnection?: PendingConnectionInfo) {
+  function openChooserAt(
+    clientX: number,
+    clientY: number,
+    pendingConnection?: PendingConnectionInfo,
+  ) {
     setChooser({
       flowPosition: screenToFlowPosition({ x: clientX, y: clientY }),
       screenPosition: { x: clientX, y: clientY },
@@ -734,9 +1204,13 @@ function CanvasFlow({ sync, settings, theme, showMinimap, pendingFitNodeIds, onF
    * on empty canvas (`connectionState.toHandle` is `null` — a successful
    * drop onto a real handle already went through `onConnect` above).
    */
-  const handleConnectEnd = (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
+  const handleConnectEnd = (
+    event: MouseEvent | TouchEvent,
+    connectionState: FinalConnectionState,
+  ) => {
     if (isReconnecting()) return;
-    if (connectionState.toHandle || !connectionState.fromHandle || !connectionState.fromNode) return;
+    if (connectionState.toHandle || !connectionState.fromHandle || !connectionState.fromNode)
+      return;
     const portInfo = parsePortHandleId(connectionState.fromHandle.id);
     if (!portInfo) return;
     const point = eventClientPoint(event);
@@ -752,6 +1226,11 @@ function CanvasFlow({ sync, settings, theme, showMinimap, pendingFitNodeIds, onF
   // (React Flow doesn't call it for clicks on a node), so this already
   // satisfies "double-click the *empty* canvas" without extra checks.
   const handlePaneClick = (event: ReactMouseEvent) => {
+    // Clicking away deselects everything React Flow itself already
+    // deselects (nodes/edges, via its own default click-on-pane behavior)
+    // — waypoints need the same treatment done explicitly, since they're
+    // not a first-class flow element React Flow manages selection for.
+    if (selectedWaypoints.size > 0) setSelectedWaypoints(new Set());
     const now: ClickPoint = { time: Date.now(), x: event.clientX, y: event.clientY };
     const last = lastPaneClickRef.current;
     lastPaneClickRef.current = now;
@@ -792,14 +1271,21 @@ function CanvasFlow({ sync, settings, theme, showMinimap, pendingFitNodeIds, onF
       // `"blueprint"`; a plain outpost's is `"outpost"` — both are
       // `type: "outpost" | "blueprint"` flow nodes (`useYjsSync.ts`), never
       // a real recipe node's own container menu.
-      containerKind: node.data.container ? (node.data.container.kind === "blueprint" ? "blueprint" : "outpost") : null,
+      containerKind: node.data.container
+        ? node.data.container.kind === "blueprint"
+          ? "blueprint"
+          : "outpost"
+        : null,
       // Right-clicking a node whose kind has quick settings (a real
       // `"recipe"` node's clock/auto-round/somersloops, or just the Name
       // field every other real node kind still gets — see
       // `RecipeNodeQuickSettings.tsx`'s own `hasMachineFields` guard)
       // surfaces them in the same menu, below the move-to-container actions
       // above.
-      recipeRecord: node.data.record && QUICK_SETTINGS_KINDS.has(node.data.record.kind) ? node.data.record : undefined,
+      recipeRecord:
+        node.data.record && QUICK_SETTINGS_KINDS.has(node.data.record.kind)
+          ? node.data.record
+          : undefined,
       screenPosition: { x: event.clientX, y: event.clientY },
     });
   };
@@ -825,8 +1311,21 @@ function CanvasFlow({ sync, settings, theme, showMinimap, pendingFitNodeIds, onF
     : undefined;
   const nodeMenuState = nodeMenu && {
     ...nodeMenu,
-    recipeRecord: liveNodeMenuRecord && QUICK_SETTINGS_KINDS.has(liveNodeMenuRecord.kind) ? liveNodeMenuRecord : undefined,
+    recipeRecord:
+      liveNodeMenuRecord && QUICK_SETTINGS_KINDS.has(liveNodeMenuRecord.kind)
+        ? liveNodeMenuRecord
+        : undefined,
   };
+
+  // Both the marquee (Job 012) and live cursor publishing (Job 021) need
+  // `onPointerMove` on the same wrapper div below — a plain `{...pointerHandlers}`
+  // spread followed by `onPointerMove={cursorHandlers.onPointerMove}` would
+  // silently clobber one with the other (JSX props are just object keys),
+  // so this merges them into one handler instead of spreading.
+  function handleWrapperPointerMove(event: ReactPointerEvent) {
+    pointerHandlers.onPointerMove(event);
+    cursorHandlers.onPointerMove(event);
+  }
 
   return (
     // Job 012: the marquee's own pointer handlers live on this wrapper
@@ -838,18 +1337,20 @@ function CanvasFlow({ sync, settings, theme, showMinimap, pendingFitNodeIds, onF
     <div
       ref={paneWrapperRef}
       className="relative h-full w-full"
-      {...pointerHandlers}
-      onMouseMove={cursorHandlers.onMouseMove}
-      onMouseLeave={cursorHandlers.onMouseLeave}
+      onPointerDown={pointerHandlers.onPointerDown}
+      onPointerMove={handleWrapperPointerMove}
+      onPointerUp={pointerHandlers.onPointerUp}
+      onPointerCancel={pointerHandlers.onPointerCancel}
+      onPointerLeave={cursorHandlers.onPointerLeave}
     >
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={renderedNodes}
+        edges={renderedEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        onNodesChange={onNodesChange}
+        onNodesChange={handleNodesChange}
         onEdgesChange={onEdgesChange}
-        onNodeDragStop={onNodeDragStop}
+        onNodeDragStop={handleNodeDragStop}
         onConnect={onConnect}
         onConnectEnd={handleConnectEnd}
         isValidConnection={isValidConnection}
@@ -890,13 +1391,25 @@ function CanvasFlow({ sync, settings, theme, showMinimap, pendingFitNodeIds, onF
           color="var(--grid-dot)"
         />
         <Controls showZoom={false} showFitView={false} showInteractive={false}>
-          <ControlButton onClick={() => zoomIn()} title={t("canvas.zoomIn")} aria-label={t("canvas.zoomIn")}>
+          <ControlButton
+            onClick={() => zoomIn()}
+            title={t("canvas.zoomIn")}
+            aria-label={t("canvas.zoomIn")}
+          >
             <ZoomIn aria-hidden style={controlButtonIconStyle} />
           </ControlButton>
-          <ControlButton onClick={() => zoomOut()} title={t("canvas.zoomOut")} aria-label={t("canvas.zoomOut")}>
+          <ControlButton
+            onClick={() => zoomOut()}
+            title={t("canvas.zoomOut")}
+            aria-label={t("canvas.zoomOut")}
+          >
             <ZoomOut aria-hidden style={controlButtonIconStyle} />
           </ControlButton>
-          <ControlButton onClick={() => fitView()} title={t("canvas.fitView")} aria-label={t("canvas.fitView")}>
+          <ControlButton
+            onClick={() => fitView()}
+            title={t("canvas.fitView")}
+            aria-label={t("canvas.fitView")}
+          >
             <Maximize aria-hidden style={controlButtonIconStyle} />
           </ControlButton>
           <ControlButton

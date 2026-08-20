@@ -4,6 +4,8 @@ import {
   colorFromUserId,
   createLocalAwarenessState,
   isCursorVisibleInContainer,
+  isDraggingVisibleInContainer,
+  isEdgeDraggingVisibleInContainer,
   parseAwarenessState,
   selectVisibleCursors,
   type AwarenessState,
@@ -57,6 +59,8 @@ describe("createLocalAwarenessState", () => {
       cursor: null,
       selection: [],
       editingField: null,
+      dragging: null,
+      edgeDragging: null,
     });
   });
 });
@@ -70,15 +74,71 @@ describe("parseAwarenessState", () => {
     cursor: { x: 10, y: 20, containerId: "root" },
     selection: ["n1", "n2"],
     editingField: { nodeId: "n1", field: "limit" },
+    dragging: { containerId: "root", nodes: [{ id: "n1", x: 30, y: 40 }], waypoints: [{ edgeId: "e1", index: 0, x: 5, y: 6 }] },
+    edgeDragging: { containerId: "root", edgeId: "e1", mode: "move", waypointIndex: 0, x: 50, y: 60 },
   };
 
-  it("accepts a fully well-formed state, including a non-null cursor/editingField", () => {
+  it("accepts a fully well-formed state, including a non-null cursor/editingField/dragging/edgeDragging", () => {
     expect(parseAwarenessState(valid)).toEqual(valid);
   });
 
-  it("accepts a well-formed state with null cursor/editingField and empty selection", () => {
-    const minimal: AwarenessState = { ...valid, cursor: null, selection: [], editingField: null };
+  it("accepts a well-formed state with null cursor/editingField/dragging/edgeDragging and empty selection", () => {
+    const minimal: AwarenessState = {
+      ...valid,
+      cursor: null,
+      selection: [],
+      editingField: null,
+      dragging: null,
+      edgeDragging: null,
+    };
     expect(parseAwarenessState(minimal)).toEqual(minimal);
+  });
+
+  it("rejects a state with a malformed dragging (bad containerId, non-array nodes, or a malformed node)", () => {
+    expect(parseAwarenessState({ ...valid, dragging: { nodes: [] } })).toBeNull();
+    expect(parseAwarenessState({ ...valid, dragging: { containerId: "root", nodes: "not an array" } })).toBeNull();
+    expect(
+      parseAwarenessState({ ...valid, dragging: { containerId: "root", nodes: [{ id: "n1", x: "nope", y: 0 }] } }),
+    ).toBeNull();
+  });
+
+  it("accepts a dragging payload with no `waypoints` field at all (a peer running an older client build) as an empty list — not a rejection", () => {
+    const result = parseAwarenessState({
+      ...valid,
+      dragging: { containerId: "root", nodes: [{ id: "n1", x: 30, y: 40 }] },
+    });
+    expect(result?.dragging).toEqual({ containerId: "root", nodes: [{ id: "n1", x: 30, y: 40 }], waypoints: [] });
+  });
+
+  it("rejects a dragging payload with a malformed waypoints entry (non-array, or missing/wrong-typed fields)", () => {
+    expect(
+      parseAwarenessState({
+        ...valid,
+        dragging: { containerId: "root", nodes: [], waypoints: "not an array" },
+      }),
+    ).toBeNull();
+    expect(
+      parseAwarenessState({
+        ...valid,
+        dragging: { containerId: "root", nodes: [], waypoints: [{ edgeId: "e1", index: "nope", x: 0, y: 0 }] },
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a state with a malformed edgeDragging (missing fields, bad mode, or wrong types)", () => {
+    expect(parseAwarenessState({ ...valid, edgeDragging: { containerId: "root", edgeId: "e1" } })).toBeNull();
+    expect(
+      parseAwarenessState({
+        ...valid,
+        edgeDragging: { containerId: "root", edgeId: "e1", mode: "bogus", waypointIndex: 0, x: 1, y: 2 },
+      }),
+    ).toBeNull();
+    expect(
+      parseAwarenessState({
+        ...valid,
+        edgeDragging: { containerId: "root", edgeId: "e1", mode: "move", waypointIndex: "nope", x: 1, y: 2 },
+      }),
+    ).toBeNull();
   });
 
   it.each([null, undefined, "a string", 42, []])("rejects a non-object root value (%p)", (raw) => {
@@ -132,6 +192,8 @@ describe("isCursorVisibleInContainer / selectVisibleCursors (container-scoped cu
       color: "hsl(0, 70%, 55%)",
       selection: [],
       editingField: null,
+      dragging: null,
+      edgeDragging: null,
       cursor: null,
     };
     const inRoot: AwarenessState = { ...base, userId: "in-root", cursor: { x: 0, y: 0, containerId: "root" } };
@@ -144,5 +206,53 @@ describe("isCursorVisibleInContainer / selectVisibleCursors (container-scoped cu
 
     const visible = selectVisibleCursors([inRoot, inOtherOutpost, noCursor], "root");
     expect(visible).toEqual([inRoot]);
+  });
+});
+
+describe("isDraggingVisibleInContainer (live drag broadcast, container-scoped)", () => {
+  it("null dragging is never visible, regardless of the viewed container", () => {
+    expect(isDraggingVisibleInContainer(null, "root")).toBe(false);
+  });
+
+  it("a drag in the SAME container as the viewer is visible", () => {
+    expect(
+      isDraggingVisibleInContainer(
+        { containerId: "outpost-a", nodes: [{ id: "n1", x: 0, y: 0 }], waypoints: [] },
+        "outpost-a",
+      ),
+    ).toBe(true);
+  });
+
+  it("a drag in a DIFFERENT container than the viewer is invisible", () => {
+    expect(
+      isDraggingVisibleInContainer(
+        { containerId: "outpost-a", nodes: [{ id: "n1", x: 0, y: 0 }], waypoints: [] },
+        "root",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("isEdgeDraggingVisibleInContainer (live waypoint/label drag broadcast, container-scoped)", () => {
+  it("null edgeDragging is never visible, regardless of the viewed container", () => {
+    expect(isEdgeDraggingVisibleInContainer(null, "root")).toBe(false);
+  });
+
+  it("an edge drag in the SAME container as the viewer is visible", () => {
+    expect(
+      isEdgeDraggingVisibleInContainer(
+        { containerId: "outpost-a", edgeId: "e1", mode: "move", waypointIndex: 0, x: 0, y: 0 },
+        "outpost-a",
+      ),
+    ).toBe(true);
+  });
+
+  it("an edge drag in a DIFFERENT container than the viewer is invisible", () => {
+    expect(
+      isEdgeDraggingVisibleInContainer(
+        { containerId: "outpost-a", edgeId: "e1", mode: "insert", waypointIndex: 0, x: 0, y: 0 },
+        "root",
+      ),
+    ).toBe(false);
   });
 });

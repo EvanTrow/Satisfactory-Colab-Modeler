@@ -42,7 +42,8 @@ export function nodeBoundsRect(position: Point, size: { width: number; height: n
   return { x: position.x, y: position.y, width: size.width, height: size.height };
 }
 
-function pointInRect(p: Point, r: Rect): boolean {
+/** Exported so `useMarqueeSelection.ts` can hit-test a single waypoint's stored `x`/`y` against the marquee rect directly, the same simple test every other shape here degenerates to at a single point. */
+export function pointInRect(p: Point, r: Rect): boolean {
   return p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;
 }
 
@@ -52,7 +53,10 @@ function cross(o: Point, a: Point, b: Point): number {
 
 function onSegment(p: Point, q: Point, r: Point): boolean {
   return (
-    Math.min(p.x, r.x) <= q.x && q.x <= Math.max(p.x, r.x) && Math.min(p.y, r.y) <= q.y && q.y <= Math.max(p.y, r.y)
+    Math.min(p.x, r.x) <= q.x &&
+    q.x <= Math.max(p.x, r.x) &&
+    Math.min(p.y, r.y) <= q.y &&
+    q.y <= Math.max(p.y, r.y)
   );
 }
 

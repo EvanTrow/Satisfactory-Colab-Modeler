@@ -9,9 +9,15 @@ export {
   colorFromUserId,
   createLocalAwarenessState,
   isCursorVisibleInContainer,
+  isDraggingVisibleInContainer,
+  isEdgeDraggingVisibleInContainer,
   parseAwarenessState,
   selectVisibleCursors,
   type AwarenessCursor,
+  type AwarenessDragging,
+  type AwarenessDraggingNode,
+  type AwarenessDraggingWaypoint,
+  type AwarenessEdgeDragging,
   type AwarenessEditingField,
   type AwarenessHandle,
   type AwarenessState,
@@ -22,6 +28,8 @@ export { createThrottled } from "./throttle";
 export { useRemotePresence, type RemotePresence } from "./useRemotePresence";
 export { useLocalPresence, type LocalPresenceControls } from "./useLocalPresence";
 export { useCursorPublisher, type CursorPublisherHandlers } from "./useCursorPublisher";
+export { useDragPublisher, type DragPublisherHandlers } from "./useDragPublisher";
+export { useEdgeDragPublisher, type EdgeDragPublisherHandlers, type EdgeDragPublishPoint } from "./useEdgeDragPublisher";
 export { useSelectionPublisher } from "./useSelectionPublisher";
 export { Avatar, type AvatarProps } from "./Avatar";
 export { PresenceAvatarList, type PresenceAvatarListProps } from "./PresenceAvatarList";

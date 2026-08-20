@@ -129,6 +129,33 @@ export interface CanvasEdgeData extends Record<string, unknown> {
    * originally drawn in, which is generally not this one.
    */
   projected?: boolean;
+  /**
+   * Live drag broadcasting: set only while a remote peer is actively
+   * dragging this edge's bare label or one of its waypoints
+   * (`CanvasView.tsx`'s `CanvasFlow`, sourced from that peer's Awareness
+   * `edgeDragging` field — see `collab/awareness.ts`'s `AwarenessEdgeDragging`).
+   * `ConnectionEdge.tsx` renders this exactly like its own local
+   * `dragIndex`/`dragPoint`/`labelDragIndex`/`labelDragPoint` optimistic drag
+   * state, just sourced from a peer instead of this client's own pointer.
+   */
+  remoteWaypointDrag?: { mode: "move" | "insert"; waypointIndex: number; x: number; y: number; color: string; displayName: string };
+  /**
+   * Live drag broadcasting: for THIS edge, every waypoint index a REMOTE
+   * peer's node-driven GROUP drag is currently carrying along — sourced
+   * from that peer's Awareness `dragging.waypoints` (see
+   * `collab/awareness.ts`'s `AwarenessDraggingWaypoint`), since
+   * `GroupSelectionContext.ts`'s `selectedWaypoints` is pure per-client UI
+   * state that's never synced — a viewer has no other way to learn "these
+   * specific indices are moving" for a group drag someone ELSE started.
+   * Keyed by waypoint index rather than a single delta (unlike this
+   * client's own local `waypointGroupDragDelta`) because, in principle,
+   * more than one remote peer's independent, non-rigid drag could be
+   * moving different waypoints on the same edge at once.
+   * `ConnectionEdge.tsx` applies each position exactly like its own local
+   * group-drag preview, just per-index absolute positions instead of one
+   * shared delta.
+   */
+  remoteGroupWaypoints?: Map<number, { x: number; y: number; color: string; displayName: string }>;
 }
 
 export type CanvasEdge = RFEdge<CanvasEdgeData>;

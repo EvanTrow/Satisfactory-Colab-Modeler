@@ -14,6 +14,7 @@ export {
 } from "./clipboard";
 export {
   nodeBoundsRect,
+  pointInRect,
   polylineIntersectsRect,
   rectFromPoints,
   rectsIntersect,
@@ -30,3 +31,4 @@ export {
 } from "./useMarqueeSelection";
 export { useSelectionKeybinds, type UseSelectionKeybindsOptions } from "./useSelectionKeybinds";
 export { useUndoRedoState, type UndoRedoState } from "./useUndoRedoState";
+export { parseWaypointKey, waypointKey, type ParsedWaypointKey } from "./waypointKey";

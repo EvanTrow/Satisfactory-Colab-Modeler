@@ -10,6 +10,8 @@ import { useCallback, useEffect, useMemo } from "react";
 import {
   createLocalAwarenessState,
   type AwarenessCursor,
+  type AwarenessDragging,
+  type AwarenessEdgeDragging,
   type AwarenessEditingField,
   type AwarenessHandle,
   type LocalUserIdentity,
@@ -19,6 +21,10 @@ export interface LocalPresenceControls {
   setCursor: (cursor: AwarenessCursor | null) => void;
   setSelection: (nodeIds: string[]) => void;
   setEditingField: (field: AwarenessEditingField | null) => void;
+  /** Live in-flight node/outpost drag positions — see `useDragPublisher.ts`, the throttled publisher built on top of this setter. */
+  setDragging: (dragging: AwarenessDragging | null) => void;
+  /** Live in-flight waypoint/connection-label drag position — see `useEdgeDragPublisher.ts`, the throttled publisher built on top of this setter. */
+  setEdgeDragging: (edgeDragging: AwarenessEdgeDragging | null) => void;
 }
 
 export function useLocalPresence(awareness: AwarenessHandle, user: LocalUserIdentity): LocalPresenceControls {
@@ -53,6 +59,14 @@ export function useLocalPresence(awareness: AwarenessHandle, user: LocalUserIden
     (field: AwarenessEditingField | null) => awareness.setLocalStateField("editingField", field),
     [awareness],
   );
+  const setDragging = useCallback(
+    (dragging: AwarenessDragging | null) => awareness.setLocalStateField("dragging", dragging),
+    [awareness],
+  );
+  const setEdgeDragging = useCallback(
+    (edgeDragging: AwarenessEdgeDragging | null) => awareness.setLocalStateField("edgeDragging", edgeDragging),
+    [awareness],
+  );
 
   // Memoized (not a fresh object literal every render) so `CanvasView.tsx`'s
   // `docContext` — which lists this hook's return value as one of its own
@@ -61,5 +75,8 @@ export function useLocalPresence(awareness: AwarenessHandle, user: LocalUserIden
   // `CanvasViewReady` render. Stable as long as `awareness` identity itself
   // is (one `HocuspocusProvider`/`Awareness` per document mount — see
   // `useProjectDocument.ts`).
-  return useMemo(() => ({ setCursor, setSelection, setEditingField }), [setCursor, setSelection, setEditingField]);
+  return useMemo(
+    () => ({ setCursor, setSelection, setEditingField, setDragging, setEdgeDragging }),
+    [setCursor, setSelection, setEditingField, setDragging, setEdgeDragging],
+  );
 }
