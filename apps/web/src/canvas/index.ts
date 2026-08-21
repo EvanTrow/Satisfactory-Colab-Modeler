@@ -7,6 +7,13 @@ export { CanvasView } from "./CanvasView";
 // page's read-only sample preview also needs — see each module's own header
 // comment.
 export { GuestCanvasView } from "./GuestCanvasView";
+// Public-link work: the anonymous-viewer canvas entry point + its
+// persistence hook — see each module's own header comment.
+export { PublicCanvasView, type PublicCanvasViewProps } from "./PublicCanvasView";
+export {
+  usePublicProjectDocument,
+  type PublicProjectDocumentState,
+} from "./persistence/usePublicProjectDocument";
 export {
   useLocalOnlyProjectDocument,
   deleteLocalOnlyProjectDocument,

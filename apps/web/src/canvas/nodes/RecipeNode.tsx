@@ -141,6 +141,8 @@ interface PartRowProps {
    * this row IS a legal target) leaves the row untouched.
    */
   isFaded: boolean;
+  /** Public-link work: disables this row's own native drag-to-reorder and right-click-remove-edges gestures — see `RecipeNode`'s own `readOnly` doc comment. */
+  readOnly: boolean;
 }
 
 function PartRow({
@@ -160,6 +162,7 @@ function PartRow({
   onRowDrop,
   onRowDragEnd,
   isFaded,
+  readOnly,
 }: PartRowProps) {
   const { t } = useTranslation("app");
   const { t: tRaw } = useTranslation();
@@ -242,37 +245,57 @@ function PartRow({
       } ${isDragging ? "opacity-40" : ""} ${
         isDragOver ? "ring-1 ring-inset ring-[var(--accent)]" : ""
       }`}
-      draggable
-      onMouseDownCapture={(event) => {
-        mouseDownOnHandleRef.current = !!(event.target as HTMLElement).closest(".react-flow__handle");
-      }}
-      onDragStart={(event) => {
-        if (mouseDownOnHandleRef.current) {
-          event.preventDefault();
-          return;
-        }
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", handleId);
-        onRowDragStart(handleId);
-      }}
-      onDragOver={(event) => {
-        event.preventDefault();
-        onRowDragOver(handleId);
-      }}
-      onDrop={(event) => {
-        event.preventDefault();
-        onRowDrop(handleId);
-      }}
-      onDragEnd={onRowDragEnd}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        // Stop this from bubbling up to `<ReactFlow onPaneContextMenu>`,
-        // which would otherwise *also* open the Recipe Chooser (Job 009) —
-        // right-clicking a node is a distinct gesture from right-clicking
-        // the empty canvas background.
-        event.stopPropagation();
-        onRemovePortEdges(handleId);
-      }}
+      draggable={!readOnly}
+      onMouseDownCapture={
+        readOnly
+          ? undefined
+          : (event) => {
+              mouseDownOnHandleRef.current = !!(event.target as HTMLElement).closest(".react-flow__handle");
+            }
+      }
+      onDragStart={
+        readOnly
+          ? undefined
+          : (event) => {
+              if (mouseDownOnHandleRef.current) {
+                event.preventDefault();
+                return;
+              }
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", handleId);
+              onRowDragStart(handleId);
+            }
+      }
+      onDragOver={
+        readOnly
+          ? undefined
+          : (event) => {
+              event.preventDefault();
+              onRowDragOver(handleId);
+            }
+      }
+      onDrop={
+        readOnly
+          ? undefined
+          : (event) => {
+              event.preventDefault();
+              onRowDrop(handleId);
+            }
+      }
+      onDragEnd={readOnly ? undefined : onRowDragEnd}
+      onContextMenu={
+        readOnly
+          ? undefined
+          : (event) => {
+              event.preventDefault();
+              // Stop this from bubbling up to `<ReactFlow onPaneContextMenu>`,
+              // which would otherwise *also* open the Recipe Chooser (Job 009) —
+              // right-clicking a node is a distinct gesture from right-clicking
+              // the empty canvas background.
+              event.stopPropagation();
+              onRemovePortEdges(handleId);
+            }
+      }
       title={rowTitle}
     >
       {input && (
@@ -927,6 +950,7 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
                   onRowDrop={handlePartDrop}
                   onRowDragEnd={handlePartDragEnd}
                   isFaded={isFaded}
+                  readOnly={Boolean(data.readOnly)}
                 />
               );
             })
@@ -1000,7 +1024,13 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
               type="text"
               inputMode="decimal"
               placeholder={limitPlaceholder}
-              className={`${fieldInputClass} placeholder:italic placeholder:text-[var(--text-muted)] ${node.autoRound ? autoRoundFieldClass : ""} ${highlightRingClass(validityState?.fields?.limit) ?? ""}`}
+              // Public-link work: disabled outright for a read-only public
+              // viewer — this is the one field on this card that isn't
+              // gated behind the (already-blocked) right-click quick
+              // settings menu, see `RecipeNode`'s own `data.readOnly` doc
+              // comment.
+              disabled={data.readOnly}
+              className={`${fieldInputClass} placeholder:italic placeholder:text-[var(--text-muted)] ${node.autoRound ? autoRoundFieldClass : ""} ${highlightRingClass(validityState?.fields?.limit) ?? ""} ${data.readOnly ? "cursor-default opacity-70" : ""}`}
               title={
                 validityState?.fields?.limit === "invalid"
                   ? t("node.limitInvalidTooltip")

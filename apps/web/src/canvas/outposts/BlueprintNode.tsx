@@ -257,7 +257,9 @@ export const BlueprintNode = memo(function BlueprintNode({ id, data, selected }:
             type="text"
             inputMode="numeric"
             placeholder="none"
-            className="nodrag w-14 rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] px-1.5 py-0.5 text-right text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
+            // Public-link work: see `RecipeNode.tsx`'s identical `disabled={data.readOnly}` doc comment.
+            disabled={data.readOnly}
+            className={`nodrag w-14 rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] px-1.5 py-0.5 text-right text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none ${data.readOnly ? "cursor-default opacity-70" : ""}`}
             {...copiesLimitField}
             // The card's own root div has `onDoubleClick={open}` (drill in,
             // same gesture `OutpostNode.tsx` uses) — a double/triple-click

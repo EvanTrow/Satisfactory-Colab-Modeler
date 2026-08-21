@@ -166,7 +166,9 @@ export const SinkNode = memo(function SinkNode({ id, data, selected }: NodeProps
           type="text"
           inputMode="decimal"
           placeholder="unlimited"
-          className={`${fieldInputClass} placeholder:italic placeholder:text-[var(--text-muted)]`}
+          // Public-link work: see `RecipeNode.tsx`'s identical `disabled={data.readOnly}` doc comment on its own Limit field.
+          disabled={data.readOnly}
+          className={`${fieldInputClass} placeholder:italic placeholder:text-[var(--text-muted)] ${data.readOnly ? "cursor-default opacity-70" : ""}`}
           {...limitField}
         />
       </div>

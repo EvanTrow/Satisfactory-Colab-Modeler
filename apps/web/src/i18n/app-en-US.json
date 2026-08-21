@@ -123,6 +123,11 @@
   "settingsPage.language": "Language",
   "settingsPage.languageDescription": "Choose the display language for the app's interface.",
 
+  "publicView.title": "Shared project",
+  "publicView.badge": "Public view (read-only)",
+  "publicView.guestDisplayName": "Guest",
+  "publicView.notShared": "This project's public link is no longer available — it may have been turned off or deleted.",
+
   "canvas.loadingProject": "Loading project…",
   "canvas.loadProjectError": "Couldn't load this project: {{message}}",
   "canvas.retry": "Retry",

@@ -295,6 +295,7 @@ export const SplurgerNode = memo(function SplurgerNode({ id, data, selected }: N
             neighborTitle={neighborTitle}
             onDisconnect={(row) => removeEdge(sfmDoc, row.edge.id)}
             onFlipTier={flipTier}
+            readOnly={Boolean(data.readOnly)}
           />
           <PortSide
             rows={outRows}
@@ -305,6 +306,7 @@ export const SplurgerNode = memo(function SplurgerNode({ id, data, selected }: N
             neighborTitle={neighborTitle}
             onDisconnect={(row) => removeEdge(sfmDoc, row.edge.id)}
             onFlipTier={flipTier}
+            readOnly={Boolean(data.readOnly)}
           />
         </div>
       )}
@@ -375,10 +377,12 @@ interface PortSideProps {
   neighborTitle: (row: ConnectionRow) => string;
   onDisconnect: (row: ConnectionRow) => void;
   onFlipTier: (row: ConnectionRow) => void;
+  /** Public-link work: hides the disconnect/flip-tier buttons below — see `RecipeNode.tsx`'s own `data.readOnly` doc comment. */
+  readOnly: boolean;
 }
 
 /** One direction's (in/out) detail list — either two `TierGroup`s (this side's `splurgerPortCaps` cap is 2) or one flat list (cap is 1, so no tier is meaningful here). */
-function PortSide({ rows, tiered, top, bottom, danglingParts, neighborTitle, onDisconnect, onFlipTier }: PortSideProps) {
+function PortSide({ rows, tiered, top, bottom, danglingParts, neighborTitle, onDisconnect, onFlipTier, readOnly }: PortSideProps) {
   if (rows.length === 0) return null;
   if (!tiered) {
     return (
@@ -389,7 +393,7 @@ function PortSide({ rows, tiered, top, bottom, danglingParts, neighborTitle, onD
             row={row}
             isDangling={danglingParts.includes(row.edge.part)}
             neighborTitle={neighborTitle(row)}
-            onDisconnect={() => onDisconnect(row)}
+            onDisconnect={readOnly ? undefined : () => onDisconnect(row)}
           />
         ))}
       </div>
@@ -405,8 +409,8 @@ function PortSide({ rows, tiered, top, bottom, danglingParts, neighborTitle, onD
               row={row}
               isDangling={danglingParts.includes(row.edge.part)}
               neighborTitle={neighborTitle(row)}
-              onDisconnect={() => onDisconnect(row)}
-              onFlipTier={() => onFlipTier(row)}
+              onDisconnect={readOnly ? undefined : () => onDisconnect(row)}
+              onFlipTier={readOnly ? undefined : () => onFlipTier(row)}
             />
           ))}
         </TierGroup>
@@ -419,8 +423,8 @@ function PortSide({ rows, tiered, top, bottom, danglingParts, neighborTitle, onD
               row={row}
               isDangling={danglingParts.includes(row.edge.part)}
               neighborTitle={neighborTitle(row)}
-              onDisconnect={() => onDisconnect(row)}
-              onFlipTier={() => onFlipTier(row)}
+              onDisconnect={readOnly ? undefined : () => onDisconnect(row)}
+              onFlipTier={readOnly ? undefined : () => onFlipTier(row)}
             />
           ))}
         </TierGroup>
@@ -449,8 +453,9 @@ interface ConnectionRowViewProps {
   row: ConnectionRow;
   isDangling: boolean;
   neighborTitle: string;
-  onDisconnect: () => void;
-  /** Present only for a row inside a `TierGroup` — reconnects it to the OTHER tier's handle. Absent for a non-tiered side. */
+  /** `undefined` for a read-only public viewer — hides the button entirely rather than rendering a disabled no-op (see `PortSide`'s own `readOnly` doc comment). */
+  onDisconnect?: () => void;
+  /** Present only for a row inside a `TierGroup` — reconnects it to the OTHER tier's handle. Absent for a non-tiered side, or (same as `onDisconnect`) for a read-only public viewer. */
   onFlipTier?: () => void;
 }
 
@@ -484,15 +489,17 @@ function ConnectionRowView({ row, isDangling, neighborTitle, onDisconnect, onFli
           <ArrowLeftRight className="h-3 w-3 rotate-90" aria-hidden />
         </button>
       )}
-      <button
-        type="button"
-        title="Disconnect"
-        aria-label={`Disconnect ${row.edge.part} connection`}
-        onClick={onDisconnect}
-        className="nodrag shrink-0 rounded px-1 text-[var(--text-muted)] hover:text-[var(--danger)]"
-      >
-        <X className="h-3 w-3" aria-hidden />
-      </button>
+      {onDisconnect && (
+        <button
+          type="button"
+          title="Disconnect"
+          aria-label={`Disconnect ${row.edge.part} connection`}
+          onClick={onDisconnect}
+          className="nodrag shrink-0 rounded px-1 text-[var(--text-muted)] hover:text-[var(--danger)]"
+        >
+          <X className="h-3 w-3" aria-hidden />
+        </button>
+      )}
     </div>
   );
 }

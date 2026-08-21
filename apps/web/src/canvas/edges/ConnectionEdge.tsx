@@ -253,6 +253,15 @@ export const ConnectionEdge = memo(function ConnectionEdge({
   const lastWaypointClickRef = useRef<Map<number, ClickPoint>>(new Map());
   const lastWaypointContextClickRef = useRef<Map<number, ClickPoint>>(new Map());
 
+  // Public-link work: `CanvasView.tsx`'s `CanvasFlow` sets this on every
+  // edge's `data` for a read-only public viewer (`useYjsSync.ts`'s
+  // `CanvasEdgeData.readOnly`) — none of this component's own gestures
+  // (create/move/delete a waypoint, delete the connection) go through React
+  // Flow's `nodesDraggable`/`elementsSelectable` props at all, they're all
+  // handled by this component's own pointer/click handlers below, so they
+  // need their own explicit guard rather than inheriting one from
+  // `<ReactFlow>`.
+  const readOnly = Boolean(data?.readOnly);
   const record = data?.record;
   // Live (per-frame, pre-commit) positions of this edge's two endpoint
   // nodes — called unconditionally (hooks can't follow the `!record` early
@@ -797,15 +806,18 @@ export const ConnectionEdge = memo(function ConnectionEdge({
               transform: `translate(-50%, -50%) translate(${displayLabelPoint.x}px, ${displayLabelPoint.y}px)`,
               pointerEvents: "all",
               zIndex: EDGE_OVERLAY_Z_INDEX,
+              ...(readOnly ? { cursor: "default" } : {}),
               ...(validityStroke ? { borderColor: validityStroke, color: validityStroke } : {}),
               ...remoteLabelOutlineStyle,
             }}
-            onPointerDown={handleLabelPointerDown}
-            onPointerMove={handleLabelPointerMove}
-            onPointerUp={handleLabelPointerUp}
-            onContextMenu={handleLabelContextMenu}
+            onPointerDown={readOnly ? undefined : handleLabelPointerDown}
+            onPointerMove={readOnly ? undefined : handleLabelPointerMove}
+            onPointerUp={readOnly ? undefined : handleLabelPointerUp}
+            onContextMenu={readOnly ? undefined : handleLabelContextMenu}
             title={
-              validityTitle ?? "Drag to create a waypoint. Double-right-click: delete connection."
+              readOnly
+                ? validityTitle
+                : (validityTitle ?? "Drag to create a waypoint. Double-right-click: delete connection.")
             }
           >
             {iconUrl && <img src={iconUrl} alt="" className={labelIconClass} draggable={false} />}
@@ -827,17 +839,20 @@ export const ConnectionEdge = memo(function ConnectionEdge({
               transform: `translate(-50%, -50%) translate(${point.x}px, ${point.y}px)`,
               pointerEvents: "all",
               zIndex: EDGE_OVERLAY_Z_INDEX + 1,
+              ...(readOnly ? { cursor: "default" } : {}),
               ...(validityStroke ? { borderColor: validityStroke, color: validityStroke } : {}),
               ...remoteWaypointOutlineStyle(index),
             }}
-            onClick={(event) => handleWaypointClick(index, event)}
-            onContextMenu={(event) => handleWaypointContextMenu(index, event)}
-            onPointerDown={(event) => handleWaypointPointerDown(index, event)}
-            onPointerMove={handleWaypointPointerMove}
-            onPointerUp={handleWaypointPointerUp}
+            onClick={readOnly ? undefined : (event) => handleWaypointClick(index, event)}
+            onContextMenu={readOnly ? undefined : (event) => handleWaypointContextMenu(index, event)}
+            onPointerDown={readOnly ? undefined : (event) => handleWaypointPointerDown(index, event)}
+            onPointerMove={readOnly ? undefined : handleWaypointPointerMove}
+            onPointerUp={readOnly ? undefined : handleWaypointPointerUp}
             title={
-              validityTitle ??
-              "Drag to move. Double-click: insert a waypoint after this one. Double-right-click: remove this waypoint."
+              readOnly
+                ? validityTitle
+                : (validityTitle ??
+                  "Drag to move. Double-click: insert a waypoint after this one. Double-right-click: remove this waypoint.")
             }
           >
             {iconUrl && <img src={iconUrl} alt="" className={labelIconClass} draggable={false} />}

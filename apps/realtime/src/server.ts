@@ -49,7 +49,7 @@ import {
   type onStoreDocumentPayload,
 } from "@hocuspocus/server";
 import type { ProjectMemberRole } from "@scm/db";
-import { appendUpdate, loadProjectDocUpdate, resolveRole } from "@scm/doc-storage";
+import { PUBLIC_GUEST_ID_PREFIX, appendUpdate, loadProjectDocUpdate, resolveRole } from "@scm/doc-storage";
 import { createDocument, isNoopRepair, runIntegrityReducer } from "@scm/ydoc";
 import * as Y from "yjs";
 
@@ -200,7 +200,19 @@ export async function createHocuspocusServer(): Promise<RealtimeServer> {
       // update (just a couple of bytes), but there's no reason to insert a
       // no-op row for it.
       if (update.length > 0) {
-        const actorUserId = (lastContext as HocuspocusContext | undefined)?.userId ?? null;
+        const contextUserId = (lastContext as HocuspocusContext | undefined)?.userId ?? null;
+        // Public-link work: a public viewer's `userId` is a synthetic
+        // `guest:...` id, never a real `users.id` row — `actor_user_id` is a
+        // `uuid` foreign key into `users`, so writing one through verbatim
+        // would throw (or, worse, silently coincide with a real uuid) rather
+        // than attribute the change correctly. A public viewer's connection
+        // is read-only server-side anyway (see `onAuthenticate` above), so
+        // it never legitimately causes a store event — this is a defensive
+        // fallback to `null` (the same "system, not a specific user" value
+        // `afterLoadDocument`'s repair-on-load already uses above) for the
+        // case where a guest connection happens to be `lastContext` at the
+        // moment some other connection's edit triggers this callback.
+        const actorUserId = contextUserId?.startsWith(PUBLIC_GUEST_ID_PREFIX) ? null : contextUserId;
         await appendUpdate(documentName, update, actorUserId);
       }
       lastStoredStateVectorByDocument.set(documentName, Y.encodeStateVector(document));

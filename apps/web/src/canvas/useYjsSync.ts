@@ -102,6 +102,20 @@ export interface CanvasNodeData extends Record<string, unknown> {
    * yet render anything different for a non-null value.
    */
   validityState?: RecipeNodeValidityState | null;
+  /**
+   * Public-link work: `true` for a read-only public viewer
+   * (`CanvasView.tsx`'s `CanvasFlow`, set unconditionally on every node
+   * while its own `readOnly` prop is on). Every custom node component
+   * (`RecipeNode`/`SinkNode`/`StorageNode`/`SplurgerNode`/`BlueprintNode`)
+   * has its own always-visible input/button controls (the limit field, the
+   * storage mode dropdown, a Splurger connection's disconnect/flip-tier
+   * buttons, a blueprint's copies-limit field, a recipe's own per-port
+   * drag-reorder/right-click-remove) that mutate the doc directly, entirely
+   * independent of React Flow's `nodesDraggable`/`elementsSelectable` props
+   * — this is the signal each of them reads to disable those controls
+   * outright rather than relying on the server to silently drop the write.
+   */
+  readOnly?: boolean;
 }
 
 export type CanvasNode = RFNode<CanvasNodeData>;
@@ -156,6 +170,16 @@ export interface CanvasEdgeData extends Record<string, unknown> {
    * shared delta.
    */
   remoteGroupWaypoints?: Map<number, { x: number; y: number; color: string; displayName: string }>;
+  /**
+   * Public-link work: `true` for a read-only public viewer
+   * (`CanvasView.tsx`'s `CanvasFlow`, set unconditionally on every edge
+   * while its own `readOnly` prop is on). `ConnectionEdge.tsx`'s waypoint/
+   * label gestures (create/move/delete a waypoint, delete the connection)
+   * are all handled by that component's own pointer/click handlers rather
+   * than React Flow's `nodesDraggable`/`elementsSelectable` props, so they
+   * need this explicit signal rather than inheriting one from `<ReactFlow>`.
+   */
+  readOnly?: boolean;
 }
 
 export type CanvasEdge = RFEdge<CanvasEdgeData>;

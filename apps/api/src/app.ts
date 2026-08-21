@@ -6,6 +6,7 @@ import { captureException } from "./monitoring/sentry.js";
 import { projectDocRoutes } from "./projects/docRoutes.js";
 import { projectInviteRoutes } from "./projects/inviteRoutes.js";
 import { projectMemberRoutes } from "./projects/memberRoutes.js";
+import { projectPublicRoutes } from "./projects/publicRoutes.js";
 import { projectRoutes } from "./projects/routes.js";
 import { realtimeRoutes } from "./routes/realtime.js";
 import { registerStaticSite } from "./staticSite.js";
@@ -72,6 +73,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // preview/redemption (`project_invites` — unused since Job 004's
   // migration until now). See inviteRoutes.ts's header comment.
   await app.register(projectInviteRoutes);
+  // Public-link work: PATCH /api/projects/:id/visibility (owner-only) plus
+  // the public, unauthenticated `GET /api/public/:shortId` preview and
+  // `POST /api/public/:shortId/realtime-ticket` — see publicRoutes.ts's
+  // header comment.
+  await app.register(projectPublicRoutes);
   // Job 020: GET /api/realtime/ticket — mints the short-lived JWT
   // apps/realtime's Hocuspocus server verifies in onAuthenticate.
   await app.register(realtimeRoutes);

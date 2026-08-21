@@ -60,7 +60,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import type { ProjectRole } from "../api/projects";
+import type { ProjectRole, ProjectVisibility } from "../api/projects";
 import {
   PresenceAvatarList,
   PresenceCursors,
@@ -161,9 +161,13 @@ const controlButtonIconStyle: CSSProperties = {
 interface CanvasViewProps {
   /** The project's real database id (UUID) — what `persistence/useProjectDocument.ts` fetches/pushes doc bytes against. */
   projectId: string;
+  /** Public-link work: the project's URL-friendly id — what `SharingPanel.tsx`'s new "Public link" section builds `/pub/:shortId` from (`sharing/api.ts`'s `buildPublicLink`). */
+  projectShortId: string;
   projectTitle: string;
   /** The caller's role on this project — gates whether local edits get pushed to the server at all (see `useProjectDocument`'s header comment). */
   role: ProjectRole;
+  /** Public-link work: whether this project's public link is currently on — the initial value `SharingPanel.tsx`'s toggle renders from (it owns further changes itself via `setProjectVisibility`). */
+  visibility: ProjectVisibility;
   /** Job 021: this logged-in user's own identity, for publishing this client's local Awareness state (`collab/useLocalPresence.ts`) — `App.tsx` derives it from `GET /auth/me`'s response once and passes it straight through. */
   localUser: LocalUserIdentity;
   onBack: () => void;
@@ -180,8 +184,10 @@ interface CanvasViewProps {
  */
 export function CanvasView({
   projectId,
+  projectShortId,
   projectTitle,
   role,
+  visibility,
   localUser,
   onBack,
 }: CanvasViewProps) {
@@ -221,8 +227,10 @@ export function CanvasView({
       undoManager={docState.undoManager}
       awareness={docState.awareness}
       projectId={projectId}
+      projectShortId={projectShortId}
       projectTitle={projectTitle}
       role={role}
+      visibility={visibility}
       localUser={localUser}
       saveStatus={docState.saveStatus}
       connectionStatus={docState.connectionStatus}
@@ -273,12 +281,27 @@ interface CanvasViewReadyProps extends StaticCanvasDoc {
    * collab/cloud-only toolbar pieces below — everything else (canvas
    * editing, solver, generator, settings, undo/redo) is genuinely mode-
    * agnostic and stays on unconditionally.
+   *
+   * Public-link work: `"public"` (`PublicCanvasView.tsx`,
+   * `usePublicProjectDocument.ts`) is a real, server-synced, live-collab
+   * project — same transport as `"cloud"` — but for a visitor with no
+   * session at all. It keeps live presence (`PresenceAvatarList`/
+   * `ConnectionStatusIndicator`, genuinely useful: a public viewer can see
+   * who else is looking) but drops `VersionPanel`/`SharingPanel`, which are
+   * owner-only REST calls an anonymous visitor could never authenticate
+   * for anyway — `role` is always `"viewer"` here regardless, so every
+   * write is already dropped server-side the same way any other viewer's
+   * would be.
    */
-  mode: "cloud" | "guest";
+  mode: "cloud" | "guest" | "public";
   /** The project's real database id — `VersionPanel` talks to `/api/projects/:id/versions*` directly with this, same id `useProjectDocument` fetches/pushes doc bytes against. Unused in guest mode. */
   projectId: string;
+  /** Public-link work: `SharingPanel.tsx`'s "Public link" section needs this to build `/pub/:shortId`. Cloud-only (unused/omitted in guest and public mode, neither of which render `SharingPanel`). */
+  projectShortId?: string;
   projectTitle: string;
   role: ProjectRole;
+  /** Public-link work: the project's current on/off public-link state — `SharingPanel`'s initial render value. Cloud-only, same scope as `projectShortId` above. */
+  visibility?: ProjectVisibility;
   localUser: LocalUserIdentity;
   /** Live autosave state — from `useProjectDocument`'s push queue in cloud mode, or `useLocalOnlyProjectDocument`'s local IndexedDB-settle approximation in guest mode. See `SaveStatusIndicator.tsx`. */
   saveStatus: SaveStatus;
@@ -304,8 +327,10 @@ export function CanvasViewReady({
   undoManager,
   awareness,
   projectId,
+  projectShortId,
   projectTitle,
   role,
+  visibility,
   localUser,
   saveStatus,
   connectionStatus,
@@ -594,26 +619,29 @@ export function CanvasViewReady({
               second, discoverable entry point to the identical operation,
               not a separate code path.
             */}
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => undoManager.undo()}
-                    disabled={!canUndo}
-                    title={t("canvas.undo", { label: tRaw("UNDO") })}
-                    className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <Undo2 className="inline h-3.5 w-3.5" aria-hidden /> {tRaw("UNDO")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => undoManager.redo()}
-                    disabled={!canRedo}
-                    title={t("canvas.redo", { label: tRaw("REDO") })}
-                    className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <Redo2 className="inline h-3.5 w-3.5" aria-hidden /> {tRaw("REDO")}
-                  </button>
-                </div>
+                {/* Public-link work: undo/redo is meaningless (and misleading) for a read-only public viewer — there's no local edit history worth reverting, and neither action could ever persist anyway. */}
+                {mode !== "public" && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => undoManager.undo()}
+                      disabled={!canUndo}
+                      title={t("canvas.undo", { label: tRaw("UNDO") })}
+                      className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Undo2 className="inline h-3.5 w-3.5" aria-hidden /> {tRaw("UNDO")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => undoManager.redo()}
+                      disabled={!canRedo}
+                      title={t("canvas.redo", { label: tRaw("REDO") })}
+                      className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:enabled:bg-[var(--surface-hover)] hover:enabled:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Redo2 className="inline h-3.5 w-3.5" aria-hidden /> {tRaw("REDO")}
+                    </button>
+                  </div>
+                )}
                 {/* Job 024: "Solving… [STOP]" — visible only while a Full-mode solve is genuinely in flight. */}
                 <SolveStatusIndicator sfmDoc={sfmDoc} />
                 {/* Job 019: the real summary panel — made/used/unmade/unused, power, sink points, cost-to-build, scoped Everything/Current Outpost/Selected. */}
@@ -649,7 +677,8 @@ export function CanvasViewReady({
                 >
                   <MapIcon className="h-4 w-4" aria-hidden />
                 </button>
-                {/* "Generate factory" — auto-build a production chain from a target item + desired rate (`canvas/generator/`). */}
+                {/* "Generate factory" — auto-build a production chain from a target item + desired rate (`canvas/generator/`). Public-link work: hidden for a read-only public viewer — it only ever creates new nodes/edges. */}
+                {mode !== "public" && (
                 <button
                   type="button"
                   onClick={() => setShowGenerateFactory(true)}
@@ -659,8 +688,9 @@ export function CanvasViewReady({
                 >
                   <Wand2 className="h-4 w-4" aria-hidden />
                 </button>
-                {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. Job 019 added the solver-mode/number-format sections. */}
-                <SettingsMenu sfmDoc={sfmDoc} settings={settings} />
+                )}
+                {/* Job 014: snap-to-grid toggle + theme toggle — the two pieces of app-level chrome this job adds. Job 019 added the solver-mode/number-format sections. Public-link work: hidden for a read-only public viewer — every section in here mutates shared document `Settings`, none of which could ever persist for this visitor anyway. */}
+                {mode !== "public" && <SettingsMenu sfmDoc={sfmDoc} settings={settings} />}
                 <ThemeToggle theme={theme} onToggle={toggleTheme} />
                 {/*
                 Guest-mode work: version history, sharing, live presence, and
@@ -676,7 +706,13 @@ export function CanvasViewReady({
                     {/* Job 016: version history + restore, and the live autosave-status indicator (replaces Job 015's static "autosaves ~1.5s..." placeholder text). */}
                     <VersionPanel projectId={projectId} role={role} onRestored={onRestored!} />
                     {/* Job 022: real sharing UI — invite links + member management, extending Job 020's owner-only routes. */}
-                    <SharingPanel projectId={projectId} role={role} currentUserId={localUser.id} />
+                    <SharingPanel
+                      projectId={projectId}
+                      projectShortId={projectShortId!}
+                      role={role}
+                      visibility={visibility!}
+                      currentUserId={localUser.id}
+                    />
                     {/* Job 021: "who's currently connected" — every role (owner/editor/viewer, Job 020) gets a live provider connection, so a viewer shows up here too. */}
                     <PresenceAvatarList awareness={awareness} localUser={localUser} />
                     {/* Job 022: transport-level connection state, distinct from `SaveStatusIndicator`'s save-durability signal — see `connectionStatus.ts`'s header comment. */}
@@ -687,6 +723,22 @@ export function CanvasViewReady({
                   <span className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)]">
                     {t("guestMode.canvasBadge")}
                   </span>
+                )}
+                {/*
+                Public-link work: a real live provider connection (unlike
+                guest mode), so presence + connection state are still
+                meaningful and worth showing — just no version
+                history/sharing management, which need an authenticated
+                owner/member session this visitor doesn't have.
+              */}
+                {mode === "public" && (
+                  <>
+                    <span className="rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 py-1 text-xs text-[var(--text-secondary)]">
+                      {t("publicView.badge")}
+                    </span>
+                    <PresenceAvatarList awareness={awareness} localUser={localUser} />
+                    <ConnectionStatusIndicator status={connectionStatus!} />
+                  </>
                 )}
                 <SaveStatusIndicator status={saveStatus} role={role} />
               </div>
@@ -706,6 +758,7 @@ export function CanvasViewReady({
                   sync={sync}
                   settings={settings}
                   theme={theme}
+                  readOnly={mode === "public"}
                   showMinimap={showMinimap}
                   summaryPinned={summaryPinned}
                   pendingFitNodeIds={pendingFitNodeIds}
@@ -763,6 +816,20 @@ interface CanvasFlowProps {
    * closes that gap.
    */
   theme: ThemeMode;
+  /**
+   * Public-link work: `true` only for `mode === "public"` — a genuinely
+   * read-only visitor, not merely a `"viewer"`-role member (those still get
+   * the existing lock/unlock toggle below; this can't be un-set from the
+   * UI). Forces dragging/connecting off regardless of the toggle, and
+   * suppresses every node-creating/mutating gesture (double/right-click to
+   * open the Recipe Chooser, the node context menu, cut/paste/delete
+   * keybinds) outright rather than relying on the server to silently drop
+   * the write — see this file's own PublicCanvasView-mode comment above for
+   * why "looks editable but doesn't save" was worth fixing here rather than
+   * leaving as the existing (pre-existing, out of scope) viewer-role
+   * behavior.
+   */
+  readOnly: boolean;
   /** Job 027: minimap show/hide — see `CanvasViewReady`'s `showMinimap` state comment. */
   showMinimap: boolean;
   /** Whether `SummaryPanel`'s sidebar is currently pinned open — shifts `<Controls>` right so it isn't covered. See `CanvasViewReady`'s own `summaryPinned` state comment. */
@@ -800,6 +867,7 @@ function CanvasFlow({
   sync,
   settings,
   theme,
+  readOnly,
   showMinimap,
   summaryPinned,
   pendingFitNodeIds,
@@ -839,6 +907,10 @@ function CanvasFlow({
   // children with lucide icons instead, wired straight to `<ReactFlow>`'s
   // `nodesDraggable`/`nodesConnectable`/`elementsSelectable` props.
   const [interactive, setInteractive] = useState(true);
+  // Public-link work: `readOnly` always wins over the lock/unlock toggle
+  // above (there's no UI to flip it back on in that mode — see this
+  // component's own `readOnly` prop doc comment).
+  const editingEnabled = interactive && !readOnly;
 
   // Job 021: local cursor publishing (throttled mousemove → Awareness) and
   // local selection publishing (React Flow's own `node.selected`, Job 012 —
@@ -1031,12 +1103,18 @@ function CanvasFlow({
     return map;
   }, [remotePresence, containerId]);
   const renderedNodes = useMemo(() => {
-    if (remoteDraggingByNodeId.size === 0) return nodes;
+    // Public-link work: `readOnly` needs injecting into EVERY node's data
+    // (not just remotely-dragged ones), same "fold it into the bail-out and
+    // the per-node skip" shape as `renderedEdges`' identical change above.
+    if (remoteDraggingByNodeId.size === 0 && !readOnly) return nodes;
     return nodes.map((node) => {
       const remote = remoteDraggingByNodeId.get(node.id);
-      if (!remote || draggingPositionsRef.current.has(node.id)) return node;
+      if (!remote || draggingPositionsRef.current.has(node.id)) {
+        return readOnly ? { ...node, data: { ...node.data, readOnly } } : node;
+      }
       return {
         ...node,
+        data: { ...node.data, readOnly },
         position: { x: remote.x, y: remote.y },
         style: {
           ...node.style,
@@ -1050,7 +1128,7 @@ function CanvasFlow({
     // read here without being a dependency) — safe because every local drag
     // frame that touches it also changes `nodes` itself (`onNodesChange` →
     // `applyNodeChanges` → the store), which re-triggers this memo anyway.
-  }, [nodes, remoteDraggingByNodeId]);
+  }, [nodes, remoteDraggingByNodeId, readOnly]);
 
   // The connection/waypoint sibling of the node-drag overlay above: every
   // *other* peer's currently-dragging waypoint or connection label
@@ -1110,21 +1188,27 @@ function CanvasFlow({
     return map;
   }, [remotePresence, containerId]);
   const renderedEdges = useMemo(() => {
-    if (remoteEdgeDraggingByEdgeId.size === 0 && remoteGroupWaypointsByEdgeId.size === 0) return edges;
+    // Public-link work: `readOnly` needs injecting into EVERY edge's data
+    // (not just ones with remote drag activity), so the early bail-out and
+    // the per-edge skip below both fold it into their condition rather than
+    // only firing for the pre-existing remote-drag cases.
+    if (remoteEdgeDraggingByEdgeId.size === 0 && remoteGroupWaypointsByEdgeId.size === 0 && !readOnly) {
+      return edges;
+    }
     return edges.map((edge) => {
       const remoteWaypointDrag = remoteEdgeDraggingByEdgeId.get(edge.id);
       const remoteGroupWaypoints = remoteGroupWaypointsByEdgeId.get(edge.id);
       const record = edge.data?.record;
-      if ((!remoteWaypointDrag && !remoteGroupWaypoints) || !record) return edge;
+      if ((!remoteWaypointDrag && !remoteGroupWaypoints && !readOnly) || !record) return edge;
       // `record` explicit (not just spread from `edge.data`) so this stays
       // typed as a real `CanvasEdgeData` — `edge.data` is optional on React
       // Flow's own base edge type, which would otherwise widen `record` to
       // possibly-`undefined` here even though the guard above already
       // ensures it exists.
-      const data: CanvasEdgeData = { ...edge.data, record, remoteWaypointDrag, remoteGroupWaypoints };
+      const data: CanvasEdgeData = { ...edge.data, record, remoteWaypointDrag, remoteGroupWaypoints, readOnly };
       return { ...edge, data };
     });
-  }, [edges, remoteEdgeDraggingByEdgeId, remoteGroupWaypointsByEdgeId]);
+  }, [edges, remoteEdgeDraggingByEdgeId, remoteGroupWaypointsByEdgeId, readOnly]);
 
   // Job 013: right-click-on-a-node menu state — "move to container" for a
   // real node, "open"/"delete (reparent, don't destroy)" for an outpost
@@ -1188,7 +1272,11 @@ function CanvasFlow({
     onNodesChange,
     onEdgesChange,
     undoManager,
-    enabled: chooser === null && nodeMenu === null,
+    // Public-link work: disables cut/copy/paste/delete/undo/redo keybinds
+    // outright for a read-only public viewer — every one of them mutates
+    // the doc (or, for undo/redo, only makes sense given real local edit
+    // history to revert).
+    enabled: !readOnly && chooser === null && nodeMenu === null,
     getPasteCenter,
   });
 
@@ -1197,6 +1285,10 @@ function CanvasFlow({
     clientY: number,
     pendingConnection?: PendingConnectionInfo,
   ) {
+    // Public-link work: every call site (double-click, right-click, and a
+    // connection dragged out to empty canvas) funnels through here — a
+    // single guard covers all three "add a node" entry points at once.
+    if (readOnly) return;
     setChooser({
       flowPosition: screenToFlowPosition({ x: clientX, y: clientY }),
       screenPosition: { x: clientX, y: clientY },
@@ -1277,6 +1369,11 @@ function CanvasFlow({
   // DOM element started the drag).
   const handleNodeContextMenu = (event: ReactMouseEvent, node: (typeof nodes)[number]) => {
     event.preventDefault();
+    // Public-link work: the menu itself is all mutation (move to container,
+    // delete/convert an outpost, quick-settings edits) — suppress opening it
+    // entirely rather than rendering a menu whose every action would be a
+    // no-op.
+    if (readOnly) return;
     setNodeMenu({
       nodeId: node.id,
       // Job 026: a blueprint boundary node's `data.container.kind` is
@@ -1376,8 +1473,8 @@ function CanvasFlow({
         fitView
         proOptions={{ hideAttribution: true }}
         colorMode={theme}
-        nodesDraggable={interactive}
-        nodesConnectable={interactive}
+        nodesDraggable={editingEnabled}
+        nodesConnectable={editingEnabled}
         elementsSelectable={interactive}
       >
         {/*
@@ -1435,17 +1532,20 @@ function CanvasFlow({
           >
             <Maximize aria-hidden style={controlButtonIconStyle} />
           </ControlButton>
-          <ControlButton
-            onClick={() => setInteractive((v) => !v)}
-            title={interactive ? t("canvas.lockInteraction") : t("canvas.unlockInteraction")}
-            aria-label={interactive ? t("canvas.lockInteraction") : t("canvas.unlockInteraction")}
-          >
-            {interactive ? (
-              <Unlock aria-hidden style={controlButtonIconStyle} />
-            ) : (
-              <Lock aria-hidden style={controlButtonIconStyle} />
-            )}
-          </ControlButton>
+          {/* Public-link work: hidden outright for a read-only public viewer — there's nothing to unlock, `editingEnabled` above can never become `true` regardless of this toggle. */}
+          {!readOnly && (
+            <ControlButton
+              onClick={() => setInteractive((v) => !v)}
+              title={interactive ? t("canvas.lockInteraction") : t("canvas.unlockInteraction")}
+              aria-label={interactive ? t("canvas.lockInteraction") : t("canvas.unlockInteraction")}
+            >
+              {interactive ? (
+                <Unlock aria-hidden style={controlButtonIconStyle} />
+              ) : (
+                <Lock aria-hidden style={controlButtonIconStyle} />
+              )}
+            </ControlButton>
+          )}
         </Controls>
         {/*
           Job 027: React Flow's built-in minimap (PLAN.md §3's later-phase

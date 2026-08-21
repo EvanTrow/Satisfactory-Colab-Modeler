@@ -24,15 +24,17 @@ import { Share2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useFocusTrap } from "../a11y";
-import type { ProjectRole } from "../api/projects";
+import type { ProjectRole, ProjectVisibility } from "../api/projects";
 import { ConfirmDialog, useConfirmDialog } from "../ui";
 import {
   buildInviteLink,
+  buildPublicLink,
   createProjectInvite,
   listProjectInvites,
   listProjectMembers,
   removeProjectMember,
   revokeProjectInvite,
+  setProjectVisibility,
   updateProjectMemberRole,
   type InviteRole,
   type ProjectInviteInfo,
@@ -41,8 +43,12 @@ import {
 
 export interface SharingPanelProps {
   projectId: string;
+  /** Public-link work: builds the `/pub/:shortId` URL — see `sharing/api.ts`'s `buildPublicLink`. */
+  projectShortId: string;
   /** The current user's own role — gates which controls render (server-enforced regardless, see this file's header comment). */
   role: ProjectRole;
+  /** Public-link work: this project's current on/off public-link state, as of the last time `CanvasView.tsx` fetched the project list — the initial value for this panel's own toggle, which then tracks its own optimistic state after a change (see `publicLinkOn` below). */
+  visibility: ProjectVisibility;
   /** The current user's id — so "remove" never renders next to your own row (mirrors `memberRoutes.ts`'s "cannot remove/change the owner" rule; a non-owner member removing *themselves* isn't offered here either, kept simple — leaving a project isn't this job's scope). */
   currentUserId: string;
 }
@@ -99,12 +105,23 @@ function saveCachedTokens(projectId: string, tokens: Record<string, string>): vo
   }
 }
 
-export function SharingPanel({ projectId, role, currentUserId }: SharingPanelProps) {
+export function SharingPanel({ projectId, projectShortId, role, visibility, currentUserId }: SharingPanelProps) {
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<MembersState>({ status: "idle" });
   const [invites, setInvites] = useState<InvitesState>({ status: "idle" });
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+
+  // Public-link work: `visibility !== "private"` covers `"link"` (this
+  // feature's own toggle) and, defensively, a future `"public"` gallery
+  // listing too — either way the direct URL already works, which is all
+  // this panel's own toggle cares about rendering correctly. Own state
+  // (not just read straight off the `visibility` prop) since toggling
+  // updates it optimistically from the PATCH response rather than waiting
+  // on the parent to refetch the whole project list.
+  const [publicLinkOn, setPublicLinkOn] = useState(visibility !== "private");
+  const [publicLinkBusy, setPublicLinkBusy] = useState(false);
+  const [publicLinkCopied, setPublicLinkCopied] = useState(false);
 
   const [newInviteRole, setNewInviteRole] = useState<InviteRole>("editor");
   const [newInviteExpiryDays, setNewInviteExpiryDays] = useState<string>("");
@@ -247,6 +264,33 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
     }
   }
 
+  /** Public-link work: flips the single per-project public-link toggle — see `sharing/api.ts`'s `setProjectVisibility` doc comment for why this is one on/off switch rather than a list like the invite links above. */
+  async function handleTogglePublicLink() {
+    const next = !publicLinkOn;
+    setPublicLinkBusy(true);
+    setActionError(null);
+    try {
+      const result = await setProjectVisibility(projectId, next ? "link" : "private");
+      setPublicLinkOn(result.visibility !== "private");
+      setPublicLinkCopied(false);
+    } catch (err) {
+      setActionError(describeError(err));
+    } finally {
+      setPublicLinkBusy(false);
+    }
+  }
+
+  async function handleCopyPublicLink() {
+    try {
+      await navigator.clipboard.writeText(buildPublicLink(projectShortId));
+      setPublicLinkCopied(true);
+    } catch {
+      // Clipboard permission denied or unavailable — same non-fatal fallback
+      // as `handleCopyInviteLink` above (the link is still visible/
+      // selectable as plain text in the input below).
+    }
+  }
+
   async function handleRoleChange(member: ProjectMemberInfo, nextRole: "editor" | "viewer") {
     setBusyKey(`member:${member.userId}`);
     setActionError(null);
@@ -311,6 +355,39 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
               <p className="mb-2 rounded-md border border-[var(--danger)] bg-[var(--danger-soft)] px-2 py-1 text-xs text-[var(--danger)]">
                 {actionError}
               </p>
+            )}
+
+            {isOwner && (
+              <div className="mb-3 border-b border-[var(--border-subtle)] pb-3">
+                <p className="mb-1 px-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Public link</p>
+                <label className="flex items-center gap-2 px-1 text-xs text-[var(--text-secondary)]">
+                  <input
+                    type="checkbox"
+                    checked={publicLinkOn}
+                    onChange={() => void handleTogglePublicLink()}
+                    disabled={publicLinkBusy}
+                    className="h-3.5 w-3.5"
+                  />
+                  Anyone with the link can view — no login required
+                </label>
+                {publicLinkOn && (
+                  <div className="mt-2 flex items-center gap-1 rounded-md border border-[var(--outpost-border)] bg-[var(--outpost-soft)] px-2 py-1.5">
+                    <input
+                      readOnly
+                      value={buildPublicLink(projectShortId)}
+                      onFocus={(event) => event.currentTarget.select()}
+                      className="min-w-0 flex-1 bg-transparent text-xs text-[var(--outpost)] focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyPublicLink()}
+                      className="shrink-0 rounded-md bg-[var(--accent)] px-2 py-1 text-[11px] font-medium text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]"
+                    >
+                      {publicLinkCopied ? "Copied!" : "Copy"}
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
 
             {isOwner && (

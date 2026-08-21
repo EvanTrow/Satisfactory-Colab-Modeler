@@ -2,6 +2,7 @@ export { SharingPanel, type SharingPanelProps } from "./SharingPanel";
 export { InviteRedeemPage, type InviteRedeemPageProps } from "./InviteRedeemPage";
 export {
   buildInviteLink,
+  buildPublicLink,
   createProjectInvite,
   listProjectInvites,
   listProjectMembers,
@@ -9,6 +10,7 @@ export {
   redeemInvite,
   removeProjectMember,
   revokeProjectInvite,
+  setProjectVisibility,
   updateProjectMemberRole,
   type CreateInviteOptions,
   type CreatedProjectInvite,

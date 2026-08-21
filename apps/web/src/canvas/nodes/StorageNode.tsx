@@ -212,7 +212,9 @@ export const StorageNode = memo(function StorageNode({ id, data, selected }: Nod
         <select
           value={node.storageMode ?? "partiallyFull"}
           onChange={(event) => updateNode(sfmDoc, id, { storageMode: event.target.value })}
-          className="nodrag rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] px-1.5 py-0.5 text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
+          // Public-link work: see `RecipeNode.tsx`'s identical `disabled={data.readOnly}` doc comment.
+          disabled={data.readOnly}
+          className={`nodrag rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] px-1.5 py-0.5 text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none ${data.readOnly ? "cursor-default opacity-70" : ""}`}
         >
           {STORAGE_MODES.map((mode) => (
             <option key={mode} value={mode}>

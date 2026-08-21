@@ -133,6 +133,52 @@ export async function findActiveProjectById(projectId: string): Promise<Project 
   return project ?? null;
 }
 
+/**
+ * Public-link work: fetches a non-deleted project by its `short_id` — used
+ * by `publicRoutes.ts`'s unauthenticated `GET /api/public/:shortId` and
+ * `POST /api/public/:shortId/realtime-ticket`. Deliberately the same
+ * `short_id` every member's own `/p/:shortId/edit` deep link already uses
+ * (see `App.tsx`'s header comment) rather than a second, separate token: a
+ * project's real database `id` (uuid) is never handed to an anonymous
+ * visitor by anything in this app, so keying the public link off the id a
+ * member's browser already carries in its address bar introduces no new
+ * exposure, and turning `visibility` back to `"private"` (not rotating this
+ * id) is what actually revokes access — see `resolveRole`'s (`@scm/doc-storage`)
+ * own doc comment for why that's enough on its own.
+ */
+export async function findActiveProjectByShortId(shortId: string): Promise<Project | null> {
+  const project = await db
+    .selectFrom("projects")
+    .selectAll()
+    .where("short_id", "=", shortId)
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+
+  return project ?? null;
+}
+
+/**
+ * Public-link work: sets a project's `visibility` — `"link"` means "anyone
+ * with the direct URL can view, read-only, no login required" (this job's
+ * whole feature); `"private"` turns it back off. `"public"` (a searchable
+ * gallery listing) is deliberately never accepted by `publicRoutes.ts`'s
+ * route validation even though the column/type already allows it — that's
+ * PLAN.md §3's explicit "later phase" (Job 006's own scope note), not this
+ * feature. Caller must already have verified owner-only access, same
+ * convention as `renameProject`/`softDeleteProject` above.
+ */
+export async function updateVisibility(
+  projectId: string,
+  visibility: Exclude<Project["visibility"], "public">,
+): Promise<Project> {
+  return db
+    .updateTable("projects")
+    .set({ visibility, updated_at: sql`now()` })
+    .where("id", "=", projectId)
+    .returningAll()
+    .executeTakeFirstOrThrow();
+}
+
 export interface RenameProjectInput {
   projectId: string;
   title: string;

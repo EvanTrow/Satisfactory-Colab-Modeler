@@ -5,7 +5,7 @@
 // its own module rather than folded into `api/projects.ts` since sharing is
 // a distinct enough concern with its own multi-route surface, same
 // reasoning `persistence/docApi.ts` already used for version history.
-import { ApiError, type ProjectRole } from "../api/projects";
+import { ApiError, type ProjectRole, type ProjectVisibility } from "../api/projects";
 
 async function parseErrorBody(res: Response): Promise<unknown> {
   try {
@@ -124,4 +124,33 @@ export interface RedeemInviteResult {
 /** Redeems an invite for the current (authenticated) user. */
 export function redeemInvite(token: string): Promise<RedeemInviteResult> {
   return request<RedeemInviteResult>(`/api/invites/${encodeURIComponent(token)}/redeem`, { method: "POST" });
+}
+
+// ---------------------------------------------------------------------------
+// Public link (this job's publicRoutes.ts) — "anyone with the link, logged
+// in or not, can view read-only." A single on/off `visibility` toggle per
+// project, not a list of revocable tokens like invites above: turning it off
+// then back on does NOT mint a new URL (the project's own `shortId` never
+// changes) — same "same link either way" behavior Google Docs' own "anyone
+// with the link" toggle has, and simpler than a second token/hash scheme
+// since `resolveRole`'s (`@scm/doc-storage`) live re-check already makes
+// "off" instantly stop authorizing new connections and force-disconnect
+// live ones (`publicRoutes.ts`'s `PATCH` handler triggers that immediately;
+// see its own header comment).
+// ---------------------------------------------------------------------------
+
+/** Owner-only: flips a project's link-sharing on (`"link"`) or off (`"private"`). */
+export function setProjectVisibility(
+  projectId: string,
+  visibility: Extract<ProjectVisibility, "private" | "link">,
+): Promise<{ visibility: ProjectVisibility }> {
+  return request<{ visibility: ProjectVisibility }>(`/api/projects/${projectId}/visibility`, {
+    method: "PATCH",
+    body: JSON.stringify({ visibility }),
+  });
+}
+
+/** Builds the public view URL for a project's `shortId` — same-origin, mirrors `buildInviteLink` above. */
+export function buildPublicLink(shortId: string): string {
+  return `${window.location.origin}/pub/${shortId}`;
 }

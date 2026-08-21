@@ -33,6 +33,46 @@ export async function fetchRealtimeTicket(projectId: string): Promise<string> {
   return body.ticket;
 }
 
+/** Public-link work: `GET /api/public/:shortId`'s response shape — mirrors `sharing/api.ts`'s `InvitePreview`. */
+export interface PublicProjectPreview {
+  valid: boolean;
+  projectId?: string;
+  projectTitle?: string;
+}
+
+/** No-auth preview for a project's public-link `shortId` — used by `usePublicProjectDocument.ts` to resolve the real `projectId` (what `HocuspocusProvider`'s `name` needs) and title before ever opening a connection. `{ valid: false }` covers both "no such shortId" and "not currently link-shared," deliberately indistinguishable (see `apps/api/src/projects/publicRoutes.ts`'s own doc comment). */
+export async function previewPublicProject(shortId: string): Promise<PublicProjectPreview> {
+  const res = await fetch(`/api/public/${encodeURIComponent(shortId)}`);
+  if (!res.ok) {
+    throw new ApiError(res.status, undefined);
+  }
+  return (await res.json()) as PublicProjectPreview;
+}
+
+/**
+ * Public-link work: the anonymous sibling of `fetchRealtimeTicket` — no
+ * session cookie involved, keyed by the project's `shortId` instead of its
+ * real database id (an anonymous visitor never learns the latter directly;
+ * `HocuspocusProvider`'s `name` still needs it, which is why
+ * `usePublicProjectDocument.ts` calls `previewPublicProject` first to get
+ * it). Always mints a `"viewer"`-role ticket for a synthetic id — see
+ * `apps/api/src/projects/publicRoutes.ts`'s header comment.
+ */
+export async function fetchPublicRealtimeTicket(shortId: string): Promise<string> {
+  const res = await fetch(`/api/public/${encodeURIComponent(shortId)}/realtime-ticket`, { method: "POST" });
+  if (!res.ok) {
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      body = undefined;
+    }
+    throw new ApiError(res.status, body);
+  }
+  const body = (await res.json()) as RealtimeTicketResponse;
+  return body.ticket;
+}
+
 /**
  * The `apps/realtime` WebSocket URL. Same-origin (`/collab`) unless
  * `VITE_REALTIME_URL` overrides it — `apps/realtime` runs on its own port

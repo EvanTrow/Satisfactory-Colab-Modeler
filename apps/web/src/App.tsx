@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { listProjects, type ProjectSummary } from "./api/projects";
-import { CanvasView, GuestCanvasView } from "./canvas";
+import { CanvasView, GuestCanvasView, PublicCanvasView } from "./canvas";
 import { discordAvatarUrl, type LocalUserIdentity } from "./collab";
 import { GuestModeExplainer, importGuestProjectsToAccount, type GuestProjectSummary } from "./guest";
 import { LandingPage } from "./landing";
@@ -49,6 +49,20 @@ function extractInviteTokenFromPath(pathname: string): string | null {
 
 function extractProjectShortIdFromPath(pathname: string): string | null {
   const match = /^\/p\/([^/]+)\/edit\/?$/.exec(pathname);
+  return match ? decodeURIComponent(match[1]!) : null;
+}
+
+/**
+ * Public-link work: `/pub/:shortId` — a project's public-link URL
+ * (`sharing/api.ts`'s `buildPublicLink`). Deliberately a distinct path
+ * prefix from `/p/:shortId/edit` above even though both key off the same
+ * `short_id`: that route is session-gated (a deep link back into a project
+ * this browser is already a real member of), this one is not gated at all —
+ * conflating them would make an anonymous visitor's URL look like (and
+ * half-behave like) a member's own edit link.
+ */
+function extractPublicShortIdFromPath(pathname: string): string | null {
+  const match = /^\/pub\/([^/]+)\/?$/.exec(pathname);
   return match ? decodeURIComponent(match[1]!) : null;
 }
 
@@ -227,6 +241,20 @@ function App() {
 
   const leaveGuestCanvas = useCallback(() => {
     setView({ name: "guestProjects" });
+    window.history.pushState({}, "", "/");
+  }, []);
+
+  // Public-link work: `/pub/:shortId` detection — captured once at mount via
+  // a lazy initializer (same reasoning as `initialProjectShortId` below:
+  // `window.location.pathname` won't change under us before this runs).
+  // Deliberately independent of `auth`/`view` entirely — a public viewer may
+  // never be logged in at all, so this can't be folded into either of those
+  // state machines the way `initialProjectShortId`'s resolution effect is.
+  const [publicViewShortId, setPublicViewShortId] = useState<string | null>(() =>
+    extractPublicShortIdFromPath(window.location.pathname),
+  );
+  const leavePublicView = useCallback(() => {
+    setPublicViewShortId(null);
     window.history.pushState({}, "", "/");
   }, []);
 
@@ -430,6 +458,18 @@ function App() {
     [enterCanvas],
   );
 
+  // Public-link work: checked before every other branch below (including
+  // the auth-loading check) — an anonymous visitor following a `/pub/:id`
+  // link should never see a login prompt or wait on `GET /auth/me` at all,
+  // since this view genuinely doesn't care who (if anyone) is logged in.
+  if (publicViewShortId) {
+    return (
+      <main className="bg-[var(--surface-app)] text-[var(--text-primary)]">
+        <PublicCanvasView key={publicViewShortId} shortId={publicViewShortId} onBack={leavePublicView} />
+      </main>
+    );
+  }
+
   // The canvas gets the whole viewport with no shared chrome above it
   // (it renders its own compact title/back bar, see CanvasView.tsx) — partly
   // because React Flow wants to own its full container's height for
@@ -449,8 +489,10 @@ function App() {
         <CanvasView
           key={view.project.id}
           projectId={view.project.id}
+          projectShortId={view.project.shortId}
           projectTitle={view.project.title}
           role={view.project.role}
+          visibility={view.project.visibility}
           localUser={localUser}
           onBack={leaveCanvas}
         />
