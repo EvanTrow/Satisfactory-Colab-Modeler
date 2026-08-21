@@ -120,8 +120,8 @@ function recipeMatchesSearch(recipe: Recipe, filters: RecipeChooserFilters, sear
   return false;
 }
 
-/** The stricter (lower) of `progression`'s two Tier caps — 9 (no-op) when neither axis is set. */
-function progressionMaxTier(progression: RecipeProgressionFilter): number {
+/** The stricter (lower) of `progression`'s two Tier caps — 9 (no-op) when neither axis is set. Exported for `GenerateFactoryDialog.tsx`, which needs the same cap to gate its "Add an item" list and the recipes `planFactory` is allowed to use, mirroring how this filters the Recipe Chooser's own list. */
+export function progressionMaxTier(progression: RecipeProgressionFilter): number {
   return Math.min(progression.tier ?? 9, maxTierForPhase(progression.phase));
 }
 

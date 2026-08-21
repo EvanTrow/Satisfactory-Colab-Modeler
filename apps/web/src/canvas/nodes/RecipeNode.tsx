@@ -47,7 +47,15 @@ import { computeMismatchDetails } from "./computeMismatchDetails";
 import { computeNodeValidityState } from "./computeValidity";
 import { computeUnhandledByproducts } from "./computeUnhandledByproducts";
 import { autoRoundFieldClass, fieldInputClass } from "./nodeFieldStyles";
-import { computeMachineCount, effectiveLimitValue, orderRecipeParts, partHandleId, stopgapPartRate } from "./recipeNodeMath";
+import {
+  computeMachineCount,
+  effectiveLimitValue,
+  isResourceExtractorRecipe,
+  orderRecipeParts,
+  partHandleId,
+  primaryPart,
+  stopgapPartRate,
+} from "./recipeNodeMath";
 import { useCommittedTextField } from "./useCommittedTextField";
 import type { RecipeNodeValidity } from "./validityState";
 
@@ -531,27 +539,55 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
   // A machine-count-mode node with no `limit` set is meant to read as
   // genuinely blank — "nothing limiting this machine, the solver derives it
   // from what's flowing in" — not as a pre-filled "1" that looks like a
-  // real user-set value someone would have to notice and delete. ppm-mode
-  // nodes (Miners/AWESOME Sinks) are the deliberate exception: they have no
-  // upstream to derive a rate from, so they still show a concrete default
-  // (the recipe's own reference rate, e.g. 60/min for a Miner) that's
-  // freely overtyped, same as before. `effectiveLimitValue` itself is
-  // unchanged and still drives every other consumer (the stopgap math, the
-  // ± clock buttons) exactly as it always has — only this display/commit
-  // pair treats "blank" as a real, distinct state for machine-count mode.
-  const limitIsBlank = node.limit === null && node.limitMode === "machines";
+  // real user-set value someone would have to notice and delete. The four
+  // resource-extraction recipes (Miner/Water Extractor/Oil Extractor/
+  // Resource Well Extractor — `isResourceExtractorRecipe`) get the SAME
+  // genuinely-blank treatment in ppm mode: `@scm/solver`'s `basic.ts`/
+  // `full.ts` derive a blank one's rate from the graph when a real
+  // downstream limit reaches it, falling back to a flat 60ppm default only
+  // when nothing does (see `nodeProfile.ts`'s `resourceExtractorSoftDefault`).
+  // Every OTHER ppm-mode node (AWESOME Sink) still can't be blanked — it has
+  // no upstream to derive a rate from and no resource-extractor-style
+  // fallback either, so its field keeps showing (and requiring) a concrete
+  // typed number, same as before. `effectiveLimitValue` itself is unchanged
+  // and still drives every other consumer (the stopgap math, the ± clock
+  // buttons) exactly as it always has — only this display/commit pair
+  // treats "blank" as a real, distinct state.
+  // `recipe` can be `undefined` here (unresolved/stale recipe reference —
+  // this component still renders a stripped-down error card for that case,
+  // but only much further below, after every one of these locals is
+  // already computed).
+  const limitCanBeBlank = node.limitMode === "machines" || (recipe ? isResourceExtractorRecipe(recipe.machine) : false);
+  const limitIsBlank = node.limit === null && limitCanBeBlank;
   const limitEffectiveText = recipe
     ? formatRational(effectiveLimitValue(gameData, recipe, node), numberFormats)
     : "0";
   const limitDisplayText = limitIsBlank ? "" : limitEffectiveText;
-  // A blank field still hints at what it'll actually run as: the real,
-  // graph-propagated machine count from the solver when one exists (the
-  // same value the "≈ N machines" readout below shows), falling back to
-  // the local single-node default only before anything's solved yet.
+  // A blank field still hints at what it'll actually run as. For
+  // machine-count mode that's `displayMachineCount` (the real,
+  // graph-propagated machine count — the same value the "≈ N machines"
+  // readout below shows), matching the field's own unit. For a blank
+  // resource-extraction node's ppm field, showing that SAME machine count
+  // would be showing the wrong unit inside a ppm-labeled input — this needs
+  // the solved RATE for the recipe's (single) part instead, which
+  // `nodeResult` carries separately from `machineCount`. Resource-extraction
+  // recipes are pure producers (no negative-amount parts), so this rate is
+  // always already positive — no sign-flipping needed the way a general
+  // input/output part would. Either way, falls back to `limitEffectiveText`
+  // (the local single-node default, ppm 60 or machine count 1) only before
+  // anything's solved yet.
+  const blankPpmPart = node.limitMode === "ppm" && recipe ? primaryPart(recipe) : undefined;
+  const blankPpmSolvedRate = blankPpmPart
+    ? nodeResult?.partRatesByDirection?.[partRateKey(blankPpmPart.part, blankPpmPart.amount)]
+    : undefined;
   const limitPlaceholder = limitIsBlank
-    ? displayMachineCount
-      ? formatRational(displayMachineCount, numberFormats)
-      : limitEffectiveText
+    ? node.limitMode === "ppm"
+      ? blankPpmSolvedRate !== undefined
+        ? formatRational(parseRational(blankPpmSolvedRate), numberFormats)
+        : limitEffectiveText
+      : displayMachineCount
+        ? formatRational(displayMachineCount, numberFormats)
+        : limitEffectiveText
     : undefined;
 
   // Job 027: "Manually touching clock or limit switches [auto-round] off"
@@ -570,12 +606,15 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
   function commitLimit(raw: string): boolean {
     const trimmed = raw.trim();
     if (!trimmed) {
-      // Clearing the field is itself a valid commit for machine-count mode
-      // — it means "go back to blank/unconstrained," not "the user meant to
-      // leave this untouched." ppm-mode (Miner/AWESOME Sink) has no upstream
-      // to fall back on, so an empty ppm field still isn't meaningful there
-      // and reverts like any other failed parse.
-      if (node.limitMode !== "machines") return false;
+      // Clearing the field is itself a valid commit whenever blank is
+      // actually meaningful (`limitCanBeBlank` — machine-count mode, or a
+      // ppm-mode resource-extraction node) — "go back to blank/
+      // unconstrained," not "the user meant to leave this untouched."
+      // AWESOME Sink (the only other ppm-mode machine) has no upstream and
+      // no resource-extractor-style soft default to fall back on, so an
+      // empty field there still isn't meaningful and reverts like any other
+      // failed parse.
+      if (!limitCanBeBlank) return false;
       updateNode(sfmDoc, id, { limit: null, autoRound: false });
       return true;
     }

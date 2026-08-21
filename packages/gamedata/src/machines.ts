@@ -31,6 +31,33 @@ export const MULTI_MACHINE_RECIPE_NAMES: ReadonlySet<string> = new Set([
   "Space Elevator",
 ]);
 
+/**
+ * The four raw-resource-extraction `Recipe.Machine` values: Miner (solid
+ * ores), Water Extractor and Oil Extractor (fixed fluid nodes — "resource
+ * extractor" in product terms), and Resource Well Extractor (satellite wells
+ * around a Resource Well Pressurizer). Unlike `MULTI_MACHINE_RECIPE_NAMES`
+ * (a `@scm/gamedata`-resolution concern — which names cross a model/capacity
+ * table), this is a product-behavior concern several other packages need:
+ * these four machine families have no user-facing Mk./purity choice (always
+ * resolved to their single default variant — see `packages/ydoc/src
+ * /integrity.ts`'s resource-extractor normalization rule and
+ * `RecipeChooser.tsx`'s skipped variant picker for the three that ARE
+ * MultiMachines), always run in `"ppm"` limit mode, and treat a blank limit
+ * as "derive it from the graph, falling back to a flat default" rather than
+ * a plain machine count — see `packages/solver/src/nodeProfile.ts`'s
+ * `resourceExtractorSoftDefault` and `recipeNodeMath.ts`'s
+ * `defaultLimitMode`/`effectiveLimitValue`. Geothermal Generator and Space
+ * Elevator are deliberately excluded — they share `MULTI_MACHINE_RECIPE_NAMES`'s
+ * resolution machinery but aren't raw-resource nodes, and keep their existing
+ * machine-count-mode/variant-picker behavior untouched.
+ */
+export const RESOURCE_EXTRACTOR_RECIPE_MACHINES: ReadonlySet<string> = new Set([
+  "Miner",
+  "Water Extractor",
+  "Oil Extractor",
+  "Resource Well Extractor",
+]);
+
 export interface MultiMachineVariant {
   readonly multiMachineName: string;
   /** The model variant (e.g. "Miner Mk.3"), when the family has models. */

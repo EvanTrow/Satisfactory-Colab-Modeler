@@ -6,8 +6,9 @@
 // share for this part equal the target's incoming share," which is exactly
 // PLAN.md §2's "same part, same rate in vs out at splits/merges" validation
 // requirement.
-import { equals, toFractionString, ZERO, type Rational } from "@scm/rational";
+import { equals, ZERO, type Rational } from "@scm/rational";
 import { buildEdgeGroups, edgeShareFromSource, edgeShareFromTarget, type EdgeGroups } from "./edgeGroups";
+import { formatRateForMessage } from "./messageFormat";
 import type { NodeProfile } from "./nodeProfile";
 import type { SolverEdge } from "./snapshot";
 
@@ -54,7 +55,7 @@ export function validateEdge(
   const valid = equals(sourceShare, targetShare);
   if (!valid) {
     issues.push(
-      `rate mismatch on part "${edge.part}": source side ${toFractionString(sourceShare)}/min, target side ${toFractionString(targetShare)}/min`,
+      `rate mismatch on part "${edge.part}": source side ${formatRateForMessage(sourceShare)}/min, target side ${formatRateForMessage(targetShare)}/min`,
     );
   }
   return { rate: sourceShare, valid, issues };

@@ -17,10 +17,13 @@
 //   3. Clamp shards to the current machine's MaxProductionShards; drop
 //      ports the current recipe doesn't have.
 //   4. Deduplicate edges (a backstop given Job 007's deterministic edgeId).
-//   5. Normalize "Miner"-family nodes to the flat default variant — not a
-//      merge-corruption repair like 1-4, but the same mechanism doubles as
-//      a one-time migration for projects created before Miners lost their
-//      Mk./purity picker (see `normalizeMinerVariant`'s own comment below).
+//   5. Normalize resource-extraction nodes (Miner/Water Extractor/Oil
+//      Extractor/Resource Well Extractor) to their flat default variant and
+//      `"ppm"` limit mode — not a merge-corruption repair like 1-4, but the
+//      same mechanism doubles as a one-time migration for projects created
+//      before these four lost their Mk./purity picker and machine-count
+//      option (see `normalizeResourceExtractorVariant`'s own comment
+//      below).
 //
 // Callers MUST run this inside a transaction tagged `origin: 'integrity'`
 // (see `undo.ts`'s `runAsIntegrity`) so the repair never lands on anyone's
@@ -34,14 +37,23 @@
 // transaction that leaves a containerId/parentId dangling, from any cause"
 // — the concurrent-edit case `deleteOutpost` alone can't cover, since it
 // only ever fires from that one user's own local UI action.
-import { defaultGameData, type GameData } from "@scm/gamedata";
-import { isNegative } from "@scm/rational";
+import {
+  RESOURCE_EXTRACTOR_RECIPE_MACHINES,
+  baseRecipeRatePerMinuteForEntry,
+  defaultGameData,
+  defaultVariant,
+  multiMachineRecipeRatePerMinuteForEntry,
+  resolveMachine,
+  type GameData,
+  type Recipe,
+} from "@scm/gamedata";
+import { abs, isNegative, isZero, multiply, parseRational, toFractionString, type Rational } from "@scm/rational";
 
 import type { SfmDocument } from "./document.js";
 import { listContainers, listEdges, listNodes } from "./document.js";
 import { removeEdge, reparentEdge, updateContainer, updateNode } from "./mutations.js";
 import { runAsIntegrity } from "./undo.js";
-import type { EdgeRecord } from "./schema.js";
+import type { EdgeRecord, LimitMode, Purity } from "./schema.js";
 
 /** A per-rule count of what `runIntegrityReducer` actually changed, for tests/logging. All-zero means the document was already clean. */
 export interface IntegrityRepairSummary {
@@ -59,8 +71,8 @@ export interface IntegrityRepairSummary {
   clampedShardNodeIds: string[];
   /** Edges deleted as an exact-duplicate-connection backstop (see this module's header comment on rule 4). */
   deletedDuplicateEdgeIds: string[];
-  /** "Miner"-family nodes whose `machine`/`purity` was reset to the flat default variant (see rule 5). */
-  normalizedMinerNodeIds: string[];
+  /** Resource-extraction nodes whose `machine`/`purity`/`limitMode`/`limit` was normalized to the flat default variant and `"ppm"` mode (see rule 5). */
+  normalizedResourceExtractorNodeIds: string[];
 }
 
 function emptySummary(): IntegrityRepairSummary {
@@ -72,7 +84,7 @@ function emptySummary(): IntegrityRepairSummary {
     deletedInvalidPortEdgeIds: [],
     clampedShardNodeIds: [],
     deletedDuplicateEdgeIds: [],
-    normalizedMinerNodeIds: [],
+    normalizedResourceExtractorNodeIds: [],
   };
 }
 
@@ -220,37 +232,111 @@ function dedupeEdges(sfmDoc: SfmDocument, summary: IntegrityRepairSummary): void
 }
 
 /**
- * The flat default Miner variant every `"Miner"`-family node should resolve
- * to — Mk.1 x Normal, ratio `1` (the game's base 60/min extraction rate).
- * Matches `buildNodeInputForRecipe`'s (`apps/web/src/panels/recipeChooser
- * /filters.ts`) own `defaultVariant` fallback for a Miner recipe, verified
- * by `packages/gamedata`'s own golden test ("Miner Mk.1 on Normal (all
- * defaults) = 60/min").
+ * The reference rate `node`'s CURRENT (pre-migration) `machine`/`purity`
+ * produces at 100% clock — used only to convert an old machine-count
+ * `limit` into an equivalent ppm value below, so a "3 machines at Pure"
+ * node converts to the rate 3 Pure machines actually produced (720/min),
+ * not 3x whatever the NEW default variant (Normal) would produce (360/min).
+ * Mirrors `resolveMachine`+match-by-name-then-purity exactly the way
+ * `nodeProfile.ts`'s `resolveNodeMachine`/`recipeNodeMath.ts`'s
+ * `resolvedVariantFor` already do (duplicated here rather than imported —
+ * both of those live in packages this one must never depend on). Every
+ * resource-extraction recipe has exactly one part, so `recipe.parts[0]`
+ * unambiguously IS its primary part — unlike those two files' own
+ * general-purpose `primaryPart` helpers, which have to pick the
+ * largest-magnitude part out of an arbitrary recipe. `undefined` only if
+ * `recipe` genuinely has no parts (shouldn't happen for any real
+ * resource-extraction recipe) or its MultiMachine family has no variants at
+ * all (malformed game data).
  */
-const MINER_DEFAULT_MACHINE = "Miner Mk.1";
-const MINER_DEFAULT_PURITY = "normal";
+function referenceRateForNode(
+  gameData: GameData,
+  recipe: Recipe,
+  node: { machine: string | null; purity: Purity | null },
+): Rational | undefined {
+  const part = recipe.parts[0];
+  if (!part) return undefined;
+  const resolved = resolveMachine(recipe.machine, gameData);
+  if (resolved.kind === "machine") {
+    return baseRecipeRatePerMinuteForEntry(recipe, part);
+  }
+  const matches = resolved.variants.filter((v) => v.machine.name === node.machine);
+  const byPurity = matches.length > 1 ? matches.find((v) => v.capacity?.name.toLowerCase() === node.purity) : undefined;
+  const variant = byPurity ?? matches[0] ?? defaultVariant(resolved);
+  if (!variant) return undefined;
+  return multiMachineRecipeRatePerMinuteForEntry(recipe, part, variant);
+}
 
 /**
- * Rule 5: normalize every `"Miner"`-family node back to the flat default
- * variant. Unlike rules 1-4 above, this isn't repairing CRDT-merge
- * corruption — it's a deliberate product-behavior change: `RecipeChooser.tsx`
- * no longer offers a Mk./purity picker for Miners (a Miner is meant to be a
- * single flat, freely-overtyped ppm value, not a per-node building-tier
- * choice), so no *new* node can end up with a non-default variant. This rule
- * exists so projects created before that change normalize the moment
- * they're next loaded or edited, using the same transaction/undo-exclusion
- * machinery (and the same client+server call sites) as the rest of this
- * module. Only `machine`/`purity` are touched — a `limit` (ppm target) the
- * user already typed is left exactly as-is; only the *reference* rate a
- * blank field would compute against changes.
+ * Rule 5: normalize every resource-extraction node (`@scm/gamedata`'s
+ * `RESOURCE_EXTRACTOR_RECIPE_MACHINES` — Miner, Water Extractor, Oil
+ * Extractor, Resource Well Extractor) back to its flat default variant and
+ * `"ppm"` limit mode. Unlike rules 1-4 above, this isn't repairing
+ * CRDT-merge corruption — it's a deliberate product-behavior change:
+ * `RecipeChooser.tsx` no longer offers a Mk./purity picker for any of the
+ * four, and none of them can be switched to machine-count mode any more, so
+ * no *new* node can end up with a non-default variant or the wrong mode.
+ * This rule exists so projects created before that change normalize the
+ * moment they're next loaded or edited, using the same transaction/
+ * undo-exclusion machinery (and the same client+server call sites) as the
+ * rest of this module — generalizing what was originally a Miner-only rule.
+ *
+ * `machine`/`purity` are reset straight to the default variant (only
+ * meaningful for the three MultiMachine-backed families — Water Extractor
+ * has no variant to normalize, `purity` is already always `null` for it).
+ * `limitMode`, when not already `"ppm"`, is flipped to `"ppm"`; a non-null
+ * `limit` in that case is a real machine count the user already typed, so
+ * it's CONVERTED to the equivalent ppm value (old count x the default
+ * variant's own reference rate) rather than discarded outright — the same
+ * "a value the user already typed is deliberate, preserve its MEANING"
+ * principle the original Miner-only rule's untouched-`limit` behavior
+ * established, just applied across a mode conversion instead of a variant
+ * change. Falls back to blank (`limit: null` — the solver's own "derive it"
+ * state, see `nodeProfile.ts`'s `resourceExtractorSoftDefault`) only when
+ * that conversion genuinely can't be computed (a corrupt `limit` string, or
+ * no resolvable reference rate).
  */
-function normalizeMinerVariant(sfmDoc: SfmDocument, gameData: GameData, summary: IntegrityRepairSummary): void {
+function normalizeResourceExtractorVariant(
+  sfmDoc: SfmDocument,
+  gameData: GameData,
+  summary: IntegrityRepairSummary,
+): void {
   for (const node of listNodes(sfmDoc)) {
     const recipe = node.recipe ? gameData.recipesByName.get(node.recipe) : undefined;
-    if (recipe?.machine !== "Miner") continue;
-    if (node.machine === MINER_DEFAULT_MACHINE && node.purity === MINER_DEFAULT_PURITY) continue;
-    updateNode(sfmDoc, node.id, { machine: MINER_DEFAULT_MACHINE, purity: MINER_DEFAULT_PURITY });
-    summary.normalizedMinerNodeIds.push(node.id);
+    if (!recipe || !RESOURCE_EXTRACTOR_RECIPE_MACHINES.has(recipe.machine)) continue;
+
+    const patch: { machine?: string; purity?: Purity | null; limitMode?: LimitMode; limit?: string | null } = {};
+
+    const resolved = resolveMachine(recipe.machine, gameData);
+    if (resolved.kind === "multiMachine") {
+      const variant = defaultVariant(resolved);
+      const defaultPurity = (variant?.capacity?.name.toLowerCase() as Purity | undefined) ?? null;
+      if (variant && (node.machine !== variant.machine.name || node.purity !== defaultPurity)) {
+        patch.machine = variant.machine.name;
+        patch.purity = defaultPurity;
+      }
+    }
+
+    if (node.limitMode !== "ppm") {
+      patch.limitMode = "ppm";
+      patch.limit = null;
+      if (node.limit !== null) {
+        try {
+          const oldMachineCount = parseRational(node.limit);
+          const referenceRate = referenceRateForNode(gameData, recipe, node);
+          if (referenceRate && !isZero(referenceRate)) {
+            patch.limit = toFractionString(multiply(oldMachineCount, abs(referenceRate)));
+          }
+        } catch {
+          // Corrupt `limit` string — fall back to the `null` already set above.
+        }
+      }
+    }
+
+    if (Object.keys(patch).length > 0) {
+      updateNode(sfmDoc, node.id, patch);
+      summary.normalizedResourceExtractorNodeIds.push(node.id);
+    }
   }
 }
 
@@ -280,7 +366,7 @@ export function repairDocument(
 
   deleteDanglingEdges(sfmDoc, summary);
   clampShardsAndDropInvalidPorts(sfmDoc, gameData, summary);
-  normalizeMinerVariant(sfmDoc, gameData, summary);
+  normalizeResourceExtractorVariant(sfmDoc, gameData, summary);
   dedupeEdges(sfmDoc, summary);
 
   return summary;
@@ -296,7 +382,7 @@ export function isNoopRepair(summary: IntegrityRepairSummary): boolean {
     summary.deletedInvalidPortEdgeIds.length === 0 &&
     summary.clampedShardNodeIds.length === 0 &&
     summary.deletedDuplicateEdgeIds.length === 0 &&
-    summary.normalizedMinerNodeIds.length === 0
+    summary.normalizedResourceExtractorNodeIds.length === 0
   );
 }
 

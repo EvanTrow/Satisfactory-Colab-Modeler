@@ -39,6 +39,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
 import {
+  RESOURCE_EXTRACTOR_RECIPE_MACHINES,
   defaultGameData,
   defaultVariant,
   resolveMachine,
@@ -409,13 +410,16 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
 
   function handlePickRecipe(recipe: Recipe) {
     const resolved = resolveMachine(recipe.machine, gameData);
-    // Miner is the only MultiMachine family with a model (Mk.) dimension —
-    // it's deliberately flattened to always place at its default variant
-    // (Mk.1 x Normal, ratio 1 -> the game's base 60/min rate) with no
-    // picker step at all. A Miner's ppm is meant to be a single freely
-    // typed number on the node afterward (like the Steam app), not a
-    // building-tier choice made once at creation time.
-    if (resolved.kind === "machine" || resolved.name === "Miner") {
+    // The four resource-extraction families (Miner, Water Extractor, Oil
+    // Extractor, Resource Well Extractor — `RESOURCE_EXTRACTOR_RECIPE_MACHINES`)
+    // have no Mk./purity picker at all any more — they're deliberately
+    // flattened to always place at their default variant (Water Extractor
+    // has no MultiMachine variants to begin with, so it already falls into
+    // the plain-`"machine"` branch below). A resource node's ppm is meant
+    // to be a single freely typed number on the node afterward (like the
+    // Steam app), not a building-tier/purity choice made once at creation
+    // time.
+    if (resolved.kind === "machine" || RESOURCE_EXTRACTOR_RECIPE_MACHINES.has(resolved.name)) {
       createNode(recipe);
       return;
     }

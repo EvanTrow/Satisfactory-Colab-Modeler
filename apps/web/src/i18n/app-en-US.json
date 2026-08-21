@@ -279,7 +279,7 @@
   "node.insufficientInputMessage": "Not enough input: {{details}} — connect another producer, raise the upstream supply, or lower this machine's own limit/clock to match what's arriving.",
   "node.insufficientInputDetail": "{{part}} short {{deficit}}/min",
   "node.portTooltip.unhandledByproduct": "Unhandled byproduct: nothing is consuming this — it'll back up production.",
-  "node.unhandledByproductMessage": "Unhandled byproduct(s): {{details}} — connect it to a consumer, an AWESOME Sink, or a Storage Container, or accept the loss.",
+  "node.unhandledByproductMessage": "Unhandled byproduct(s): {{details}} — connect it to a consumer, an AWESOME Sink, or a Storage Container.",
   "node.limitInvalidTooltip": "This limit could not be resolved to a machine count. Enter a valid number, or clear the field to let the graph determine it.",
   "node.autoRoundEditTooltip": "Auto-round is on — editing this will turn it off.",
   "node.shardsInvalidTooltip": "This shard count exceeds the machine's cap. Lower it to the machine's max, or clear it.",

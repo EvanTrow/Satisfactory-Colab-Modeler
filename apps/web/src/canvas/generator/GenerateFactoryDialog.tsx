@@ -5,7 +5,7 @@
 // the same modal/focus-trap shape `RecipeChooser.tsx` established for this
 // app's other canvas-creating dialogs.
 import { ChevronDown, ChevronUp, Plus, Wand2, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { defaultGameData, type RecipePart } from "@scm/gamedata";
@@ -15,6 +15,8 @@ import type { NumberFormats, SfmDocument, SolverMode } from "@scm/ydoc";
 import { useFocusTrap } from "../../a11y";
 import { getIconUrl } from "../../assets/icons";
 import { useGameTerm } from "../../i18n";
+import { progressionMaxTier, type RecipeProgressionFilter } from "../../panels/recipeChooser/filters";
+import { useSettings } from "../useSettings";
 import { applyFactoryPlan } from "./applyFactoryPlan";
 import { planFactory, type FactoryTarget } from "./planFactory";
 import { GENERATION_PRIORITY_OPTIONS, type GenerationPriority } from "./recipePriority";
@@ -39,7 +41,6 @@ export interface GenerateFactoryDialogProps {
   onGenerated?: (nodeIds: string[]) => void;
 }
 
-const ITEM_LIST_LIMIT = 40;
 const DEFAULT_RATE_TEXT = "60";
 
 /** One row of the "items to produce" list — a part plus its own, independently-edited rate text (parsed lazily at render/generate time, same convention `RecipeNode.tsx`'s own limit field uses for free-typed numeric input). */
@@ -93,6 +94,38 @@ export function GenerateFactoryDialog({
   const modalRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   useFocusTrap(modalRef, true, { onClose, initialFocusRef: searchInputRef });
+
+  // Project-wide progression gate (`Settings.recipeTierFilter`/
+  // `recipePhaseFilter`) — the same setting `RecipeChooser.tsx` ("Add a
+  // machine") reads to hide not-yet-unlocked recipes from its own list. Here
+  // it gates two things in lockstep: which parts even show up in the "Add an
+  // item" list below (`reachableParts` — a part with no producing recipe at
+  // or under the cap has nothing to add), and which recipes `planFactory` is
+  // allowed to pick for the actual chain (`progressionDisabledRecipes`,
+  // folded into the same `disabledRecipes` set the alternate checklist
+  // already populates) — without the latter, a target could be addable but
+  // still get built from a not-yet-unlocked intermediate recipe.
+  const settings = useSettings(sfmDoc);
+  const progression: RecipeProgressionFilter = useMemo(
+    () => ({ tier: settings.recipeTierFilter, phase: settings.recipePhaseFilter }),
+    [settings.recipeTierFilter, settings.recipePhaseFilter],
+  );
+  const maxTier = useMemo(() => progressionMaxTier(progression), [progression]);
+  const reachableParts = useMemo(() => {
+    const set = new Set<string>();
+    for (const part of gameData.parts) {
+      const producers = gameData.recipesByPartAsOutput.get(part.name);
+      if (producers?.some((recipe) => recipe.tier.tier <= maxTier)) set.add(part.name);
+    }
+    return set;
+  }, [maxTier]);
+  const progressionDisabledRecipes = useMemo(() => {
+    const set = new Set<string>();
+    for (const recipe of gameData.recipes) {
+      if (recipe.tier.tier > maxTier) set.add(recipe.name);
+    }
+    return set;
+  }, [maxTier]);
 
   const [search, setSearch] = useState("");
   const [targets, setTargets] = useState<TargetRow[]>([]);
@@ -175,8 +208,8 @@ export function GenerateFactoryDialog({
   const items = [...gameData.parts]
     .filter((part) => !selectedParts.has(part.name))
     .filter((part) => !query || part.name.toLowerCase().includes(query))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, ITEM_LIST_LIMIT);
+    .filter((part) => reachableParts.has(part.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   function addTarget(part: string) {
     setTargets((rows) => [...rows, { part, rateText: DEFAULT_RATE_TEXT }]);
@@ -199,10 +232,17 @@ export function GenerateFactoryDialog({
     .map((target) => ({ part: target.part, rate: target.rate as Rational }));
   const allRatesValid = targets.length > 0 && validTargets.length === targets.length;
 
+  // Merges the alternate checklist's own opt-outs with the progression
+  // gate's — a recipe past `maxTier` is unavailable regardless of whether
+  // its checklist checkbox is ticked, same as `RecipeChooser.tsx` never
+  // shows it as pickable in the first place.
+  const effectiveDisabledRecipes =
+    progressionDisabledRecipes.size > 0 ? new Set([...disabledAlternates, ...progressionDisabledRecipes]) : disabledAlternates;
+
   const plan =
     validTargets.length > 0
       ? planFactory(gameData, validTargets, {
-          disabledRecipes: disabledAlternates,
+          disabledRecipes: effectiveDisabledRecipes,
           priority,
           allowConverters: useConverters,
           handleByproducts,
@@ -322,7 +362,7 @@ export function GenerateFactoryDialog({
               onChange={(event) => setSearch(event.target.value)}
               className="rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1 text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
             />
-            <div className="max-h-40 overflow-y-auto rounded-md border border-[var(--border-subtle)]">
+            <div className="max-h-56 overflow-y-auto rounded-md border border-[var(--border-subtle)]">
               {items.length === 0 ? (
                 <p className="p-2 text-xs text-[var(--text-muted)]">{t("canvas.noRecipesMatch")}</p>
               ) : (

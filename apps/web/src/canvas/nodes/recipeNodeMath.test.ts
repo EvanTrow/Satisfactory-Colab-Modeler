@@ -12,6 +12,7 @@ import {
   defaultLimitMode,
   effectiveClockPercent,
   effectiveLimitValue,
+  isResourceExtractorRecipe,
   orderRecipeParts,
   partHandleId,
   primaryPart,
@@ -24,16 +25,35 @@ import {
 const gameData = defaultGameData;
 
 describe("defaultLimitMode", () => {
-  it("defaults Miner and AWESOME Sink to ppm", () => {
+  it("defaults every resource-extraction machine and AWESOME Sink to ppm", () => {
     expect(defaultLimitMode("Miner")).toBe("ppm");
+    expect(defaultLimitMode("Water Extractor")).toBe("ppm");
+    expect(defaultLimitMode("Oil Extractor")).toBe("ppm");
+    expect(defaultLimitMode("Resource Well Extractor")).toBe("ppm");
     expect(defaultLimitMode("AWESOME Sink")).toBe("ppm");
   });
 
   it("defaults every other machine to machine count", () => {
     expect(defaultLimitMode("Assembler")).toBe("machines");
     expect(defaultLimitMode("Constructor")).toBe("machines");
-    expect(defaultLimitMode("Oil Extractor")).toBe("machines");
+    expect(defaultLimitMode("Geothermal Generator")).toBe("machines");
     expect(defaultLimitMode("Space Elevator")).toBe("machines");
+  });
+});
+
+describe("isResourceExtractorRecipe", () => {
+  it("is true for exactly the four resource-extraction families", () => {
+    expect(isResourceExtractorRecipe("Miner")).toBe(true);
+    expect(isResourceExtractorRecipe("Water Extractor")).toBe(true);
+    expect(isResourceExtractorRecipe("Oil Extractor")).toBe(true);
+    expect(isResourceExtractorRecipe("Resource Well Extractor")).toBe(true);
+  });
+
+  it("is false for everything else, including other MultiMachine families", () => {
+    expect(isResourceExtractorRecipe("AWESOME Sink")).toBe(false);
+    expect(isResourceExtractorRecipe("Geothermal Generator")).toBe(false);
+    expect(isResourceExtractorRecipe("Space Elevator")).toBe(false);
+    expect(isResourceExtractorRecipe("Assembler")).toBe(false);
   });
 });
 
@@ -120,6 +140,30 @@ describe("effectiveClockPercent / effectiveLimitValue", () => {
     });
     // Mk.1 x Normal = 1 x 60 x 1 = 60/min (see machines.ts's own PartsRatio docs).
     expect(toFractionString(value)).toBe("60");
+  });
+
+  it("defaults limit to a flat 60ppm on an Oil Extractor, NOT its own inherent 120/min rate", () => {
+    const recipe = gameData.recipesByName.get("Crude Oil")!;
+    const value = effectiveLimitValue(gameData, recipe, {
+      machine: "Oil Extractor",
+      purity: "normal",
+      limit: null,
+      limitMode: "ppm",
+    });
+    expect(toFractionString(value)).toBe("60");
+  });
+
+  it("still defaults limit to the primary part's own full-clock rate for a non-resource-extraction ppm-mode node", () => {
+    // A hypothetical ppm-mode Constructor (never happens via
+    // `defaultLimitMode` in practice, but `effectiveLimitValue` itself is
+    // mode-driven, not machine-name-gated beyond the resource-extractor
+    // override) must NOT get the flat 60 override — only the four
+    // resource-extraction families do.
+    const recipe = gameData.recipesByName.get("Iron Plate")!;
+    const node = { machine: "Constructor", purity: null, limit: null, limitMode: "ppm" as const, clock: "100" };
+    const value = effectiveLimitValue(gameData, recipe, node);
+    expect(equals(value, referenceRateAtFullClock(gameData, recipe, node))).toBe(true);
+    expect(toFractionString(value)).not.toBe("60");
   });
 });
 

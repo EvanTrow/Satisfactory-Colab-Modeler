@@ -18,6 +18,26 @@
 // 1. PIN: every node with `limit !== null` gets an immediate machine count
 //    from `nodeProfile.ts`'s `pinnedMachineCount` — no graph involved.
 //
+// 1b. SOFT PIN (this module's `solveBasic`, between PIN and PROPAGATE): a
+//    blank-ppm resource-extraction node (Miner/Water Extractor/Oil
+//    Extractor/Resource Well Extractor — `pinnedMachineCount` never pins
+//    these; see that function's own doc comment) gets ONE chance to resolve
+//    from real, explicitly-limited neighbors via a first PROPAGATE pass
+//    seeded from hard pins only. Any such node PROPAGATE still couldn't
+//    reach then gets `nodeProfile.ts`'s `resourceExtractorSoftDefault` (a
+//    flat 60ppm target) folded into the pin set for a second PROPAGATE pass.
+//    This is what lets a blank Miner wired to an explicitly-limited Smelter
+//    derive its rate from that demand, while a blank Miner with nothing
+//    downstream to derive from still lands on a sensible, non-mismatching
+//    default instead of the bare `ONE`-machine fallback two independently
+//    unpinned nodes would otherwise each hit on their own (see
+//    `golden.test.ts`'s "freshly-placed, never-touched Miner" regression
+//    test for exactly the scenario this prevents). A resource-extraction
+//    node can never itself be downstream of another unresolved one of these
+//    (they have no input parts — always graph sources), so seeding every
+//    still-unresolved one's soft default in the SAME second pass can never
+//    race or conflict between two of them.
+//
 // 2. PROPAGATE (this module's `propagateMachineCounts`): repeatedly scan
 //    every still-unresolved node (in a pass) and ask "does any edge connect
 //    me to an already-resolved node, for a part my recipe actually has?"
@@ -72,6 +92,7 @@ import {
   buildNodeProfile,
   machineCountForTargetRate,
   pinnedMachineCount,
+  resourceExtractorSoftDefault,
   type NodeProfile,
 } from "./nodeProfile";
 import { buildNodeResult } from "./nodeResult";
@@ -200,7 +221,7 @@ export function solveBasic(snapshot: SolverSnapshot, gameData: GameData): SolveR
   const nodeIds = sortedIds(snapshot.nodes.map((n) => n.id));
   const profiles = new Map(snapshot.nodes.map((n) => [n.id, buildNodeProfile(n, gameData)] as const));
 
-  const pinned = new Map<string, Rational>();
+  const hardPinned = new Map<string, Rational>();
   const extraIssuesByNode = new Map<string, string[]>();
   const forceInvalidByNode = new Set<string>();
 
@@ -209,14 +230,32 @@ export function solveBasic(snapshot: SolverSnapshot, gameData: GameData): SolveR
     if (!profile.recipe) continue;
     const result = pinnedMachineCount(profile);
     if (result.count) {
-      pinned.set(nodeId, result.count);
+      hardPinned.set(nodeId, result.count);
     } else if (result.issue) {
       extraIssuesByNode.set(nodeId, [result.issue]);
       forceInvalidByNode.add(nodeId);
     }
   }
 
-  const { counts, resolved } = propagateMachineCounts(nodeIds, profiles, snapshot.edges, pinned);
+  // First pass: propagate from real, explicit pins only, so a blank
+  // resource-extraction node's soft default (below) never shadows an actual
+  // graph-derivable rate.
+  const afterHardPins = propagateMachineCounts(nodeIds, profiles, snapshot.edges, hardPinned);
+
+  // Second pass: fold in a flat 60ppm soft pin for every resource-extraction
+  // node the first pass still couldn't reach, then propagate once more —
+  // see this module's header comment (step 1b) for why one more pass always
+  // suffices.
+  const softPinned = new Map(hardPinned);
+  for (const nodeId of nodeIds) {
+    if (afterHardPins.resolved.has(nodeId)) continue;
+    const soft = resourceExtractorSoftDefault(profiles.get(nodeId)!);
+    if (soft) softPinned.set(nodeId, soft);
+  }
+  const { counts, resolved } =
+    softPinned.size === hardPinned.size
+      ? afterHardPins
+      : propagateMachineCounts(nodeIds, profiles, snapshot.edges, softPinned);
 
   const resolvedFlagByNode = new Map<string, boolean>();
   for (const nodeId of nodeIds) {

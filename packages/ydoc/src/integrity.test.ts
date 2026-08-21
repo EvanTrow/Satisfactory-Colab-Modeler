@@ -292,7 +292,7 @@ describe("repairDocument", () => {
 
     const summary = repairDocument(sfmDoc, defaultGameData);
 
-    expect(summary.normalizedMinerNodeIds).toEqual([node.id]);
+    expect(summary.normalizedResourceExtractorNodeIds).toEqual([node.id]);
     const repaired = getNode(sfmDoc, node.id);
     expect(repaired?.machine).toBe("Miner Mk.1");
     expect(repaired?.purity).toBe("normal");
@@ -301,7 +301,7 @@ describe("repairDocument", () => {
     expect(repaired?.limit).toBe("480");
   });
 
-  it("rule 5: leaves an already-default Miner node alone", () => {
+  it("rule 5: leaves an already-default, already-ppm Miner node alone", () => {
     const { sfmDoc, root } = fixture();
     addNode(
       sfmDoc,
@@ -316,7 +316,75 @@ describe("repairDocument", () => {
 
     const summary = repairDocument(sfmDoc, defaultGameData);
 
-    expect(summary.normalizedMinerNodeIds).toEqual([]);
+    expect(summary.normalizedResourceExtractorNodeIds).toEqual([]);
+  });
+
+  it("rule 5: converts an old machine-count Oil Extractor into an equivalent ppm limit, and locks its capacity to Normal", () => {
+    const { sfmDoc, root } = fixture();
+    // An old project's Oil Extractor, from before Oil Extractor lost its
+    // purity picker and machine-count option: 3 machines at Pure capacity
+    // (240/min each) — a real, deliberate value the migration must preserve
+    // the MEANING of, not just discard.
+    const node = addNode(
+      sfmDoc,
+      baseNode(root.id, {
+        title: "Crude Oil",
+        recipe: "Crude Oil",
+        machine: "Oil Extractor",
+        purity: "pure",
+        limitMode: "machines",
+        limit: "3",
+      }),
+    );
+
+    const summary = repairDocument(sfmDoc, defaultGameData);
+
+    expect(summary.normalizedResourceExtractorNodeIds).toEqual([node.id]);
+    const repaired = getNode(sfmDoc, node.id);
+    expect(repaired?.purity).toBe("normal");
+    expect(repaired?.limitMode).toBe("ppm");
+    // 3 machines x 240/min (Pure) = 720/min — the SAME physical rate the
+    // node solved to before, just re-expressed in the new mode.
+    expect(repaired?.limit).toBe("720");
+  });
+
+  it("rule 5: converts an old blank machine-count Water Extractor into a blank ppm one", () => {
+    const { sfmDoc, root } = fixture();
+    const node = addNode(
+      sfmDoc,
+      baseNode(root.id, {
+        title: "Water",
+        recipe: "Water",
+        machine: "Water Extractor",
+        limitMode: "machines",
+        limit: null,
+      }),
+    );
+
+    const summary = repairDocument(sfmDoc, defaultGameData);
+
+    expect(summary.normalizedResourceExtractorNodeIds).toEqual([node.id]);
+    const repaired = getNode(sfmDoc, node.id);
+    expect(repaired?.limitMode).toBe("ppm");
+    expect(repaired?.limit).toBeNull();
+  });
+
+  it("rule 5: leaves an already-default, already-ppm Resource Well Extractor node alone", () => {
+    const { sfmDoc, root } = fixture();
+    addNode(
+      sfmDoc,
+      baseNode(root.id, {
+        title: "Well Water",
+        recipe: "Well Water",
+        machine: "Resource Well Extractor",
+        purity: "normal",
+        limitMode: "ppm",
+      }),
+    );
+
+    const summary = repairDocument(sfmDoc, defaultGameData);
+
+    expect(summary.normalizedResourceExtractorNodeIds).toEqual([]);
   });
 });
 

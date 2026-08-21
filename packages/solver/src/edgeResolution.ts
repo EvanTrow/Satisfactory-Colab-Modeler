@@ -9,7 +9,8 @@
 // connected components per part, and reports a single reconciled
 // rate/validity per edge — no more "source side X, target side Y" split
 // verdict, since the joint algorithm can't disagree with itself.
-import { abs, toFractionString, ZERO, type Rational } from "@scm/rational";
+import { abs, ZERO, type Rational } from "@scm/rational";
+import { formatRateForMessage } from "./messageFormat";
 import type { NodeProfile } from "./nodeProfile";
 import { partRateAtMachineCount } from "./nodeProfile";
 import { idCompare } from "./ordering";
@@ -164,12 +165,12 @@ function describeShortfall(
   const issues: string[] = [];
   if (targetShort) {
     issues.push(
-      `rate mismatch on part "${part}": ${producerCount} connected producer(s) fall ${toFractionString(targetShort)}/min short of ${consumerCount} connected consumer(s)' combined demand`,
+      `rate mismatch on part "${part}": ${producerCount} connected producer(s) fall ${formatRateForMessage(targetShort)}/min short of ${consumerCount} connected consumer(s)' combined demand`,
     );
   }
   if (sourceShort) {
     issues.push(
-      `rate mismatch on part "${part}": ${producerCount} connected producer(s) supply ${toFractionString(sourceShort)}/min more than ${consumerCount} connected consumer(s) can use`,
+      `rate mismatch on part "${part}": ${producerCount} connected producer(s) supply ${formatRateForMessage(sourceShort)}/min more than ${consumerCount} connected consumer(s) can use`,
     );
   }
   return issues;

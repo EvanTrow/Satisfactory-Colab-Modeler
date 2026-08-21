@@ -32,6 +32,14 @@
 // ---------------------------------------------------------------------------
 // 1. PIN: identical to Basic — every `limit !== null` node gets an
 //    immediate machine count from `nodeProfile.ts`'s `pinnedMachineCount`.
+// 1b. SOFT PIN: identical to Basic's own step 1b (see `basic.ts`'s header
+//    for the full reasoning) — a blank-ppm resource-extraction node
+//    (Miner/Water Extractor/Oil Extractor/Resource Well Extractor) gets one
+//    PROPAGATE pass seeded from hard pins only, then
+//    `nodeProfile.ts`'s `resourceExtractorSoftDefault` (flat 60ppm) folded
+//    in for whichever of them PROPAGATE still couldn't reach, before a
+//    second PROPAGATE pass. `solveFullInner` mirrors `solveBasic`'s
+//    two-phase structure exactly.
 // 2. GROUP: `buildSplitGroups` partitions every edge into the (up to) two
 //    sibling groups it belongs to — one "outgoing" group owned by its
 //    `fromNode` (that node acting as a splitter for `edge.part`) and one
@@ -88,7 +96,15 @@ import { ONE, ZERO, abs, add, equals, isNegative, isPositive, isZero, negate, to
 import type { GameData } from "@scm/gamedata";
 import { resolveEdgesJointly, sourceKey, targetKey } from "./edgeResolution";
 import { groupConnectedComponents, type JointFlowEdge } from "./jointFlow";
-import { buildNodeProfile, machineCountForTargetRate, partRateAtMachineCount, pinnedMachineCount, type NodeProfile } from "./nodeProfile";
+import { formatRateForMessage } from "./messageFormat";
+import {
+  buildNodeProfile,
+  machineCountForTargetRate,
+  partRateAtMachineCount,
+  pinnedMachineCount,
+  resourceExtractorSoftDefault,
+  type NodeProfile,
+} from "./nodeProfile";
 import { buildNodeResult } from "./nodeResult";
 import { idCompare, sortedIds } from "./ordering";
 import type { SolveResult } from "./result";
@@ -481,7 +497,7 @@ function solveFullInner(snapshot: SolverSnapshot, gameData: GameData, options: F
   const nodeIds = sortedIds(snapshot.nodes.map((n) => n.id));
   const profiles = new Map(snapshot.nodes.map((n) => [n.id, buildNodeProfile(n, gameData)] as const));
 
-  const pinned = new Map<string, Rational>();
+  const hardPinned = new Map<string, Rational>();
   const extraIssuesByNode = new Map<string, string[]>();
   const forceInvalidByNode = new Set<string>();
 
@@ -490,14 +506,28 @@ function solveFullInner(snapshot: SolverSnapshot, gameData: GameData, options: F
     if (!profile.recipe) continue;
     const result = pinnedMachineCount(profile);
     if (result.count) {
-      pinned.set(nodeId, result.count);
+      hardPinned.set(nodeId, result.count);
     } else if (result.issue) {
       extraIssuesByNode.set(nodeId, [result.issue]);
       forceInvalidByNode.add(nodeId);
     }
   }
 
-  const { counts, resolved } = propagateMachineCountsFull(nodeIds, profiles, snapshot.edges, pinned, options);
+  // Two-phase pin, identical reasoning to `basic.ts`'s own `solveBasic` (see
+  // that module's header, step 1b): real pins propagate first, THEN a flat
+  // 60ppm soft pin fills in whichever resource-extraction nodes are still
+  // unresolved, before a second propagation pass.
+  const afterHardPins = propagateMachineCountsFull(nodeIds, profiles, snapshot.edges, hardPinned, options);
+  const softPinned = new Map(hardPinned);
+  for (const nodeId of nodeIds) {
+    if (afterHardPins.resolved.has(nodeId)) continue;
+    const soft = resourceExtractorSoftDefault(profiles.get(nodeId)!);
+    if (soft) softPinned.set(nodeId, soft);
+  }
+  const { counts, resolved } =
+    softPinned.size === hardPinned.size
+      ? afterHardPins
+      : propagateMachineCountsFull(nodeIds, profiles, snapshot.edges, softPinned, options);
 
   const resolvedFlagByNode = new Map<string, boolean>();
   for (const nodeId of nodeIds) {
@@ -539,7 +569,7 @@ function solveFullInner(snapshot: SolverSnapshot, gameData: GameData, options: F
     const existing = extraIssuesByNode.get(ownerNode) ?? [];
     extraIssuesByNode.set(ownerNode, [
       ...existing,
-      `${toFractionString(overflow)}/min of this node's part flow could not be routed across its sibling edges (all sibling capacities saturated)`,
+      `${formatRateForMessage(overflow)}/min of this node's part flow could not be routed across its sibling edges (all sibling capacities saturated)`,
     ]);
   }
 
@@ -648,7 +678,7 @@ function solveFullInner(snapshot: SolverSnapshot, gameData: GameData, options: F
     const edgeIssues: string[] = [];
     if (!valid) {
       edgeIssues.push(
-        `rate mismatch on part "${edge.part}": source side ${toFractionString(sourceShare)}/min, target side ${toFractionString(targetShare)}/min`,
+        `rate mismatch on part "${edge.part}": source side ${formatRateForMessage(sourceShare)}/min, target side ${formatRateForMessage(targetShare)}/min`,
       );
     }
     return { edgeId: edge.id, part: edge.part, rate: toFractionString(sourceShare), valid, issues: edgeIssues };

@@ -30,6 +30,7 @@
 //     its computed default".
 // ---------------------------------------------------------------------------
 import {
+  RESOURCE_EXTRACTOR_RECIPE_MACHINES,
   baseRecipeRatePerMinute,
   baseRecipeRatePerMinuteForEntry,
   defaultVariant,
@@ -64,19 +65,48 @@ import type { LimitMode, NodeRecord } from "@scm/ydoc";
 // ---------------------------------------------------------------------------
 
 /**
- * The two `Recipe.machine` values (pre-MultiMachine-resolution — see
- * `@scm/gamedata`'s `resolveMachine`) that default to ppm. Checked against
- * the *raw* recipe machine name, not the resolved concrete variant
- * (`"Miner"`, not `"Miner Mk.3"`) — this is the same field
- * `buildNodeInputForRecipe` (apps/web/src/panels/recipeChooser/filters.ts)
- * already has in hand at node-creation time, and matches PLAN.md §2's own
- * wording exactly ("Miners and AWESOME Sinks").
+ * The `Recipe.machine` values (pre-MultiMachine-resolution — see
+ * `@scm/gamedata`'s `resolveMachine`) that default to ppm: the four
+ * resource-extraction families (`RESOURCE_EXTRACTOR_RECIPE_MACHINES` —
+ * Miner, Water Extractor, Oil Extractor, Resource Well Extractor, none of
+ * which can ever be switched to machine-count mode — see
+ * `isResourceExtractorRecipe`) plus AWESOME Sink. Checked against the *raw*
+ * recipe machine name, not the resolved concrete variant (`"Miner"`, not
+ * `"Miner Mk.3"`) — this is the same field `buildNodeInputForRecipe`
+ * (apps/web/src/panels/recipeChooser/filters.ts) already has in hand at
+ * node-creation time.
  */
-const PPM_DEFAULT_MACHINES: ReadonlySet<string> = new Set(["Miner", "AWESOME Sink"]);
+const PPM_DEFAULT_MACHINES: ReadonlySet<string> = new Set([...RESOURCE_EXTRACTOR_RECIPE_MACHINES, "AWESOME Sink"]);
 
 export function defaultLimitMode(recipeMachine: string): LimitMode {
   return PPM_DEFAULT_MACHINES.has(recipeMachine) ? "ppm" : "machines";
 }
+
+/**
+ * `true` for the four resource-extraction families
+ * (`RESOURCE_EXTRACTOR_RECIPE_MACHINES`) — the ones with no Mk./purity
+ * picker any more (always their flat default variant — see
+ * `packages/ydoc/src/integrity.ts`'s normalization rule), always `"ppm"`
+ * limit mode, and a blank limit field allowed (unlike every other ppm-mode
+ * node, e.g. AWESOME Sink, whose blank field stays disallowed — see
+ * `RecipeNode.tsx`'s `commitLimit`). `recipeMachine` is the *raw*, pre-
+ * resolution `Recipe.machine` name, same convention as `defaultLimitMode`.
+ */
+export function isResourceExtractorRecipe(recipeMachine: string): boolean {
+  return RESOURCE_EXTRACTOR_RECIPE_MACHINES.has(recipeMachine);
+}
+
+/**
+ * The flat ppm default `effectiveLimitValue` shows for a blank-limit
+ * resource-extraction node — "Resource nodes should all default to 60ppm"
+ * (product requirement), not derived from the recipe/variant's own rate the
+ * way every other node's blank-field default is (a Water Extractor's/Oil
+ * Extractor's inherent rate is 120/min, not 60). Mirrors
+ * `packages/solver/src/nodeProfile.ts`'s `RESOURCE_EXTRACTOR_DEFAULT_PPM` —
+ * duplicated rather than imported, since `packages/solver` depends on
+ * `apps/web` never importing it back (PLAN.md §7's dependency direction).
+ */
+export const RESOURCE_EXTRACTOR_DEFAULT_PPM: Rational = of(60);
 
 // ---------------------------------------------------------------------------
 // Clock percent parsing/clamping.
@@ -222,14 +252,20 @@ export type ClockNodeRef = MachineRef & Pick<NodeRecord, "limit" | "limitMode" |
 
 /**
  * The value the limit field should *display* when `node.limit` is `null`
- * (never explicitly set): `1` machine for machine-count mode, or the primary
- * part's own 100%-clock rate for ppm mode (i.e. "one machine's worth").
- * Purely a display fallback — see the module header for why `null` is never
- * overwritten just from rendering this.
+ * (never explicitly set): `1` machine for machine-count mode; for ppm mode,
+ * a flat `RESOURCE_EXTRACTOR_DEFAULT_PPM` (60) for a resource-extraction
+ * recipe (`isResourceExtractorRecipe`) or the primary part's own 100%-clock
+ * rate otherwise (i.e. "one machine's worth" — still correct for AWESOME
+ * Sink, the only other ppm-default machine). Purely a display fallback —
+ * see the module header for why `null` is never overwritten just from
+ * rendering this.
  */
 export function effectiveLimitValue(gameData: GameData, recipe: Recipe, node: LimitNodeRef): Rational {
   if (node.limit) return safeParseRational(node.limit, ONE);
-  return node.limitMode === "ppm" ? referenceRateAtFullClock(gameData, recipe, node) : ONE;
+  if (node.limitMode !== "ppm") return ONE;
+  return isResourceExtractorRecipe(recipe.machine)
+    ? RESOURCE_EXTRACTOR_DEFAULT_PPM
+    : referenceRateAtFullClock(gameData, recipe, node);
 }
 
 /**

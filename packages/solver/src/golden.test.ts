@@ -79,17 +79,17 @@ describe("golden values (PLAN.md §9)", () => {
 
   it("a freshly-placed, never-touched Miner wired straight to a freshly-placed Smelter resolves at the Miner's own displayed 60/min — no mismatch", () => {
     // Regression test: a brand-new Miner (`limit: null`, `limitMode: "ppm"`)
-    // shows "60/min" in the UI without the user typing anything (Job 010's
-    // `effectiveLimitValue` display default). Before this fix, `null` in
-    // ppm mode was treated as fully unpinned, so Basic mode's graph
-    // propagation had no pinned starting point on either side: the Miner
-    // fell back to its own default of exactly 1 machine (which happens to
-    // read as 60/min) and the Smelter *independently* fell back to its own
-    // default of 1 machine (30/min) — connecting them produced a real
-    // mismatch (edge capped at 30/min, both cards orange) that only went
-    // away once the user retyped the Miner's already-displayed "60" to
-    // force it to actually commit. Neither node's `limit` is set here —
-    // this must resolve cleanly with no user interaction at all.
+    // shows "60/min" in the UI without the user typing anything. Neither
+    // node here has a real `limit` set, so `basic.ts`'s first propagation
+    // pass (real pins only) resolves nothing; its SECOND pass then folds in
+    // `nodeProfile.ts`'s `resourceExtractorSoftDefault` (a flat 60ppm
+    // target) for the still-unresolved Miner, which propagates forward to
+    // give the Smelter its own correct machine count — see `basic.ts`'s
+    // header comment (step 1b) for the full two-phase mechanism. Without
+    // that soft default, the Miner and Smelter would each independently
+    // fall back to the bare `ONE`-machine default (60/min vs. 30/min) and
+    // mismatch until the user manually retyped the Miner's already-displayed
+    // "60" to force it to actually commit.
     const snapshot: SolverSnapshot = {
       nodes: [
         {
@@ -137,6 +137,54 @@ describe("golden values (PLAN.md §9)", () => {
     const edge = smelterIngotOut.result.edges.find((e) => e.edgeId === "edge-1");
     expect(edge?.valid).toBe(true);
     expect(equals(parseRational(edge!.rate), of(60))).toBe(true);
+  });
+
+  it("a blank Miner wired to an EXPLICITLY-limited Smelter derives its rate from that demand, not the flat 60ppm default", () => {
+    // The other half of `basic.ts`'s two-phase pin (step 1b): when a real
+    // downstream limit IS reachable, the first propagation pass (real pins
+    // only) resolves the Miner directly from it, so its 60ppm soft default
+    // never even gets consulted. 3 Smelters x 30 Iron Ingot/min each = 90/min,
+    // 1:1 recipe means 90 Iron Ore/min is needed — NOT the flat 60 a blank,
+    // unconnected-to-any-real-limit Miner would land on.
+    const snapshot: SolverSnapshot = {
+      nodes: [
+        {
+          id: "miner",
+          recipe: "Iron Ore",
+          machine: "Miner Mk.1",
+          purity: "normal",
+          limit: null,
+          limitMode: "ppm",
+          clock: null,
+          shards: 0,
+        },
+        {
+          id: "smelter",
+          recipe: "Iron Ingot",
+          machine: "Smelter",
+          purity: null,
+          limit: "3",
+          limitMode: "machines",
+          clock: null,
+          shards: 0,
+        },
+      ],
+      edges: [
+        {
+          id: "edge-1",
+          part: "Iron Ore",
+          fromNode: "miner",
+          fromPort: "out",
+          toNode: "smelter",
+          toPort: "in",
+        },
+      ],
+    };
+
+    const minerOre = rate(snapshot, "miner", "Iron Ore");
+    expect(equals(minerOre.rate, of(90))).toBe(true);
+    expect(minerOre.node.resolved).toBe(true);
+    expect(minerOre.result.valid).toBe(true);
   });
 
   it("Miner Mk.3 on a Pure node = 480/min", () => {

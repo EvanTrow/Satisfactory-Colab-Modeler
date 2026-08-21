@@ -12,6 +12,7 @@
 // "a CRDT guarantees convergence, not correctness" framing — the solver's
 // job is to report the problem, not to throw).
 import {
+  RESOURCE_EXTRACTOR_RECIPE_MACHINES,
   baseRecipeRatePerMinuteForEntry,
   defaultVariant,
   resolveMachine,
@@ -418,67 +419,31 @@ export interface PinnedMachineCountResult {
 }
 
 /**
- * The machine count directly implied by `node.limit`/`limitMode` — no
- * graph awareness. Returns `{}` (neither field set) when `node.limit` is
- * `null` AND `limitMode` is `"machines"`, meaning "not pinned; the caller
- * decides the default" (Manual mode always defaults to `ONE`; Basic mode
- * tries graph propagation first and only then falls back to `ONE` — see
- * `manual.ts`/`basic.ts`).
- *
- * A `null` limit in `"ppm"` mode (Miners/AWESOME Sinks, per
- * `recipeNodeMath.ts`'s `defaultLimitMode`) is a DELIBERATE exception to
- * that: it's still treated as pinned, to the recipe's own 100%-clock
- * reference rate for its primary part — the exact value
- * `recipeNodeMath.ts`'s `effectiveLimitValue` already shows in the UI's
- * ppm field for an untouched node (e.g. "60" for a Miner). Without this,
- * the field displayed a concrete rate that wasn't actually anchored to
- * anything: two freshly-placed, connected, never-touched nodes (a Miner
- * showing "60/min" wired straight into a Smelter showing "1 machine")
- * would each independently fall back to `ONE` machine and silently
- * disagree (60 supplied vs. 30 consumed) until the user retyped the exact
- * value already on screen just to "confirm" it. ppm mode has no upstream
- * to derive a rate from anyway (that's the whole reason it defaults to
- * ppm instead of machine-count — see PLAN.md §2), so there's no
- * "derive from the graph" behavior this could be shadowing, unlike
- * machine-count mode's blank state (`RecipeNode.tsx`'s `limitIsBlank`),
- * which still means exactly that.
- *
- * That exception does NOT extend to a synthetic blueprint-compound profile
- * (`profile.syntheticPowerAtOneUnit !== undefined` — the AWESOME Sink/
- * Dimensional Depot Uploader consumer nodes `sinkPassthrough.ts` mints, and
- * the Storage Container consumer/producer nodes `storagePassthrough.ts`
- * mints; both hardcode `limit: null, limitMode: "ppm"`). Those nodes'
- * `blueprintCopyBasis.perCopyRates` is a bookkeeping ratio (`"-1"`/`"1"` per
- * "copy", so 1 machine count = 1 ppm), not a real machine's physical
- * reference rate the way a Miner's 60/min extraction rate is — there is no
- * meaningful "recipe's own rate" to anchor to, and the UI shows these nodes'
- * blank limit field as literally "unlimited", not a concrete number the way
- * a Miner's ppm field shows "60". Pinning them here silently capped an
- * unlimited-looking Dimensional Depot/AWESOME Sink/Storage Container at
- * exactly 1 ppm per connected part instead of leaving them genuinely
- * unpinned so graph propagation (Basic's even-split or Full's water-fill)
- * sizes them to whatever's actually available, matching every other
- * unlimited node's behavior.
+ * The machine count directly implied by `node.limit`/`limitMode` — no graph
+ * awareness. Returns `{}` (neither field set) whenever `node.limit` is
+ * `null`, in EITHER mode — "not pinned; the caller decides the default."
+ * For `"machines"` mode that default is Manual mode's flat `ONE`, or Basic/
+ * Full mode's graph propagation falling back to `ONE`. For `"ppm"` mode
+ * (Miner/Water Extractor/Oil Extractor/Resource Well Extractor — see
+ * `@scm/gamedata`'s `RESOURCE_EXTRACTOR_RECIPE_MACHINES`, the only recipes
+ * that ever default to ppm mode with no explicit limit) it's
+ * `basic.ts`'s/`full.ts`'s own two-phase pin step: graph propagation gets a
+ * first attempt at deriving the rate from a real, explicitly-limited
+ * neighbor before `resourceExtractorSoftDefault` below applies a flat
+ * 60ppm fallback — see that function's own doc comment and `basic.ts`'s
+ * module header for why a blank resource node's ppm can't just be pinned
+ * here, graph-blind, the way an explicit typed number is.
  */
 export function pinnedMachineCount(profile: NodeProfile): PinnedMachineCountResult {
   const { node } = profile;
   if (!profile.recipe) return {};
+  if (node.limit === null) return {};
 
   let limitValue: Rational;
-  if (node.limit === null) {
-    if (node.limitMode !== "ppm") return {};
-    if (profile.syntheticPowerAtOneUnit !== undefined) return {};
-    const part = profile.primaryPart;
-    if (!part) return {};
-    const ref = profile.refRatePerPart.get(part.part);
-    if (!ref || isZero(ref)) return {};
-    limitValue = abs(ref);
-  } else {
-    try {
-      limitValue = parseRational(node.limit);
-    } catch {
-      return { issue: `invalid limit "${node.limit}"` };
-    }
+  try {
+    limitValue = parseRational(node.limit);
+  } catch {
+    return { issue: `invalid limit "${node.limit}"` };
   }
 
   if (node.limitMode === "machines") {
@@ -496,4 +461,38 @@ export function pinnedMachineCount(profile: NodeProfile): PinnedMachineCountResu
     return { issue: `could not derive a machine count from the "ppm" limit on part "${part.part}"` };
   }
   return { count };
+}
+
+/**
+ * The flat fallback target rate for a blank-ppm resource-extraction node
+ * once graph propagation has genuinely had no better answer to offer —
+ * "Resource nodes should all default to 60ppm" (product requirement), not
+ * derived from the recipe/variant's own rate the way the old pinned-to-
+ * reference-rate behavior was (a Water Extractor's/Oil Extractor's inherent
+ * rate is 120/min, not 60 — this is a deliberate flat UI default, the same
+ * number regardless of which of the four families it is).
+ */
+export const RESOURCE_EXTRACTOR_DEFAULT_PPM: Rational = of(60);
+
+/**
+ * `basic.ts`'s/`full.ts`'s second-phase pin: the machine count that puts a
+ * blank-ppm resource-extraction node's primary part at exactly
+ * `RESOURCE_EXTRACTOR_DEFAULT_PPM`. `undefined` for every node that isn't
+ * "a resource-extraction recipe (`RESOURCE_EXTRACTOR_RECIPE_MACHINES`),
+ * `limitMode: "ppm"`, `limit: null`" — i.e. every node whose count a plain
+ * `pinnedMachineCount` call, or the FIRST propagation pass seeded from real
+ * pins only, could already have resolved. Callers only need to call this for
+ * nodes still unresolved after that first pass (see `basic.ts`'s own
+ * two-phase `solveBasic`), but it's harmless (just redundant) to call it
+ * unconditionally on every node, since a node that's ALREADY resolved by
+ * then is simply never consulted for its soft default.
+ */
+export function resourceExtractorSoftDefault(profile: NodeProfile): Rational | undefined {
+  const { node, recipe } = profile;
+  if (!recipe || node.limit !== null || node.limitMode !== "ppm") return undefined;
+  if (!RESOURCE_EXTRACTOR_RECIPE_MACHINES.has(recipe.machine)) return undefined;
+  const part = profile.primaryPart;
+  if (!part) return undefined;
+  const target = isPositive(part.amount) ? RESOURCE_EXTRACTOR_DEFAULT_PPM : negate(RESOURCE_EXTRACTOR_DEFAULT_PPM);
+  return machineCountForTargetRate(profile, part.part, target, isPositive(part.amount) ? "output" : "input");
 }

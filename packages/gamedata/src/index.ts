@@ -33,6 +33,7 @@ export { type RecipeIndices, buildRecipeIndices, compareTiers, parseTier } from 
 
 export {
   MULTI_MACHINE_RECIPE_NAMES,
+  RESOURCE_EXTRACTOR_RECIPE_MACHINES,
   type MultiMachineVariant,
   type ResolvedMachine,
   type ResolvedMultiMachine,
