@@ -71,9 +71,11 @@ import {
   useLocalPresence,
   useRemotePresence,
   useSelectionPublisher,
+  useSmoothedPositions,
   type AwarenessDraggingNode,
   type AwarenessDraggingWaypoint,
   type LocalUserIdentity,
+  type Point,
 } from "../collab";
 import { RecipeChooser, type PendingConnectionInfo } from "../panels";
 import { SUMMARY_SIDEBAR_WIDTH_PX, SummaryPanel } from "../panels";
@@ -1102,6 +1104,17 @@ function CanvasFlow({
     }
     return map;
   }, [remotePresence, containerId]);
+  // A dragged node's position only arrives every ~50ms
+  // (`useDragPublisher.ts`'s `DRAG_PUBLISH_INTERVAL_MS`) — rendering
+  // `remote.x`/`.y` straight from `remoteDraggingByNodeId` would make it
+  // visibly hop between samples instead of gliding, same reasoning as
+  // `PresenceCursors.tsx`'s identical use of `useSmoothedPositions`.
+  const remoteDraggingTargets = useMemo(() => {
+    const map = new Map<string, Point>();
+    for (const [id, remote] of remoteDraggingByNodeId) map.set(id, { x: remote.x, y: remote.y });
+    return map;
+  }, [remoteDraggingByNodeId]);
+  const smoothedRemoteDragging = useSmoothedPositions(remoteDraggingTargets);
   const renderedNodes = useMemo(() => {
     // Public-link work: `readOnly` needs injecting into EVERY node's data
     // (not just remotely-dragged ones), same "fold it into the bail-out and
@@ -1112,10 +1125,11 @@ function CanvasFlow({
       if (!remote || draggingPositionsRef.current.has(node.id)) {
         return readOnly ? { ...node, data: { ...node.data, readOnly } } : node;
       }
+      const position = smoothedRemoteDragging.get(node.id) ?? { x: remote.x, y: remote.y };
       return {
         ...node,
         data: { ...node.data, readOnly },
-        position: { x: remote.x, y: remote.y },
+        position,
         style: {
           ...node.style,
           outline: `2px solid ${remote.color}`,
@@ -1128,7 +1142,7 @@ function CanvasFlow({
     // read here without being a dependency) — safe because every local drag
     // frame that touches it also changes `nodes` itself (`onNodesChange` →
     // `applyNodeChanges` → the store), which re-triggers this memo anyway.
-  }, [nodes, remoteDraggingByNodeId, readOnly]);
+  }, [nodes, remoteDraggingByNodeId, smoothedRemoteDragging, readOnly]);
 
   // The connection/waypoint sibling of the node-drag overlay above: every
   // *other* peer's currently-dragging waypoint or connection label
@@ -1166,6 +1180,15 @@ function CanvasFlow({
     }
     return map;
   }, [remotePresence, containerId]);
+  // Same "raw sample vs. glide" tradeoff as the node-drag overlay above —
+  // a dragged waypoint/label only publishes every ~50ms too
+  // (`useEdgeDragPublisher.ts`'s `EDGE_DRAG_PUBLISH_INTERVAL_MS`).
+  const remoteEdgeDraggingTargets = useMemo(() => {
+    const map = new Map<string, Point>();
+    for (const [edgeId, remote] of remoteEdgeDraggingByEdgeId) map.set(edgeId, { x: remote.x, y: remote.y });
+    return map;
+  }, [remoteEdgeDraggingByEdgeId]);
+  const smoothedRemoteEdgeDragging = useSmoothedPositions(remoteEdgeDraggingTargets);
   // The group-drag sibling of the map above: every waypoint a REMOTE peer's
   // node-driven GROUP drag (their own marquee selection — pure per-client
   // UI state, never synced) is carrying along, keyed by edge id then
@@ -1187,6 +1210,17 @@ function CanvasFlow({
     }
     return map;
   }, [remotePresence, containerId]);
+  // Rides the same `${edgeId}:${index}` composite key through smoothing —
+  // a flat map is all `useSmoothedPositions` needs to key on, the nested
+  // per-edge shape only matters once it's handed to `ConnectionEdge`.
+  const remoteGroupWaypointTargets = useMemo(() => {
+    const map = new Map<string, Point>();
+    for (const [edgeId, byIndex] of remoteGroupWaypointsByEdgeId) {
+      for (const [index, wp] of byIndex) map.set(`${edgeId}:${index}`, { x: wp.x, y: wp.y });
+    }
+    return map;
+  }, [remoteGroupWaypointsByEdgeId]);
+  const smoothedRemoteGroupWaypoints = useSmoothedPositions(remoteGroupWaypointTargets);
   const renderedEdges = useMemo(() => {
     // Public-link work: `readOnly` needs injecting into EVERY edge's data
     // (not just ones with remote drag activity), so the early bail-out and
@@ -1196,8 +1230,19 @@ function CanvasFlow({
       return edges;
     }
     return edges.map((edge) => {
-      const remoteWaypointDrag = remoteEdgeDraggingByEdgeId.get(edge.id);
-      const remoteGroupWaypoints = remoteGroupWaypointsByEdgeId.get(edge.id);
+      const remoteWaypointDragRaw = remoteEdgeDraggingByEdgeId.get(edge.id);
+      const remoteWaypointDrag = remoteWaypointDragRaw
+        ? { ...remoteWaypointDragRaw, ...(smoothedRemoteEdgeDragging.get(edge.id) ?? remoteWaypointDragRaw) }
+        : undefined;
+      const remoteGroupWaypointsRaw = remoteGroupWaypointsByEdgeId.get(edge.id);
+      const remoteGroupWaypoints = remoteGroupWaypointsRaw
+        ? new Map(
+            Array.from(remoteGroupWaypointsRaw, ([index, wp]) => [
+              index,
+              { ...wp, ...(smoothedRemoteGroupWaypoints.get(`${edge.id}:${index}`) ?? wp) },
+            ]),
+          )
+        : undefined;
       const record = edge.data?.record;
       if ((!remoteWaypointDrag && !remoteGroupWaypoints && !readOnly) || !record) return edge;
       // `record` explicit (not just spread from `edge.data`) so this stays
@@ -1208,7 +1253,14 @@ function CanvasFlow({
       const data: CanvasEdgeData = { ...edge.data, record, remoteWaypointDrag, remoteGroupWaypoints, readOnly };
       return { ...edge, data };
     });
-  }, [edges, remoteEdgeDraggingByEdgeId, remoteGroupWaypointsByEdgeId, readOnly]);
+  }, [
+    edges,
+    remoteEdgeDraggingByEdgeId,
+    remoteGroupWaypointsByEdgeId,
+    smoothedRemoteEdgeDragging,
+    smoothedRemoteGroupWaypoints,
+    readOnly,
+  ]);
 
   // Job 013: right-click-on-a-node menu state — "move to container" for a
   // real node, "open"/"delete (reparent, don't destroy)" for an outpost

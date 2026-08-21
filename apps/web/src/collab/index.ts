@@ -25,6 +25,8 @@ export {
 } from "./awareness";
 export { discordAvatarUrl, defaultAvatarIndex } from "./discordAvatar";
 export { createThrottled } from "./throttle";
+export { smoothDamp, smoothDampPoint, type Point } from "./smoothDamp";
+export { useSmoothedPositions } from "./useSmoothedPositions";
 export { useRemotePresence, type RemotePresence } from "./useRemotePresence";
 export { useLocalPresence, type LocalPresenceControls } from "./useLocalPresence";
 export { useCursorPublisher, type CursorPublisherHandlers } from "./useCursorPublisher";
