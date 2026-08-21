@@ -450,7 +450,6 @@ function App() {
           key={view.project.id}
           projectId={view.project.id}
           projectTitle={view.project.title}
-          projectShortId={view.project.shortId}
           role={view.project.role}
           localUser={localUser}
           onBack={leaveCanvas}

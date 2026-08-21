@@ -288,10 +288,13 @@ export function SharingPanel({ projectId, role, currentUserId }: SharingPanelPro
         aria-label="Share this project"
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="nodrag inline-flex h-7 items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 text-xs text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+        className={`nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border text-xs transition-colors ${
+          open
+            ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+            : "border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+        }`}
       >
-        <Share2 className="h-3.5 w-3.5" aria-hidden />
-        Share
+        <Share2 className="h-4 w-4" aria-hidden />
       </button>
       {open && (
         <>

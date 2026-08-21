@@ -33,6 +33,7 @@ import {
   isPositive,
   isZero,
   multiply,
+  of,
   parseRational,
   subtract,
   toFractionString,
@@ -93,10 +94,12 @@ export interface ScopedSummary {
   readonly powerUsed: number;
   readonly powerNet: number;
   /**
-   * Always `"0"` — no AWESOME Sink node kind exists in the document schema
-   * yet (see `@scm/solver`'s own `SolveSummary.sinkPoints` doc comment,
-   * Job 017's documented limitation). Carried through unchanged rather than
-   * "fixed" here — there is nothing yet to sum.
+   * `sum(amount consumed x Part.sinkPoints)` over every synthetic sink-
+   * consumer solver node (`sinkConsumerNodeId`, from `sinkPassthrough.ts`)
+   * passed in via `sinkConsumerNodeIds` — i.e. every part actually fed into
+   * an AWESOME Sink (never a Dimensional Depot Uploader, which shares the
+   * same passthrough machinery but grants no points) that's in scope.
+   * `"0"` when `sinkConsumerNodeIds` is omitted/empty.
    */
   readonly sinkPoints: string;
   /** Cost-to-build, sorted by part name. Empty when no node in scope resolved to a real machine (e.g. an empty selection). */
@@ -121,6 +124,14 @@ export function summarizeScope(
   nodeResults: readonly NodeSolveResult[],
   nodeRecordById: ReadonlyMap<string, Pick<NodeRecord, "machine">>,
   gameData: GameData,
+  /**
+   * Synthetic sink-consumer solver node ids (`sinkConsumerNodeId`) for
+   * whichever real AWESOME Sink nodes are in the current scope — see
+   * `ScopedSummary.sinkPoints`'s own doc comment. These ids never overlap
+   * `nodeIds` (that set is real recipe nodes only), so they're tallied in
+   * their own pass rather than folded into the made/used loop below.
+   */
+  sinkConsumerNodeIds: ReadonlySet<string> = new Set(),
 ): ScopedSummary {
   const made = new Map<string, Rational>();
   const used = new Map<string, Rational>();
@@ -128,8 +139,19 @@ export function summarizeScope(
   let powerMade = 0;
   let powerUsed = 0;
   let solvedNodeCount = 0;
+  let sinkPoints: Rational = ZERO;
 
   for (const nodeResult of nodeResults) {
+    if (sinkConsumerNodeIds.has(nodeResult.nodeId)) {
+      for (const [part, rateStr] of Object.entries(nodeResult.partRates)) {
+        const rate = parseRational(rateStr);
+        if (!isPositive(rate) && !isZero(rate)) {
+          const pointsPerUnit = gameData.partsByName.get(part)?.sinkPoints ?? 0;
+          if (pointsPerUnit !== 0) sinkPoints = add(sinkPoints, multiply(abs(rate), of(pointsPerUnit)));
+        }
+      }
+    }
+
     if (!nodeIds.has(nodeResult.nodeId)) continue;
     solvedNodeCount += 1;
 
@@ -180,7 +202,7 @@ export function summarizeScope(
     powerMade,
     powerUsed,
     powerNet: powerMade - powerUsed,
-    sinkPoints: "0",
+    sinkPoints: toFractionString(sinkPoints),
     cost: costEntries,
     nodeCount: nodeIds.size,
     solvedNodeCount,

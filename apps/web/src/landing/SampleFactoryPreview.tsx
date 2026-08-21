@@ -38,6 +38,7 @@ import type { LocalUserIdentity } from "../collab";
 import { useLocalPresence } from "../collab";
 import { CanvasDocContext, type CanvasDocContextValue } from "../canvas/CanvasDocContext";
 import { bootstrapSfmDocument } from "../canvas/persistence/bootstrapDocument";
+import { GroupSelectionContext, type GroupSelectionContextValue } from "../canvas/GroupSelectionContext";
 import { SolverResultContext } from "../canvas/SolverResultContext";
 import { edgeTypes, nodeTypes } from "../canvas/flowTypes";
 import { useYjsSync } from "../canvas/useYjsSync";
@@ -45,6 +46,24 @@ import { useSolver } from "../workers";
 import { SAMPLE_FACTORY_SNAPSHOT_BASE64 } from "./sampleFactorySnapshot";
 
 const SAMPLE_LOCAL_USER: LocalUserIdentity = { id: "landing-sample", displayName: "", avatarUrl: "" };
+
+/**
+ * `ConnectionEdge.tsx` calls `useGroupSelection()` unconditionally (marquee
+ * selection + group-drag machinery, `GroupSelectionContext.ts`), which
+ * throws without a `<GroupSelectionContext.Provider>` above it — normally
+ * supplied by `CanvasView.tsx`, which this read-only embed deliberately
+ * doesn't mount. Since `nodesDraggable`/`nodesConnectable`/
+ * `elementsSelectable` are all off here (see this file's header comment),
+ * none of this machinery can ever actually run — a static no-op value is
+ * enough to satisfy the hook.
+ */
+const READONLY_GROUP_SELECTION: GroupSelectionContextValue = {
+  selectedWaypoints: new Set(),
+  setSelectedWaypoints: () => {},
+  waypointGroupDragDelta: null,
+  setWaypointGroupDragDelta: () => {},
+  groupNodeMove: { preview: () => {}, commit: () => {} },
+};
 
 function base64ToUint8Array(base64: string): Uint8Array {
   const binary = atob(base64);
@@ -108,23 +127,25 @@ export function SampleFactoryPreview() {
 
   return (
     <CanvasDocContext.Provider value={docContext}>
-      <SolverResultContext.Provider value={solverContextValue}>
-        <div ref={wrapperRef} className="h-full w-full [&_.react-flow__viewport]:pointer-events-none">
-          <ReactFlowProvider>
-            <ReactFlow
-              nodes={sync.nodes}
-              edges={sync.edges}
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              nodesDraggable={false}
-              nodesConnectable={false}
-              elementsSelectable={false}
-              fitView
-              proOptions={{ hideAttribution: true }}
-            />
-          </ReactFlowProvider>
-        </div>
-      </SolverResultContext.Provider>
+      <GroupSelectionContext.Provider value={READONLY_GROUP_SELECTION}>
+        <SolverResultContext.Provider value={solverContextValue}>
+          <div ref={wrapperRef} className="h-full w-full [&_.react-flow__viewport]:pointer-events-none">
+            <ReactFlowProvider>
+              <ReactFlow
+                nodes={sync.nodes}
+                edges={sync.edges}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                nodesDraggable={false}
+                nodesConnectable={false}
+                elementsSelectable={false}
+                fitView
+                proOptions={{ hideAttribution: true }}
+              />
+            </ReactFlowProvider>
+          </div>
+        </SolverResultContext.Provider>
+      </GroupSelectionContext.Provider>
     </CanvasDocContext.Provider>
   );
 }

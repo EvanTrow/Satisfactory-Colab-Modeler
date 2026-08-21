@@ -76,7 +76,7 @@ import {
   type LocalUserIdentity,
 } from "../collab";
 import { RecipeChooser, type PendingConnectionInfo } from "../panels";
-import { SummaryPanel } from "../panels";
+import { SUMMARY_SIDEBAR_WIDTH_PX, SummaryPanel } from "../panels";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
 import { GenerateFactoryDialog } from "./generator";
@@ -159,10 +159,9 @@ const controlButtonIconStyle: CSSProperties = {
  */
 
 interface CanvasViewProps {
-  /** The project's real database id (UUID) — what `persistence/useProjectDocument.ts` fetches/pushes doc bytes against. Not the same as `projectShortId` below. */
+  /** The project's real database id (UUID) — what `persistence/useProjectDocument.ts` fetches/pushes doc bytes against. */
   projectId: string;
   projectTitle: string;
-  projectShortId: string;
   /** The caller's role on this project — gates whether local edits get pushed to the server at all (see `useProjectDocument`'s header comment). */
   role: ProjectRole;
   /** Job 021: this logged-in user's own identity, for publishing this client's local Awareness state (`collab/useLocalPresence.ts`) — `App.tsx` derives it from `GET /auth/me`'s response once and passes it straight through. */
@@ -182,7 +181,6 @@ interface CanvasViewProps {
 export function CanvasView({
   projectId,
   projectTitle,
-  projectShortId,
   role,
   localUser,
   onBack,
@@ -224,7 +222,6 @@ export function CanvasView({
       awareness={docState.awareness}
       projectId={projectId}
       projectTitle={projectTitle}
-      projectShortId={projectShortId}
       role={role}
       localUser={localUser}
       saveStatus={docState.saveStatus}
@@ -281,8 +278,6 @@ interface CanvasViewReadyProps extends StaticCanvasDoc {
   /** The project's real database id — `VersionPanel` talks to `/api/projects/:id/versions*` directly with this, same id `useProjectDocument` fetches/pushes doc bytes against. Unused in guest mode. */
   projectId: string;
   projectTitle: string;
-  /** Cloud-only — a guest project has no server-assigned short id. */
-  projectShortId?: string;
   role: ProjectRole;
   localUser: LocalUserIdentity;
   /** Live autosave state — from `useProjectDocument`'s push queue in cloud mode, or `useLocalOnlyProjectDocument`'s local IndexedDB-settle approximation in guest mode. See `SaveStatusIndicator.tsx`. */
@@ -310,7 +305,6 @@ export function CanvasViewReady({
   awareness,
   projectId,
   projectTitle,
-  projectShortId,
   role,
   localUser,
   saveStatus,
@@ -462,6 +456,14 @@ export function CanvasViewReady({
   // `theme/useTheme.ts`'s own account-level-preference pattern.
   const { showMinimap, toggleMinimap } = useMinimapVisible();
 
+  // Mirrors `SummaryPanel`'s own internal pinned-sidebar state (that
+  // component owns the actual on/off toggle — see its own `pinned` state
+  // comment) purely so `CanvasFlow` below can shift `<Controls>` out from
+  // under the pinned sidebar, which docks flush over the canvas's left
+  // edge at the same `SUMMARY_SIDEBAR_WIDTH` `SummaryPanel.tsx` uses for
+  // its own `w-80`.
+  const [summaryPinned, setSummaryPinned] = useState(false);
+
   // "Generate factory": a target-item-and-rate dialog that auto-builds a
   // full production chain (`canvas/generator/`) — a one-shot action, so
   // plain local `open` state mirrors `showMinimap`'s own scope note above
@@ -552,7 +554,10 @@ export function CanvasViewReady({
       <GroupSelectionContext.Provider value={groupSelectionValue}>
         <SolverResultContext.Provider value={solverContextValue}>
           <div className="flex h-svh w-full flex-col bg-[var(--surface-app)] text-[var(--text-primary)]">
-            <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-2">
+            <div
+              id="scm-canvas-toolbar"
+              className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-2"
+            >
               <div className="min-w-0">
                 <button
                   type="button"
@@ -624,6 +629,10 @@ export function CanvasViewReady({
                   // clicking an Issues-list entry just pans/zooms to it, no
                   // new camera code needed.
                   onJumpToNode={(nodeId) => setPendingFitNodeIds([nodeId])}
+                  // See `summaryPinned`'s own comment above — lets
+                  // `CanvasFlow` below shift `<Controls>` out from under the
+                  // pinned sidebar.
+                  onPinnedChange={setSummaryPinned}
                 />
                 {/* Job 027: minimap show/hide — see `showMinimap`'s own comment above for why this is a persisted user setting. */}
                 <button
@@ -668,7 +677,6 @@ export function CanvasViewReady({
                     <VersionPanel projectId={projectId} role={role} onRestored={onRestored!} />
                     {/* Job 022: real sharing UI — invite links + member management, extending Job 020's owner-only routes. */}
                     <SharingPanel projectId={projectId} role={role} currentUserId={localUser.id} />
-                    <span className="text-xs text-[var(--text-muted)]">{projectShortId}</span>
                     {/* Job 021: "who's currently connected" — every role (owner/editor/viewer, Job 020) gets a live provider connection, so a viewer shows up here too. */}
                     <PresenceAvatarList awareness={awareness} localUser={localUser} />
                     {/* Job 022: transport-level connection state, distinct from `SaveStatusIndicator`'s save-durability signal — see `connectionStatus.ts`'s header comment. */}
@@ -699,6 +707,7 @@ export function CanvasViewReady({
                   settings={settings}
                   theme={theme}
                   showMinimap={showMinimap}
+                  summaryPinned={summaryPinned}
                   pendingFitNodeIds={pendingFitNodeIds}
                   onFitted={() => setPendingFitNodeIds(null)}
                 />
@@ -756,6 +765,8 @@ interface CanvasFlowProps {
   theme: ThemeMode;
   /** Job 027: minimap show/hide — see `CanvasViewReady`'s `showMinimap` state comment. */
   showMinimap: boolean;
+  /** Whether `SummaryPanel`'s sidebar is currently pinned open — shifts `<Controls>` right so it isn't covered. See `CanvasViewReady`'s own `summaryPinned` state comment. */
+  summaryPinned: boolean;
   /** Set right after a "Generate factory" run — the new nodes' ids to pan/zoom the viewport to fit, once they've actually reached `sync.nodes` (see the effect below). `null` when there's nothing pending. */
   pendingFitNodeIds: string[] | null;
   /** Called once the pending fit-view has actually run, so `CanvasViewReady` can clear `pendingFitNodeIds`. */
@@ -790,6 +801,7 @@ function CanvasFlow({
   settings,
   theme,
   showMinimap,
+  summaryPinned,
   pendingFitNodeIds,
   onFitted,
 }: CanvasFlowProps) {
@@ -1390,7 +1402,18 @@ function CanvasFlow({
           size={3}
           color="var(--grid-dot)"
         />
-        <Controls showZoom={false} showFitView={false} showInteractive={false}>
+        <Controls
+          showZoom={false}
+          showFitView={false}
+          showInteractive={false}
+          // The pinned summary sidebar (`SummaryPanel.tsx`) docks fixed over
+          // this canvas's left edge, at `SUMMARY_SIDEBAR_WIDTH_PX` wide —
+          // without this, it sits on top of these zoom/fit/lock buttons
+          // (React Flow's own default bottom-left `<Controls>` position,
+          // 15px margin). Shifting `left` by the sidebar's width plus that
+          // same 15px margin clears it exactly.
+          style={summaryPinned ? { left: SUMMARY_SIDEBAR_WIDTH_PX + 15 } : undefined}
+        >
           <ControlButton
             onClick={() => zoomIn()}
             title={t("canvas.zoomIn")}

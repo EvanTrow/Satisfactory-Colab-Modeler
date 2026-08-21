@@ -130,6 +130,77 @@ describe("summarizeScope", () => {
     expect(summary.solvedNodeCount).toBe(2);
   });
 
+  it("sinkPoints sums consumption at the passed-in synthetic sink-consumer node ids, using Part.sinkPoints, and ignores everything else", () => {
+    const fakeGameData = {
+      machinesByName: new Map(),
+      partsByName: new Map([
+        ["Iron Plate", { sinkPoints: 2 }],
+        ["Screw", { sinkPoints: 1 }],
+      ]),
+    } as unknown as GameData;
+
+    const nodeResults: NodeSolveResult[] = [
+      {
+        nodeId: "n1", // ordinary recipe node — not a sink consumer, shouldn't count
+        machineCount: "1",
+        clockPercent: "100",
+        resolved: true,
+        partRates: { "Iron Plate": "-1000" },
+        power: 0,
+        valid: true,
+        issues: [],
+      },
+      {
+        nodeId: "sk:sink1:Iron Plate", // 10 Iron Plate/min sunk @ 2 pts each = 20
+        machineCount: "1",
+        clockPercent: "100",
+        resolved: true,
+        partRates: { "Iron Plate": "-10" },
+        power: 0,
+        valid: true,
+        issues: [],
+      },
+      {
+        nodeId: "sk:sink1:Screw", // 30 Screw/min sunk @ 1 pt each = 30
+        machineCount: "1",
+        clockPercent: "100",
+        resolved: true,
+        partRates: { Screw: "-30" },
+        power: 0,
+        valid: true,
+        issues: [],
+      },
+      {
+        nodeId: "sk:sink2:Iron Plate", // a second sink OUTSIDE the passed-in scope — must not count
+        machineCount: "1",
+        clockPercent: "100",
+        resolved: true,
+        partRates: { "Iron Plate": "-1000" },
+        power: 0,
+        valid: true,
+        issues: [],
+      },
+    ];
+
+    const summary = summarizeScope(
+      new Set(),
+      nodeResults,
+      new Map(),
+      fakeGameData,
+      new Set(["sk:sink1:Iron Plate", "sk:sink1:Screw"]),
+    );
+
+    expect(summary.sinkPoints).toBe("50");
+  });
+
+  it("sinkPoints defaults to \"0\" when no sink-consumer ids are passed in", () => {
+    const summary = summarizeScope(new Set(), [], new Map(), {
+      machinesByName: new Map(),
+      partsByName: new Map(),
+    } as unknown as GameData);
+    expect(summary.sinkPoints).toBe("0");
+  });
+
   it("a node id in scope with no matching NodeSolveResult is counted in nodeCount but not solvedNodeCount", () => {
     const summary = summarizeScope(new Set(["missing"]), [], new Map(), {
       machinesByName: new Map(),

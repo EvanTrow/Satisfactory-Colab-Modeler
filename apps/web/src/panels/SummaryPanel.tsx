@@ -5,8 +5,9 @@
 // the scope-selector UI + presentation over it, reading Job 018's live
 // solver output via `SolverResultContext` (never calling `useSolver` itself
 // — see that context's own header comment for why).
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ExternalLink, Pin, PinOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { defaultGameData } from "@scm/gamedata";
@@ -23,6 +24,7 @@ import {
 } from "@scm/ydoc";
 
 import { useFocusTrap } from "../a11y";
+import { getIconUrl } from "../assets/icons";
 import { useGameTerm } from "../i18n";
 import { useSolverResult } from "../canvas/SolverResultContext";
 import type { ThemeMode } from "../theme";
@@ -38,6 +40,7 @@ import {
   type SummaryScope,
 } from "./summary/summaryMath";
 import { usePopoutWindow } from "./summary/usePopoutWindow";
+import { useSummaryPinned } from "./summary/useSummaryPinned";
 
 const gameData = defaultGameData;
 
@@ -203,7 +206,23 @@ export interface SummaryPanelProps {
    * `IssueRow`'s own `isNavigable` check.
    */
   onJumpToNode?: (nodeId: string) => void;
+  /**
+   * Fires whenever the pinned-sidebar toggle (see `pinned` state below)
+   * flips, so `CanvasView.tsx` can shift `<Controls>` (zoom/fit/lock) out
+   * from under the sidebar while it's docked over the canvas's left edge —
+   * this component owns the actual pinned/unpinned state, this is purely a
+   * read-only mirror for that one layout concern.
+   */
+  onPinnedChange?: (pinned: boolean) => void;
 }
+
+/**
+ * The pinned sidebar's fixed width in px — matches its own `w-80` class
+ * below exactly (Tailwind's `w-80` = `20rem` = `320px` at the default root
+ * font size). Exported so `CanvasView.tsx` can compute how far to shift
+ * `<Controls>` over without a second, driftable copy of this number.
+ */
+export const SUMMARY_SIDEBAR_WIDTH_PX = 320;
 
 const SCOPES: readonly SummaryScope[] = ["everything", "outpost", "selected"];
 /**
@@ -234,6 +253,23 @@ function fmtPower(mw: number): string {
   return `${mw.toFixed(2)} MW`;
 }
 
+/** One part's icon (a compact version of `RecipeChooser.tsx`'s own `PartIcon`, sized for this panel's dense rows) — a blank placeholder swatch when no icon file exists, per `assets/icons.ts`'s `getIconUrl` doc comment. */
+function PartIcon({ part }: { part: string }) {
+  const gameTerm = useGameTerm();
+  const iconUrl = getIconUrl(part);
+  const label = gameTerm(part);
+  return iconUrl ? (
+    <img
+      src={iconUrl}
+      alt=""
+      title={label}
+      className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)] object-contain p-0.5"
+    />
+  ) : (
+    <span title={label} className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)]" aria-hidden />
+  );
+}
+
 interface BalanceRowProps {
   part: string;
   balance: ScopedSummary["perPart"][string];
@@ -245,7 +281,12 @@ function BalanceRow({ part, balance, numberFormats }: BalanceRowProps) {
   const gameTerm = useGameTerm();
   return (
     <tr className="border-t border-[var(--border-subtle)]">
-      <td className="py-1 pr-2 text-[var(--text-primary)]">{gameTerm(part)}</td>
+      <td className="py-1 pr-2 text-[var(--text-primary)]">
+        <span className="flex items-center gap-1.5">
+          <PartIcon part={part} />
+          {gameTerm(part)}
+        </span>
+      </td>
       <td className="py-1 text-right tabular-nums text-[var(--text-secondary)]">
         {fmt(balance.made, numberFormats)}
       </td>
@@ -437,8 +478,11 @@ function SummaryBody({ scope, onScopeChange, summary, numberFormats, stale, issu
         ) : (
           <ul className="space-y-0.5">
             {summary.cost.map((entry) => (
-              <li key={entry.part} className="flex justify-between text-[var(--text-secondary)]">
-                <span>{gameTerm(entry.part)}</span>
+              <li key={entry.part} className="flex items-center justify-between text-[var(--text-secondary)]">
+                <span className="flex items-center gap-1.5">
+                  <PartIcon part={entry.part} />
+                  {gameTerm(entry.part)}
+                </span>
                 <span className="tabular-nums text-[var(--text-primary)]">
                   {fmt(entry.amount, numberFormats)}
                 </span>
@@ -451,11 +495,78 @@ function SummaryBody({ scope, onScopeChange, summary, numberFormats, stale, issu
   );
 }
 
-export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme, onJumpToNode }: SummaryPanelProps) {
+/**
+ * Live rendered height of the app toolbar (`CanvasView.tsx`'s `#scm-canvas-
+ * toolbar` header row) — lets the pinned sidebar below sit flush beneath it
+ * regardless of locale/viewport-driven height changes, instead of a
+ * hardcoded pixel guess. `0` until the toolbar's first measurement.
+ */
+function useToolbarHeight(active: boolean): number {
+  const [height, setHeight] = useState(0);
+
+  useEffect(() => {
+    const el = document.getElementById("scm-canvas-toolbar");
+    if (!el) return;
+    // Deliberately re-measure via `getBoundingClientRect()` (border-box)
+    // instead of reading `entries[0].contentRect` — `contentRect` excludes
+    // the toolbar's own `py-2` padding and `border-b`, which silently
+    // undershoots the real height on every callback, including the initial
+    // one `ResizeObserver.observe` always fires.
+    const measure = () => setHeight(el.getBoundingClientRect().height);
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    measure();
+    return () => observer.disconnect();
+  }, []);
+
+  // A synchronous re-measurement the moment the sidebar actually opens —
+  // `ResizeObserver`'s own callback above is tied to the rendering
+  // pipeline, so it can lag arbitrarily far behind a *real* toolbar height
+  // change (e.g. cloud-mode's Version-history/Share buttons or the Issues
+  // badge mounting asynchronously after this component's own initial
+  // mount) whenever the tab isn't actively compositing frames. Firing this
+  // in `useLayoutEffect`, keyed on `active`, guarantees a correct value
+  // right when it's needed instead of trusting however-stale the observer
+  // last left it.
+  useLayoutEffect(() => {
+    if (!active) return;
+    const el = document.getElementById("scm-canvas-toolbar");
+    if (el) setHeight(el.getBoundingClientRect().height);
+  }, [active]);
+
+  return height;
+}
+
+export function SummaryPanel({
+  sfmDoc,
+  containerId,
+  nodes,
+  numberFormats,
+  theme,
+  onJumpToNode,
+  onPinnedChange,
+}: SummaryPanelProps) {
   const { t } = useTranslation("app");
   const { t: tRaw } = useTranslation();
   const gameTerm = useGameTerm();
   const [open, setOpen] = useState(false);
+  // Pinned-to-the-side mode — a persistent left sidebar instead of the
+  // popover/pop-out-window presentations, for "keep this visible while I
+  // work" rather than "check it, then dismiss it." Mutually exclusive with
+  // both (see `handlePin`/`handlePopOut`/`handleSummaryButtonClick` below),
+  // same one-visible-presentation-at-a-time rule Job 027 already established
+  // between the popover and the pop-out window. Persisted the same way the
+  // minimap's own show/hide toggle is — see `useSummaryPinned.ts`.
+  const { pinned, setPinned } = useSummaryPinned();
+  const toolbarHeight = useToolbarHeight(pinned);
+  // Mirror `pinned` out to `CanvasView.tsx` — see `onPinnedChange`'s own doc
+  // comment on `SummaryPanelProps`. The cleanup un-mirrors on unmount too,
+  // so `CanvasView` doesn't stay stuck thinking the sidebar's still pinned
+  // once this component itself is gone.
+  useEffect(() => {
+    onPinnedChange?.(pinned);
+    return () => onPinnedChange?.(false);
+  }, [pinned, onPinnedChange]);
   const [scope, setScope] = useState<SummaryScope>("everything");
   const { result, staleness } = useSolverResult();
   const allNodes = useAllRecipeNodes(sfmDoc);
@@ -477,7 +588,7 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme,
   // pop-out window's own portal content below — that's a real separate
   // browser window/tab, which already gets its own native focus handling.
   const panelRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(panelRef, open && !popout.isOpen, { onClose: () => setOpen(false) });
+  useFocusTrap(panelRef, open && !popout.isOpen && !pinned, { onClose: () => setOpen(false) });
 
   const nodeRecordById = new Map(allNodes.map((n) => [n.id, n] as const));
   const selectedNodeIds = new Set(
@@ -490,7 +601,27 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme,
     currentContainerId: containerId,
     selectedNodeIds,
   });
-  const summary = summarizeScope(nodeIds, result?.nodes ?? [], nodeRecordById, gameData);
+
+  // Sink points: same scope rule as everything else above, just applied to
+  // real AWESOME Sink nodes (never Dimensional Depot Uploaders — those share
+  // `sinkPassthrough.ts`'s machinery but grant no points) instead of recipe
+  // nodes, then translated into the synthetic per-part consumer node ids
+  // `summarizeScope` actually looks up in the solve result.
+  const sinkNodesOnly = allNodesUnfiltered.filter((n) => n.kind === "sink");
+  const sinkNodeIdsInScope = nodeIdsForScope({
+    scope,
+    allNodes: sinkNodesOnly,
+    currentContainerId: containerId,
+    selectedNodeIds,
+  });
+  const sinkConsumerNodeIds = new Set<string>();
+  for (const edge of allEdges) {
+    if (sinkNodeIdsInScope.has(edge.toNode)) {
+      sinkConsumerNodeIds.add(sinkConsumerNodeId(edge.toNode, edge.part));
+    }
+  }
+
+  const summary = summarizeScope(nodeIds, result?.nodes ?? [], nodeRecordById, gameData, sinkConsumerNodeIds);
   const stale = staleness === "stale-recomputing";
 
   const { resolveNode, resolveEdge } = buildIssueResolvers(allNodesUnfiltered, allEdges, allContainers, gameTerm);
@@ -515,12 +646,23 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme,
       popout.open(t("summary.windowTitle")); // already open — this just focuses it, see usePopoutWindow's own `open()`
       return;
     }
+    if (pinned) {
+      setPinned(false); // already visible — this button doubles as the sidebar's own close control
+      return;
+    }
     setOpen((v) => !v);
   }
 
   function handlePopOut() {
     popout.open(t("summary.windowTitle"));
-    setOpen(false); // the inline popover and the pop-out window are never both visible at once
+    setOpen(false); // the inline popover, the pinned sidebar, and the pop-out window are never more than one visible at once
+    setPinned(false);
+  }
+
+  function handlePin() {
+    setPinned(true);
+    setOpen(false);
+    if (popout.isOpen) popout.close();
   }
 
   const body = (
@@ -543,8 +685,12 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme,
         onClick={handleSummaryButtonClick}
         title={tRaw("SUMMARY_PANEL")}
         aria-label={tRaw("SUMMARY_PANEL")}
-        aria-expanded={open}
-        className="nodrag inline-flex h-7 items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--surface-panel)] px-2 text-xs text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+        aria-expanded={open || pinned}
+        className={`nodrag inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs transition-colors ${
+          pinned
+            ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+            : "border-[var(--border-default)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+        }`}
       >
         {tRaw("SUMMARY")}
         {popout.isOpen ? ` ${t("summary.poppedOutSuffix")}` : ""}
@@ -558,7 +704,7 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme,
           </span>
         )}
       </button>
-      {open && !popout.isOpen && (
+      {open && !popout.isOpen && !pinned && (
         <>
           {/*
             Same backdrop-vs-content mousedown-ordering fix `SettingsMenu.tsx`
@@ -587,6 +733,16 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme,
                   recompute is in flight.
                 */}
                 {stale && <span className="text-[var(--text-muted)]">{t("summary.stale")}</span>}
+                {/* Pin to the side — a persistent left sidebar instead of this dismissable popover. See `handlePin`/the pinned-sidebar block below. */}
+                <button
+                  type="button"
+                  onClick={handlePin}
+                  title={t("summary.pinTitle")}
+                  aria-label={t("summary.pinTitle")}
+                  className="rounded border border-[var(--border-default)] p-1 text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+                >
+                  <Pin className="h-3.5 w-3.5" aria-hidden />
+                </button>
                 {/*
                   Job 027: "pop out" — PLAN.md §3's later-phase "pop-out
                   summary windows". See `usePopoutWindow.ts`'s header for the
@@ -597,9 +753,10 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme,
                   type="button"
                   onClick={handlePopOut}
                   title={t("summary.popOutTitle")}
-                  className="rounded border border-[var(--border-default)] px-1.5 py-0.5 text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+                  aria-label={t("summary.popOutTitle")}
+                  className="rounded border border-[var(--border-default)] p-1 text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
                 >
-                  {t("summary.popOutButton")}
+                  <ExternalLink className="h-3.5 w-3.5" aria-hidden />
                 </button>
               </div>
             </div>
@@ -607,6 +764,40 @@ export function SummaryPanel({ sfmDoc, containerId, nodes, numberFormats, theme,
             {body}
           </div>
         </>
+      )}
+      {/*
+        Pinned mode — a persistent left sidebar, docked flush beneath the app
+        toolbar (`useToolbarHeight` measures `#scm-canvas-toolbar` live so
+        this stays flush regardless of toolbar height changes). Unlike the
+        popover above, this has no backdrop and isn't focus-trapped — it's
+        meant to stay open and visible while the user keeps working the
+        canvas underneath/beside it, not to be dismissed by an outside click.
+      */}
+      {pinned && !popout.isOpen && (
+        <div
+          role="complementary"
+          aria-label={tRaw("SUMMARY")}
+          className="fixed left-0 z-40 w-80 overflow-y-auto border-r border-[var(--border-default)] bg-[var(--surface-panel)] p-3 text-xs shadow-[var(--shadow-modal)]"
+          style={{ top: toolbarHeight, bottom: 0 }}
+        >
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">{tRaw("SUMMARY")}</p>
+            <div className="flex items-center gap-2">
+              {stale && <span className="text-[var(--text-muted)]">{t("summary.stale")}</span>}
+              <button
+                type="button"
+                onClick={() => setPinned(false)}
+                title={t("summary.unpinTitle")}
+                aria-label={t("summary.unpinTitle")}
+                className="rounded border border-[var(--border-default)] p-1 text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+              >
+                <PinOff className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </div>
+          </div>
+
+          {body}
+        </div>
       )}
       {/*
         Job 027: the live pop-out — a `createPortal` into the OTHER window's
