@@ -142,8 +142,8 @@ export const BlueprintNode = memo(function BlueprintNode({ id, data, selected }:
   return (
     <div
       className={`w-60 cursor-grab rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors active:cursor-grabbing ${
-        cardBorderClass(copiesValidity) ?? (selected ? "border-[var(--accent)]" : "border-[var(--blueprint-border)]")
-      } ${staleness === "stale-recomputing" ? "opacity-60" : ""}`}
+        cardBorderClass(copiesValidity) ?? "border-[var(--blueprint-border)]"
+      } ${selected ? "outline outline-2 outline-offset-2 outline-[var(--accent)]" : ""} ${staleness === "stale-recomputing" ? "opacity-60" : ""}`}
       style={
         remoteSelectors.length > 0
           ? { boxShadow: `0 0 0 3px ${remoteSelectors[0]!.state.color}` }
@@ -198,9 +198,9 @@ export const BlueprintNode = memo(function BlueprintNode({ id, data, selected }:
                 className="relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)]"
                 title={
                   validity === "invalid"
-                    ? "This connection could not be resolved — see the node/edge for details."
+                    ? "Connection could not be resolved."
                     : validity === "mismatched"
-                      ? "Rate mismatch on this boundary connection — see the connected node for details."
+                      ? "Rate mismatch on this boundary connection."
                       : undefined
                 }
               >

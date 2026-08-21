@@ -174,8 +174,8 @@ export const SplurgerNode = memo(function SplurgerNode({ id, data, selected }: N
 
   return (
     <div
-      className={`relative w-64 rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors ${
-        selected ? "border-[var(--accent)]" : "border-[var(--splurger-border)]"
+      className={`relative w-64 rounded-lg border-2 border-[var(--splurger-border)] bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors ${
+        selected ? "outline outline-2 outline-offset-2 outline-[var(--accent)]" : ""
       }`}
     >
       <div className="flex items-center gap-2 rounded-t-[7px] bg-[var(--node-header)] px-2 py-1.5">
@@ -270,18 +270,13 @@ export const SplurgerNode = memo(function SplurgerNode({ id, data, selected }: N
 
       {unsupported && (
         <p className="mx-2 mt-1.5 rounded-md bg-[var(--danger-soft)] px-2 py-1 text-[10px] text-[var(--danger)]">
-          This Splurger has both multiple inputs AND multiple outputs. Real
-          splitter/merger hardware never combines both, and Full mode can't
-          route flow through this shape — split it into a separate merger
-          feeding a separate splitter instead.
+          Can't have multiple inputs and outputs — split into a separate merger and splitter.
         </p>
       )}
 
       {danglingParts.length > 0 && (
         <p className="mx-2 mt-1.5 rounded-md bg-[var(--danger-soft)] px-2 py-1 text-[10px] text-[var(--danger)]">
-          {danglingParts.join(", ")} {danglingParts.length === 1 ? "is" : "are"} wired on only one side —
-          nothing to route {danglingParts.length === 1 ? "it" : "them"} to, so this flow is being dropped
-          from the solve. Connect the missing side, or remove this connection.
+          {danglingParts.join(", ")} wired on only one side — connect the other side or remove it.
         </p>
       )}
 

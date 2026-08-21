@@ -745,9 +745,16 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
       // vary between themes (same reasoning as that comment), so the header
       // always reads clearly against either theme's card body.
       // Job 019: red/orange validity highlighting (PLAN.md §3) takes
-      // precedence over the plain "selected" ring — a node's own
-      // wrongness/mismatch is more important to see at a glance than
-      // whether it happens to be selected. An input shortage (see
+      // precedence over the plain "selected" BORDER — a node's own
+      // wrongness/mismatch is more important to see at a glance than its
+      // border color. Local selection no longer competes for that same
+      // border though (it used to fall back to an accent border once
+      // nothing above it applied, which made it invisible on a node that
+      // already had a warning/error, and hard to spot against the
+      // similarly-toned remote-selection halo below) — it now renders as
+      // its own `outline` ring, a separate CSS channel from both `border`
+      // and the remote halo's `boxShadow`, so all three stay visible at
+      // once regardless of which other states apply. An input shortage (see
       // `computeInputShortage.ts`) reuses that same red — it's not part of
       // `validityState`'s own red/orange system (a separate, purpose-built
       // signal — see `inputShortages`' own comment above), but "this
@@ -769,8 +776,8 @@ export const RecipeNode = memo(function RecipeNode({ id, data, selected }: NodeP
       className={`relative w-64 rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors ${
         (shortPartNames.length > 0 ? "border-[var(--danger)]" : highlightBorderClass(validityState?.overall)) ??
         (unhandledByproductNames.length > 0 || overflowSummary ? "border-[var(--warning)]" : undefined) ??
-        (selected ? "border-[var(--accent)]" : "border-[var(--border-strong)]")
-      } ${staleness === "stale-recomputing" ? "opacity-60" : ""}`}
+        "border-[var(--border-strong)]"
+      } ${selected ? "outline outline-2 outline-offset-2 outline-[var(--accent)]" : ""} ${staleness === "stale-recomputing" ? "opacity-60" : ""}`}
       // Job 021: remote-selection halo — one or more *other* users currently
       // have this node selected (their own client's Awareness `selection`,
       // not this client's `selected` prop above). A `boxShadow` (not a

@@ -99,8 +99,8 @@ export const OutpostNode = memo(function OutpostNode({ id, data, selected }: Nod
       // still be draggable (its position is the container's own `x`/`y`,
       // per `useYjsSync.ts`'s `onNodeDragStop` branch), same as a normal
       // recipe node.
-      className={`w-56 cursor-grab rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors active:cursor-grabbing ${
-        selected ? "border-[var(--accent)]" : "border-[var(--outpost-border)]"
+      className={`w-56 cursor-grab rounded-lg border-2 border-[var(--outpost-border)] bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors active:cursor-grabbing ${
+        selected ? "outline outline-2 outline-offset-2 outline-[var(--accent)]" : ""
       }`}
       style={
         remoteSelectors.length > 0
@@ -161,9 +161,9 @@ export const OutpostNode = memo(function OutpostNode({ id, data, selected }: Nod
                 className="relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)]"
                 title={
                   validity === "invalid"
-                    ? "This connection could not be resolved — see the node/edge for details."
+                    ? "Connection could not be resolved."
                     : validity === "mismatched"
-                      ? "Rate mismatch on this boundary connection — see the connected node for details."
+                      ? "Rate mismatch on this boundary connection."
                       : undefined
                 }
               >

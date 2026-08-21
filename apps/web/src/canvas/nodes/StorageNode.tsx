@@ -114,8 +114,8 @@ export const StorageNode = memo(function StorageNode({ id, data, selected }: Nod
 
   return (
     <div
-      className={`relative w-64 rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors ${
-        selected ? "border-[var(--accent)]" : "border-[var(--border-strong)]"
+      className={`relative w-64 rounded-lg border-2 border-[var(--border-strong)] bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors ${
+        selected ? "outline outline-2 outline-offset-2 outline-[var(--accent)]" : ""
       }`}
     >
       <div className="flex items-center gap-2 rounded-t-[7px] bg-[var(--node-header)] px-2 py-1.5">
@@ -144,7 +144,7 @@ export const StorageNode = memo(function StorageNode({ id, data, selected }: Nod
 
       {isMultiPart && (
         <p className="mx-2 mt-1.5 rounded-md bg-[var(--warning-soft)] px-2 py-1 text-[10px] text-[var(--warning)]">
-          This Storage Container is carrying more than one item type at once — each is tracked independently below.
+          Carrying more than one item type — each is tracked independently.
         </p>
       )}
 
@@ -174,9 +174,9 @@ export const StorageNode = memo(function StorageNode({ id, data, selected }: Nod
                 : undefined;
             const rowTitle =
               rowSeverity === "mismatched"
-                ? `Rate mismatch: ${rowDetail || "doesn't reconcile with a connected neighbor"}.`
+                ? `Rate mismatch: ${rowDetail || "doesn't match a connected neighbor"}.`
                 : rowSeverity === "invalid"
-                  ? "This connection could not be resolved — see the source/target node for details."
+                  ? "Connection could not be resolved."
                   : neighborTitles(part);
             return (
               <div

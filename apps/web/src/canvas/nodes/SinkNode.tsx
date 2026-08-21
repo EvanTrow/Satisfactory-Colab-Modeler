@@ -95,8 +95,8 @@ export const SinkNode = memo(function SinkNode({ id, data, selected }: NodeProps
 
   return (
     <div
-      className={`relative w-56 rounded-lg border-2 bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors ${
-        selected ? "border-[var(--accent)]" : "border-[var(--border-strong)]"
+      className={`relative w-56 rounded-lg border-2 border-[var(--border-strong)] bg-[var(--surface-card)] text-[var(--text-primary)] shadow-[var(--shadow-card)] transition-colors ${
+        selected ? "outline outline-2 outline-offset-2 outline-[var(--accent)]" : ""
       }`}
     >
       <div className="flex items-center gap-2 rounded-t-[7px] bg-[var(--node-header)] px-2 py-1.5">
@@ -136,9 +136,9 @@ export const SinkNode = memo(function SinkNode({ id, data, selected }: NodeProps
               rowValidity?.overall === "mismatched" ? computeMismatchDetails(partIncidentEdges, edgeResultById)[part] : undefined;
             const rowTitle =
               rowValidity?.overall === "mismatched"
-                ? `Rate mismatch: ${rowDetail ?? "doesn't reconcile with a connected neighbor"}.`
+                ? `Rate mismatch: ${rowDetail ?? "doesn't match a connected neighbor"}.`
                 : rowValidity?.overall === "invalid"
-                  ? "This connection could not be resolved — see the source node for details."
+                  ? "Connection could not be resolved."
                   : neighborTitles;
             return (
               <div
