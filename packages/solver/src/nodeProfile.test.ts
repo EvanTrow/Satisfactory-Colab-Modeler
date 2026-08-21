@@ -180,4 +180,28 @@ describe("pinnedMachineCount: untouched ppm-mode default (Miner/AWESOME Sink)", 
     const profile = buildNodeProfile(node, defaultGameData);
     expect(pinnedMachineCount(profile)).toEqual({});
   });
+
+  it("still returns unpinned ({}) for a null limit in ppm mode on a synthetic blueprint-compound node (AWESOME Sink/Dimensional Depot/Storage Container consumer) — the Miner/AWESOME Sink 'pin to recipe rate' exception does not apply", () => {
+    // Reproduces `sinkPassthrough.ts`'s/`storagePassthrough.ts`'s exact
+    // synthetic node shape: `blueprintCopyBasis` with a bookkeeping
+    // per-copy rate, `limit: null`, `limitMode: "ppm"` (both modules
+    // hardcode this pair for a freshly-connected, untouched sink/depot/
+    // storage node). Before this fix, this resolved to a pinned machine
+    // count of exactly 1 — i.e. the node silently capped at 1 ppm instead
+    // of consuming everything a connected producer could supply.
+    const node: SolverNode = {
+      id: "sk:depot1:Iron Ore",
+      recipe: "",
+      machine: "",
+      purity: null,
+      limit: null,
+      limitMode: "ppm",
+      clock: null,
+      shards: 0,
+      blueprintCopyBasis: { perCopyRates: { "Iron Ore": "-1" }, perCopyPowerMW: 0 },
+    };
+    const profile = buildNodeProfile(node, defaultGameData);
+    expect(profile.syntheticPowerAtOneUnit).toBeDefined();
+    expect(pinnedMachineCount(profile)).toEqual({});
+  });
 });

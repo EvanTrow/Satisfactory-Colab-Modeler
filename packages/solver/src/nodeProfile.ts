@@ -442,6 +442,23 @@ export interface PinnedMachineCountResult {
  * "derive from the graph" behavior this could be shadowing, unlike
  * machine-count mode's blank state (`RecipeNode.tsx`'s `limitIsBlank`),
  * which still means exactly that.
+ *
+ * That exception does NOT extend to a synthetic blueprint-compound profile
+ * (`profile.syntheticPowerAtOneUnit !== undefined` — the AWESOME Sink/
+ * Dimensional Depot Uploader consumer nodes `sinkPassthrough.ts` mints, and
+ * the Storage Container consumer/producer nodes `storagePassthrough.ts`
+ * mints; both hardcode `limit: null, limitMode: "ppm"`). Those nodes'
+ * `blueprintCopyBasis.perCopyRates` is a bookkeeping ratio (`"-1"`/`"1"` per
+ * "copy", so 1 machine count = 1 ppm), not a real machine's physical
+ * reference rate the way a Miner's 60/min extraction rate is — there is no
+ * meaningful "recipe's own rate" to anchor to, and the UI shows these nodes'
+ * blank limit field as literally "unlimited", not a concrete number the way
+ * a Miner's ppm field shows "60". Pinning them here silently capped an
+ * unlimited-looking Dimensional Depot/AWESOME Sink/Storage Container at
+ * exactly 1 ppm per connected part instead of leaving them genuinely
+ * unpinned so graph propagation (Basic's even-split or Full's water-fill)
+ * sizes them to whatever's actually available, matching every other
+ * unlimited node's behavior.
  */
 export function pinnedMachineCount(profile: NodeProfile): PinnedMachineCountResult {
   const { node } = profile;
@@ -450,6 +467,7 @@ export function pinnedMachineCount(profile: NodeProfile): PinnedMachineCountResu
   let limitValue: Rational;
   if (node.limit === null) {
     if (node.limitMode !== "ppm") return {};
+    if (profile.syntheticPowerAtOneUnit !== undefined) return {};
     const part = profile.primaryPart;
     if (!part) return {};
     const ref = profile.refRatePerPart.get(part.part);
