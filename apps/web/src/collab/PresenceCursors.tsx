@@ -25,8 +25,9 @@ import { useMemo } from "react";
 import { useViewport } from "@xyflow/react";
 
 import { isCursorVisibleInContainer, type AwarenessHandle } from "./awareness";
+import type { Point } from "./smoothDamp";
 import { useRemotePresence } from "./useRemotePresence";
-import { useSmoothedPositions, type Point } from "./useSmoothedPositions";
+import { useSmoothedPositions } from "./useSmoothedPositions";
 
 export interface PresenceCursorsProps {
   awareness: AwarenessHandle;
