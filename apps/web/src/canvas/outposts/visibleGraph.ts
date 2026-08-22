@@ -18,7 +18,7 @@ import { isOutpostIoKind } from "./io";
 import { type ContainerParentMap, outpostBoundaryHandleId, resolveNodeLocation } from "./portMapping";
 
 /**
- * Outpost/Blueprint I/O rework: the handle id an endpoint should render
+ * Outpost I/O rework: the handle id an endpoint should render
  * with — `outpostBoundaryHandleId`'s real `${direction}:${part}` scheme
  * whenever the endpoint IS one of the two locked pass-through nodes,
  * REGARDLESS of whether this particular edge happens to be "direct" (both

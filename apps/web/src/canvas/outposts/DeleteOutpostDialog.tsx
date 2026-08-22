@@ -10,8 +10,7 @@ import { useFocusTrap } from "../../a11y";
 
 export interface DeleteOutpostDialogProps {
   open: boolean;
-  /** `"outpost"` or `"blueprint"` — only used to word the message. */
-  containerKind: "outpost" | "blueprint";
+  containerKind: "outpost";
   containerTitle: string;
   onKeepContents: () => void;
   onDeleteEverything: () => void;

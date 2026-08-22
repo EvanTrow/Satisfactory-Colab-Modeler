@@ -39,7 +39,6 @@ function fixture() {
     color: "#4b5563",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   return { sfmDoc, root };
 }
@@ -88,7 +87,6 @@ describe("repairDocument", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const node = addNode(sfmDoc, baseNode(outpost.id, { title: "A" }));
 
@@ -114,7 +112,6 @@ describe("repairDocument", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const nested = addContainer(sfmDoc, {
       kind: "outpost",
@@ -123,7 +120,6 @@ describe("repairDocument", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     sfmDoc.containers.delete(outpost.id);
 
@@ -142,7 +138,6 @@ describe("repairDocument", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const a = addNode(sfmDoc, baseNode(outpost.id, { title: "A" }));
     const b = addNode(sfmDoc, baseNode(outpost.id, { title: "B" }));

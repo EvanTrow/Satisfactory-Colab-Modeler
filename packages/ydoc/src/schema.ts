@@ -96,7 +96,7 @@ export type Settings = z.infer<typeof SettingsSchema>;
 // containers
 // ---------------------------------------------------------------------------
 
-export const ContainerKindSchema = z.enum(["root", "outpost", "blueprint"]);
+export const ContainerKindSchema = z.enum(["root", "outpost"]);
 export type ContainerKind = z.infer<typeof ContainerKindSchema>;
 
 export const ContainerSchema = z.object({
@@ -109,9 +109,6 @@ export const ContainerSchema = z.object({
   color: z.string(),
   x: z.number(),
   y: z.number(),
-  // Blueprint containers only: caps how many instances may be placed.
-  // null/omitted for containers with no cap (root, outposts).
-  copiesLimit: z.number().int().nonnegative().nullable(),
 });
 export type Container = z.infer<typeof ContainerSchema>;
 

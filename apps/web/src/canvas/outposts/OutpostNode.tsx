@@ -17,7 +17,7 @@
 // Calculation-validation visuals pass: an Outpost is never itself a
 // `SolverNode` (it's pure navigation/grouping, no recipe/machine of its
 // own), so there's no whole-card `.valid`/`.issues` to read the way
-// `RecipeNode.tsx`/`BlueprintNode.tsx` (a REAL compound node) can. What IS
+// `RecipeNode.tsx` (a REAL compound node) can. What IS
 // available: each `DerivedOutpostPort` already carries the real `.edgeId`
 // of the one boundary-crossing edge it represents (`portMapping.ts`), so
 // each port's own `Handle` can be rung by that edge's own validity via
@@ -88,7 +88,7 @@ export const OutpostNode = memo(function OutpostNode({ id, data, selected }: Nod
   // Defensive only — `containerToOutpostFlowNode` always sets `data.container` for a `type: "outpost"` node.
   if (!container) return null;
 
-  // Outpost/Blueprint I/O rework: the interactive rows are driven directly
+  // Outpost I/O rework: the interactive rows are driven directly
   // by the container's own locked Inputs/Outputs nodes' incident edges
   // (`io.ts`'s `computeIoNodePorts`) — from EITHER side, not just a
   // boundary-crossing one. This is what lets a part show up here as soon as
@@ -208,7 +208,7 @@ export const OutpostNode = memo(function OutpostNode({ id, data, selected }: Nod
         )}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-[var(--node-header-text)]">{container.title || "Outpost"}</p>
-          <p className="truncate text-[10px] text-[var(--node-header-text)]/70">Outpost · double-click to open</p>
+          <p className="truncate text-[10px] text-[var(--node-header-text)]/70">Outpost</p>
         </div>
         <button
           type="button"

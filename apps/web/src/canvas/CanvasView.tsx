@@ -975,7 +975,7 @@ function CanvasFlow({
   // Live drag broadcasting: every in-progress drag position (not just the
   // single write `onNodeDragStop` makes into the Yjs doc once the gesture
   // ends) gets throttled-published over Awareness, so other peers see a
-  // node — or a Job 013 outpost/blueprint boundary node, same id space —
+  // node — or a Job 013 outpost boundary node, same id space —
   // glide across the canvas in real time as it moves. `draggingPositionsRef`
   // holds every id *this* client currently has in flight (React Flow fires
   // one `onNodesChange` batch per pointer-move with a `NodePositionChange`
@@ -1377,10 +1377,10 @@ function CanvasFlow({
   // real node, "open"/"delete (reparent, don't destroy)" for an outpost
   // boundary node. See `outposts/NodeContextMenu.tsx`.
   const [nodeMenu, setNodeMenu] = useState<NodeContextMenuState | null>(null);
-  // Outpost/Blueprint rework: pending "Delete Outpost" confirmation — the
+  // Outpost I/O rework: pending "Delete Outpost" confirmation — the
   // right-click menu item now opens this dialog instead of deleting
   // immediately (`DeleteOutpostDialog.tsx`).
-  const [deleteRequest, setDeleteRequest] = useState<{ id: string; kind: "outpost" | "blueprint" } | null>(null);
+  const [deleteRequest, setDeleteRequest] = useState<{ id: string; kind: "outpost" } | null>(null);
   // Not React state on purpose — a click-time bookkeeping ref, not something whose change should trigger a render.
   const lastPaneClickRef = useRef<ClickPoint | null>(null);
 
@@ -1556,15 +1556,7 @@ function CanvasFlow({
     if (readOnly) return;
     setNodeMenu({
       nodeId: node.id,
-      // Job 026: a blueprint boundary node's `data.container.kind` is
-      // `"blueprint"`; a plain outpost's is `"outpost"` — both are
-      // `type: "outpost" | "blueprint"` flow nodes (`useYjsSync.ts`), never
-      // a real recipe node's own container menu.
-      containerKind: node.data.container
-        ? node.data.container.kind === "blueprint"
-          ? "blueprint"
-          : "outpost"
-        : null,
+      containerKind: node.data.container ? "outpost" : null,
       container: node.data.container ?? undefined,
       // Right-clicking a node whose kind has quick settings (a real
       // `"recipe"` node's clock/auto-round/somersloops, or just the Name
@@ -1771,7 +1763,6 @@ function CanvasFlow({
           }
           onOpenOutpost={(id) => navigateToContainer(id)}
           onRequestDelete={(id, kind) => setDeleteRequest({ id, kind })}
-          onConvertContainerKind={(id, kind) => updateContainer(sfmDoc, id, { kind })}
           numberFormats={settings.numberFormats}
           onClose={() => setNodeMenu(null)}
         />

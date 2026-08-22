@@ -1,8 +1,8 @@
 // AWESOME Sink / Dimensional Depot Uploader (`kind: "sink"` / `"depot"`) —
 // same "erase the unrepresentable node, rewrite its incident edges, let the
 // existing solver machinery do the rest" pattern `splurgerPassthrough.ts`
-// established for the Splurger node type, reused here via Job 026's
-// `SolverNode.blueprintCopyBasis` escape hatch instead of a real
+// established for the Splurger node type, reused here via
+// `SolverNode.syntheticCopyBasis`'s escape hatch instead of a real
 // `@scm/gamedata` recipe/machine lookup.
 //
 // Both node kinds are pure terminal consumers: one wildcard input handle
@@ -18,7 +18,7 @@
 // off one shared machine-count knob, but a sink's connected items are
 // independent flows with no fixed ratio between them. So this synthesizes
 // ONE tiny single-part "consumer" compound node PER DISTINCT PART the sink
-// touches (a `blueprintCopyBasis` recipe with exactly one negative part, á
+// touches (a `syntheticCopyBasis` recipe with exactly one negative part, á
 // la a trivial Generator), each getting its own machine-count degree of
 // freedom and the sink's own limit applied independently. Multiple upstream
 // producers feeding the SAME part into one sink land on the SAME synthetic
@@ -106,7 +106,7 @@ export function computeSinkConsumerNodes(
           limitMode: sink.limitMode,
           clock: null,
           shards: 0,
-          blueprintCopyBasis: { perCopyRates: { [edge.part]: "-1" }, perCopyPowerMW: 0 },
+          syntheticCopyBasis: { perCopyRates: { [edge.part]: "-1" }, perCopyPowerMW: 0 },
         });
       }
       rewrittenEdges.push({

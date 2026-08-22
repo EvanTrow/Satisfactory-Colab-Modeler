@@ -12,7 +12,6 @@ function setUp() {
     color: "#000000",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   return { sfmDoc, root };
 }
@@ -93,7 +92,6 @@ describe("validateDocumentSnapshot", () => {
       color: "#111111",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
 
     const result = validateDocumentSnapshot(snapshotDocument(sfmDoc));

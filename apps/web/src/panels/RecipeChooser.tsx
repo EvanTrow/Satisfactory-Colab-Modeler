@@ -9,7 +9,7 @@
 // Extractor, Geothermal Generator, Space Elevator).
 //
 // Redesign pass (Steam-app-inspired "Add a machine" layout): the left rail
-// now carries the special, non-recipe node types (Outpost/Blueprint/
+// now carries the special, non-recipe node types (Outpost/
 // Splurger, plus a disabled "more buildings" placeholder for node kinds
 // this app doesn't build yet) as icon buttons, ABOVE the existing
 // per-machine filter list — previously these lived as small text buttons in
@@ -50,7 +50,7 @@ import { isNegative } from "@scm/rational";
 import { addContainer, addNode, splurgerPortCaps, type SplurgerVariant } from "@scm/ydoc";
 
 import { useFocusTrap } from "../a11y";
-import { getBlueprintIconUrl, getIconUrl, getOutpostIconUrl } from "../assets/icons";
+import { getIconUrl, getOutpostIconUrl } from "../assets/icons";
 import { useCanvasDoc } from "../canvas";
 import { connectPorts, WILDCARD_PART, WILDCARD_PART_TOP, type ConnectionLike } from "../canvas/edges";
 import { ensureOutpostIoNodes } from "../canvas/outposts";
@@ -137,13 +137,7 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
   // gesture can create, alongside a recipe node — see PLAN.md §2's Outposts
   // row ("like folders") and this job's Scope wording ("e.g. via the Recipe
   // Chooser's canvas context menu... use judgement on exact entry point").
-  // A third mutually-exclusive step, same shape as `pendingRecipe`'s
-  // variant-picker step below. `creatingBlueprint` is the same shape again,
-  // for this redesign's new direct "+ Blueprint" sidebar button (blueprints
-  // were previously only reachable by converting an existing outpost via
-  // the node context menu).
   const [creatingOutpost, setCreatingOutpost] = useState(false);
-  const [creatingBlueprint, setCreatingBlueprint] = useState(false);
   // Job 028: the default title text is translated at creation time (the
   // active locale when the outpost/Splurger is placed) — it's ordinary,
   // renamable document content afterward (`Container.title`/`NodeRecord
@@ -152,7 +146,6 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
   // — same one-time-default behavior as e.g. a word processor's "Untitled
   // Document" seed text.
   const [outpostTitle, setOutpostTitle] = useState(() => t("canvas.defaultOutpostTitle"));
-  const [blueprintTitle, setBlueprintTitle] = useState(() => t("canvas.defaultBlueprintTitle"));
 
   // Job 029: focus trap — see `a11y/useFocusTrap.ts`'s header for why this
   // (a true modal, unlike the other three panels below) needs it just as
@@ -249,37 +242,10 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
         color,
         x: flowPosition.x,
         y: flowPosition.y,
-        copiesLimit: null,
       });
-      // Outpost/Blueprint rework: every outpost gets its two locked
+      // Outpost I/O rework: every outpost gets its two locked
       // Inputs/Outputs pass-through nodes at creation time — see
       // `canvas/outposts/io.ts`.
-      ensureOutpostIoNodes(sfmDoc, container.id, color);
-    });
-    onClose();
-  }
-
-  /**
-   * Direct blueprint creation — previously blueprints were only reachable
-   * by converting an existing outpost (`NodeContextMenu.tsx`'s
-   * `onConvertContainerKind`, still there and unchanged). Mirrors
-   * `handleCreateOutpost` exactly; a container has no ports, so there's no
-   * `autoConnectPending` call here even when `pendingConnection` is set —
-   * dragging a connection out and choosing "Blueprint" just places it,
-   * same as choosing "Outpost" would.
-   */
-  function handleCreateBlueprint() {
-    const color = "#0a6b62";
-    sfmDoc.doc.transact(() => {
-      const container = addContainer(sfmDoc, {
-        kind: "blueprint",
-        parentId: containerId,
-        title: blueprintTitle.trim() || t("canvas.defaultBlueprintTitle"),
-        color,
-        x: flowPosition.x,
-        y: flowPosition.y,
-        copiesLimit: null,
-      });
       ensureOutpostIoNodes(sfmDoc, container.id, color);
     });
     onClose();
@@ -446,9 +412,7 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
   const modalPosition = clampModalPosition(screenPosition);
   const heading = creatingOutpost
     ? t("canvas.newOutpostHeading")
-    : creatingBlueprint
-      ? t("canvas.newBlueprintHeading")
-      : t("canvas.addMachine");
+    : t("canvas.addMachine");
 
   return (
     // Backdrop: clicking outside the modal box closes without selecting.
@@ -506,38 +470,6 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
               </button>
             </div>
           </div>
-        ) : creatingBlueprint ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-            <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
-              {t("canvas.blueprintName")}
-              <input
-                type="text"
-                autoFocus
-                value={blueprintTitle}
-                onChange={(event) => setBlueprintTitle(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") handleCreateBlueprint();
-                }}
-                className="rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1 text-[var(--text-primary)] focus:border-[var(--blueprint)] focus:outline-none"
-              />
-            </label>
-            <div className="mt-auto flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setCreatingBlueprint(false)}
-                className="rounded-md px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-              >
-                <ArrowLeft className="inline h-3.5 w-3.5" aria-hidden /> {t("canvas.back")}
-              </button>
-              <button
-                type="button"
-                onClick={handleCreateBlueprint}
-                className="rounded-md bg-[var(--blueprint)] px-3 py-1.5 text-sm font-medium text-[var(--accent-contrast)] hover:brightness-110"
-              >
-                {t("canvas.createBlueprint")}
-              </button>
-            </div>
-          </div>
         ) : pendingRecipe && pendingResolved ? (
           <VariantPicker
             recipe={pendingRecipe}
@@ -564,13 +496,6 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
                   iconUrl={getOutpostIconUrl()}
                   swatchClassName="bg-[var(--outpost-soft)]"
                   onClick={() => setCreatingOutpost(true)}
-                />
-                <SidebarButton
-                  label={tRaw("Blueprint")}
-                  title={t("canvas.newBlueprintTitle")}
-                  iconUrl={getBlueprintIconUrl()}
-                  swatchClassName="bg-[var(--blueprint-soft)]"
-                  onClick={() => setCreatingBlueprint(true)}
                 />
                 <SidebarButton
                   label={tRaw("Splurger")}
@@ -717,7 +642,7 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
 interface SidebarButtonProps {
   label: string;
   title: string;
-  /** A real game-art icon (Outpost/Blueprint) — takes priority over `icon` when both would apply. */
+  /** A real game-art icon (Outpost) — takes priority over `icon` when both would apply. */
   iconUrl?: string;
   /** A lucide icon, for node kinds with no dedicated art asset (Splurger, and the two disabled placeholders). */
   icon?: ReactNode;
@@ -734,7 +659,7 @@ interface SidebarButtonProps {
   onClick?: () => void;
 }
 
-/** One left-rail "add this instead of a recipe" button — Outpost/Blueprint/Splurger/Storage/other buildings. See this file's header comment for why Storage and "other buildings" are always `disabled`. */
+/** One left-rail "add this instead of a recipe" button — Outpost/Splurger/Storage/other buildings. See this file's header comment for why Storage and "other buildings" are always `disabled`. */
 function SidebarButton({ label, title, iconUrl, icon, swatchClassName, disabled, onClick }: SidebarButtonProps) {
   return (
     <button

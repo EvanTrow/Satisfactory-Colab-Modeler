@@ -107,11 +107,11 @@ export interface CanvasNodeData extends Record<string, unknown> {
    * Public-link work: `true` for a read-only public viewer
    * (`CanvasView.tsx`'s `CanvasFlow`, set unconditionally on every node
    * while its own `readOnly` prop is on). Every custom node component
-   * (`RecipeNode`/`SinkNode`/`StorageNode`/`SplurgerNode`/`BlueprintNode`)
-   * has its own always-visible input/button controls (the limit field, the
-   * storage mode dropdown, a Splurger connection's disconnect/flip-tier
-   * buttons, a blueprint's copies-limit field, a recipe's own per-port
-   * drag-reorder/right-click-remove) that mutate the doc directly, entirely
+   * (`RecipeNode`/`SinkNode`/`StorageNode`/`SplurgerNode`) has its own
+   * always-visible input/button controls (the limit field, the storage
+   * mode dropdown, a Splurger connection's disconnect/flip-tier buttons, a
+   * recipe's own per-port drag-reorder/right-click-remove) that mutate the
+   * doc directly, entirely
    * independent of React Flow's `nodesDraggable`/`elementsSelectable` props
    * — this is the signal each of them reads to disable those controls
    * outright rather than relying on the server to silently drop the write.
@@ -228,15 +228,10 @@ function nodeRecordToFlowNode(record: NodeRecord, selected = false): CanvasNode 
 function containerToOutpostFlowNode(container: Container, ports: DerivedOutpostPort[], selected = false): CanvasNode {
   return {
     id: container.id,
-    // Job 026: a `kind: "blueprint"` container renders as `type: "blueprint"`
-    // (`BlueprintNode.tsx`) instead of `type: "outpost"` — everything else
-    // about this synthetic node (its ports, its `Container.x`/`.y`-driven
-    // position, the drag-stop write-back via `updateContainer` below) is
-    // identical between the two kinds; only the rendered card differs.
-    type: container.kind === "blueprint" ? "blueprint" : "outpost",
+    type: "outpost",
     position: { x: container.x, y: container.y },
     selected,
-    data: { container, ports, label: container.title || (container.kind === "blueprint" ? "Blueprint" : "Outpost") },
+    data: { container, ports, label: container.title || "Outpost" },
   };
 }
 
@@ -337,11 +332,11 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
   // sit relative to its own card.
   const measuredByIdRef = useRef<Map<string, { width?: number; height?: number }>>(new Map());
 
-  // Outpost/Blueprint rework: one-time backfill for documents saved before
+  // Outpost I/O rework: one-time backfill for documents saved before
   // the two locked Inputs/Outputs pass-through nodes existed (`outposts/
   // io.ts`). Runs once per `sfmDoc` identity (not per `containerId` — a
   // whole-document pass, not tied to whichever container happens to be
-  // open), scanning every outpost/blueprint container regardless of
+  // open), scanning every outpost container regardless of
   // whether it's currently visible. `ensureOutpostIoNodes` is idempotent
   // (deterministic ids, checks before writing), so this is a safe no-op on
   // every subsequent mount once a document's already been backfilled, and
@@ -349,7 +344,7 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
   useEffect(() => {
     sfmDoc.doc.transact(() => {
       for (const container of listContainers(sfmDoc)) {
-        if (container.kind === "outpost" || container.kind === "blueprint") {
+        if (container.kind === "outpost") {
           ensureOutpostIoNodes(sfmDoc, container.id, container.color);
         }
       }
@@ -397,7 +392,7 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
     >();
     const edgeCache = new Map<string, { projected: ProjectedEdge; selected: boolean; flowEdge: CanvasEdge }>();
 
-    // Outpost/Blueprint I/O rework: `outpost-input`/`outpost-output` nodes
+    // Outpost I/O rework: `outpost-input`/`outpost-output` nodes
     // (`OutpostIoNode.tsx`) are the first `NodeRecord`-backed node kind whose
     // rendered `<Handle>` SET is driven by something outside the record
     // itself — which distinct parts currently touch it via `listEdges`, not
@@ -474,7 +469,7 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
           }
           const flowNode = nodeRecordToFlowNode(node, selected);
           const measured = measuredByIdRef.current.get(node.id);
-          // Outpost/Blueprint I/O rework: only carry `.measured` forward when
+          // Outpost I/O rework: only carry `.measured` forward when
           // this node's own handle-driving signal (`ioSignature`, `null` for
           // every non-`outpost-input`/`-output` kind) hasn't changed — see
           // this effect's `ioHandleSignature` doc comment for why a changed
@@ -497,7 +492,7 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
           }
           const flowNode = containerToOutpostFlowNode(container, ports, selected);
           const measured = measuredByIdRef.current.get(container.id);
-          // Outpost/Blueprint I/O rework: an outpost/blueprint's own
+          // Outpost I/O rework: an outpost's own
           // `<Handle>` set is driven entirely by `ports` (one real handle per
           // established `${dir}:${part}` id) — carrying `.measured` forward
           // when the SET of handle ids changed (a new item just got wired,

@@ -13,10 +13,8 @@ import { useTranslation } from "react-i18next";
 import { defaultGameData } from "@scm/gamedata";
 import { formatRational, parseRational } from "@scm/rational";
 import {
-  listContainers,
   listEdges,
   listNodes,
-  type Container,
   type EdgeRecord,
   type NodeRecord,
   type NumberFormats,
@@ -29,7 +27,6 @@ import { useGameTerm } from "../i18n";
 import { useSolverResult } from "../canvas/SolverResultContext";
 import type { ThemeMode } from "../theme";
 import type { CanvasNode } from "../canvas/useYjsSync";
-import { blueprintCompoundNodeId } from "../workers";
 import { originalEdgeIdFromSinkEdgeId, sinkConsumerNodeId } from "../workers/sinkPassthrough";
 import { originalEdgeIdFromStorageEdgeId, storageConsumerNodeId, storageProducerNodeId } from "../workers/storagePassthrough";
 import { computeIssueList, type EdgeResolution, type IssueEntry, type NodeResolution } from "./summary/computeIssueList";
@@ -64,15 +61,14 @@ function nodeDisplayName(node: NodeRecord, gameTerm: (key: string) => string): s
  * on-canvas node" unwinding this panel owns so `computeIssueList` itself
  * can stay a small, pure function with no `@scm/ydoc`/passthrough-worker
  * knowledge. Every synthetic id family this app currently mints
- * (`sinkConsumerNodeId`, `storageConsumerNodeId`/`storageProducerNodeId`,
- * `blueprintCompoundNodeId`) is covered; a Splurger never appears in solver
- * output at all (`splurgerPassthrough.ts`'s own header — it's never a
- * `SolverNode`), so there's nothing to map for it.
+ * (`sinkConsumerNodeId`, `storageConsumerNodeId`/`storageProducerNodeId`)
+ * is covered; a Splurger never appears in solver output at all
+ * (`splurgerPassthrough.ts`'s own header — it's never a `SolverNode`), so
+ * there's nothing to map for it.
  */
 function buildIssueResolvers(
   allNodes: readonly NodeRecord[],
   allEdges: readonly EdgeRecord[],
-  allContainers: readonly Container[],
   gameTerm: (key: string) => string,
 ): { resolveNode: (id: string) => NodeResolution | undefined; resolveEdge: (id: string) => EdgeResolution | undefined } {
   const nodeById = new Map(allNodes.map((n) => [n.id, n] as const));
@@ -93,18 +89,9 @@ function buildIssueResolvers(
     }
   }
 
-  // Every blueprint container's own compound-node id, precomputed the same way (using the real `blueprintCompoundNodeId` builder, not a hardcoded prefix, so this can never drift from `blueprintCollapse.ts`'s own convention).
-  const blueprintContainerById = new Map<string, Container>();
-  for (const container of allContainers) {
-    if (container.kind === "blueprint") blueprintContainerById.set(blueprintCompoundNodeId(container.id), container);
-  }
-
   function resolveNode(solverNodeId: string): NodeResolution | undefined {
     const direct = nodeById.get(solverNodeId);
     if (direct) return { navigateNodeId: direct.id, label: nodeDisplayName(direct, gameTerm) };
-
-    const container = blueprintContainerById.get(solverNodeId);
-    if (container) return { navigateNodeId: container.id, label: container.title || "Blueprint" };
 
     const synthetic = syntheticNodeById.get(solverNodeId);
     return synthetic ? { navigateNodeId: synthetic.id, label: nodeDisplayName(synthetic, gameTerm) } : undefined;
@@ -174,18 +161,6 @@ function useAllEdges(sfmDoc: SfmDocument): EdgeRecord[] {
     return () => sfmDoc.edges.unobserveDeep(sync);
   }, [sfmDoc]);
   return edges;
-}
-
-/** Same reactive pattern, over `sfmDoc.containers` — needed to resolve a Blueprint compound node id (`bp:<containerId>`) back to that container's own title. */
-function useAllContainers(sfmDoc: SfmDocument): Container[] {
-  const [containers, setContainers] = useState<Container[]>(() => listContainers(sfmDoc));
-  useEffect(() => {
-    const sync = () => setContainers(listContainers(sfmDoc));
-    sync();
-    sfmDoc.containers.observeDeep(sync);
-    return () => sfmDoc.containers.unobserveDeep(sync);
-  }, [sfmDoc]);
-  return containers;
 }
 
 export interface SummaryPanelProps {
@@ -571,11 +546,10 @@ export function SummaryPanel({
   const { result, staleness } = useSolverResult();
   const allNodes = useAllRecipeNodes(sfmDoc);
   // Calculation-validation visuals pass — see `buildIssueResolvers`'s own
-  // header for why the Issues list needs every node/edge/container
-  // document-wide (not just recipe nodes, not just the current view).
+  // header for why the Issues list needs every node/edge document-wide
+  // (not just recipe nodes, not just the current view).
   const allNodesUnfiltered = useAllNodes(sfmDoc);
   const allEdges = useAllEdges(sfmDoc);
-  const allContainers = useAllContainers(sfmDoc);
   // Job 027: the pop-out window — see `usePopoutWindow.ts`'s own header for
   // why this is a portal, not a second React root.
   const popout = usePopoutWindow();
@@ -624,7 +598,7 @@ export function SummaryPanel({
   const summary = summarizeScope(nodeIds, result?.nodes ?? [], nodeRecordById, gameData, sinkConsumerNodeIds);
   const stale = staleness === "stale-recomputing";
 
-  const { resolveNode, resolveEdge } = buildIssueResolvers(allNodesUnfiltered, allEdges, allContainers, gameTerm);
+  const { resolveNode, resolveEdge } = buildIssueResolvers(allNodesUnfiltered, allEdges, gameTerm);
   const issues = computeIssueList(result?.nodes ?? [], result?.edges ?? [], resolveNode, resolveEdge);
   const navigableNodeIds = new Set(nodes.map((n) => n.id));
 

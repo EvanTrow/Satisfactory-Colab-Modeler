@@ -325,7 +325,7 @@ function tierFromPort(port: string): PriorityTier | undefined {
  * instead of guessing at a crossbar.
  */
 /**
- * Outpost/Blueprint I/O rework: `useSolver.ts`'s `indexEdges` additionally
+ * Outpost I/O rework: `useSolver.ts`'s `indexEdges` additionally
  * keys `edgeResultById` by an ORIGINAL edge id whenever this rewrite folded
  * it into exactly ONE synthetic edge — the passthrough-node analogue of
  * `sinkPassthrough.ts`/`storagePassthrough.ts`'s own `originalEdgeIdFrom*`

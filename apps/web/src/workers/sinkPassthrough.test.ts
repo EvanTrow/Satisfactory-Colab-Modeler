@@ -27,7 +27,7 @@ describe("computeSinkConsumerNodes", () => {
       id: sinkConsumerNodeId("sink1", "Iron Ore"),
       limit: "500",
       limitMode: "ppm",
-      blueprintCopyBasis: { perCopyRates: { "Iron Ore": "-1" }, perCopyPowerMW: 0 },
+      syntheticCopyBasis: { perCopyRates: { "Iron Ore": "-1" }, perCopyPowerMW: 0 },
     });
     expect(result.edges).toEqual([
       {

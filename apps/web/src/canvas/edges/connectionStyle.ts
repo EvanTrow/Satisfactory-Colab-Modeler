@@ -94,7 +94,7 @@ function straightPath(points: readonly Point[]): PathCommand[] {
 
 /**
  * Every node type on this canvas (`RecipeNode`, `SplurgerNode`,
- * `OutpostNode`, `BlueprintNode`) wires its `<Handle>`s exclusively as
+ * `OutpostNode`) wires its `<Handle>`s exclusively as
  * `Position.Left` (input) / `Position.Right` (output) — never top/bottom.
  * That means a curve leaving a source is ALWAYS leaving rightward, and a
  * curve arriving at a target is ALWAYS arriving from the left, regardless of

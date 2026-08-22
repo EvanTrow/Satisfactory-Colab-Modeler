@@ -12,7 +12,6 @@ function setUp() {
     color: "#000000",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   return { sfmDoc, root };
 }

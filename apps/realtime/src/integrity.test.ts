@@ -181,7 +181,6 @@ describe("integrity reducer: server-side repair before persistence", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const a = addNode(sfmDoc, {
       containerId: root.id,
@@ -304,7 +303,6 @@ describe("PLAN.md §8 Phase 5 exit criterion: concurrent delete-vs-connect conve
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const shared = addNode(sfmDocA, {
       containerId: root.id,

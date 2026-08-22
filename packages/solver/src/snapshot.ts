@@ -39,7 +39,7 @@ export interface SolverNode {
   /**
    * The `@scm/gamedata` `Recipe.name` this node runs. This job models
    * recipe nodes only — specialty node kinds (splurger, storage container,
-   * outpost, AWESOME Sink, blueprint, etc. — PLAN.md §2) have no solver
+   * outpost, AWESOME Sink, etc. — PLAN.md §2) have no solver
    * representation yet; see this package's Handoff notes for what a later
    * job needs to add to extend the snapshot for them.
    */
@@ -66,31 +66,27 @@ export interface SolverNode {
   /** Production shard (Somersloop) count; 0 for machines that don't support them. */
   readonly shards: number;
   /**
-   * Job 026 (Blueprints, PLAN.md §10.3): present ONLY for a synthetic
-   * "blueprint compound" node standing in for an entire blueprint
-   * container's flattened internal subgraph, collapsed to ONE node whose
-   * machine count represents the blueprint's COPY COUNT. `recipe`/
-   * `machine`/`purity`/`clock`/`shards` are ignored entirely for such a
-   * node (there is no real recipe to resolve); `limit`/`limitMode` are
-   * still honored normally — a blueprint's `Container.copiesLimit`, when
-   * set, is encoded as an ordinary `limit`/`"machines"` pin on this node
-   * (see `apps/web/src/workers/blueprintCollapse.ts`), reusing the exact
-   * same pin-vs-propagate mechanism every other node already has rather
-   * than inventing a second "soft cap" concept.
+   * Present ONLY for a synthetic "compound" node standing in for a
+   * flattened internal subgraph, collapsed to ONE node whose machine count
+   * represents a copy count. `recipe`/`machine`/`purity`/`clock`/`shards`
+   * are ignored entirely for such a node (there is no real recipe to
+   * resolve); `limit`/`limitMode` are still honored normally, reusing the
+   * exact same pin-vs-propagate mechanism every other node already has
+   * rather than inventing a second "soft cap" concept.
    *
    * When set, this node's per-part rates come directly from
    * `perCopyRates` (signed canonical `n/d` strings — positive = produced,
    * negative = consumed, exactly `RecipePart.amount`'s own convention, for
    * ONE copy) instead of a `@scm/gamedata` recipe/machine lookup — see
-   * `nodeProfile.ts`'s `buildBlueprintCompoundProfile`. This is what lets
+   * `nodeProfile.ts`'s `buildSyntheticCompoundProfile`. This is what lets
    * the copy count participate in the SAME fixed-point propagation
    * (`basic.ts`/`full.ts`) as every real node, resolved from whichever
-   * neighbor's demand reaches the blueprint's boundary ports, rather than
-   * being computed as a separate pass and multiplied in afterward — see
-   * jobs/026-blueprints.md's Handoff notes ("How PLAN.md §10.3 was
-   * resolved") for the full reasoning and its documented limitations.
+   * neighbor's demand reaches the node's boundary ports, rather than being
+   * computed as a separate pass and multiplied in afterward. Current
+   * consumers: `apps/web/src/workers/sinkPassthrough.ts` (AWESOME Sink)
+   * and `storagePassthrough.ts` (Storage Container).
    */
-  readonly blueprintCopyBasis?: {
+  readonly syntheticCopyBasis?: {
     readonly perCopyRates: Readonly<Record<string, string>>;
     /** Signed MW at exactly 1 copy — the float power boundary, same as every other node's `power` field. */
     readonly perCopyPowerMW: number;

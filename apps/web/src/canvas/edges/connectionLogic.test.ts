@@ -25,7 +25,6 @@ function makeDoc(): { sfmDoc: SfmDocument; containerId: string; nodeA: string; n
     color: "#4b5563",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   const baseNode = {
     containerId: root.id,
@@ -231,7 +230,7 @@ describe("resolveEdgeEndpoints", () => {
   });
 });
 
-describe("resolveEdgeEndpoints — outpost/blueprint container redirect", () => {
+describe("resolveEdgeEndpoints — outpost container redirect", () => {
   function makeOutpostDoc() {
     const sfmDoc = createDocument();
     const root = addContainer(sfmDoc, {
@@ -241,7 +240,6 @@ describe("resolveEdgeEndpoints — outpost/blueprint container redirect", () => 
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const outpost = addContainer(sfmDoc, {
       kind: "outpost",
@@ -250,7 +248,6 @@ describe("resolveEdgeEndpoints — outpost/blueprint container redirect", () => 
       color: "#d97706",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     ensureOutpostIoNodes(sfmDoc, outpost.id, "#d97706");
     const external = addNode(sfmDoc, {
@@ -556,7 +553,6 @@ describe("Dimensional Depot connection restrictions", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const baseNode = {
       containerId: root.id,
@@ -681,7 +677,6 @@ describe("Storage Container connection restrictions", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const baseNode = {
       containerId: root.id,
@@ -787,7 +782,6 @@ describe("storageNodePart", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const storage = addNode(sfmDoc, {
       containerId: root.id,

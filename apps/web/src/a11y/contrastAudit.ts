@@ -8,12 +8,11 @@
 // This exists because Job 014's original palette had several real,
 // measured contrast failures once actually checked against WCAG's formula
 // rather than eyeballed: `--text-muted` at 2.64-2.84:1 (light) and
-// 3.81-4.10:1 (dark) against its own surface tokens, `--blueprint` at
-// 2.84:1 against `--blueprint-soft`, `--outpost` at 3.88:1 against
-// `--outpost-soft`, `--splurger` at 4.12:1 against `--splurger-soft` — all
-// under WCAG AA's 4.5:1 minimum for normal-size text. `index.css`'s
-// per-token comments document each fix; this module is what proves it and
-// keeps proving it.
+// 3.81-4.10:1 (dark) against its own surface tokens, `--outpost` at 3.88:1
+// against `--outpost-soft`, `--splurger` at 4.12:1 against
+// `--splurger-soft` — all under WCAG AA's 4.5:1 minimum for normal-size
+// text. `index.css`'s per-token comments document each fix; this module is
+// what proves it and keeps proving it.
 
 /** sRGB 0-255 channel -> linearized channel, per the WCAG relative-luminance formula. */
 function srgbToLinear(channel: number): number {
@@ -107,8 +106,6 @@ export const LIGHT_TOKENS: Record<string, string> = {
   "mismatch-soft": "rgba(194, 65, 12, 0.14)",
   splurger: "#6d28d9",
   "splurger-soft": "rgba(124, 58, 237, 0.14)",
-  blueprint: "#0a6b62",
-  "blueprint-soft": "rgba(13, 148, 136, 0.14)",
   "node-header": "#2f4f4f",
   "node-header-text": "#f5f5f4",
 };
@@ -133,8 +130,6 @@ export const DARK_TOKENS: Record<string, string> = {
   "mismatch-soft": "rgba(251, 146, 60, 0.18)",
   splurger: "#a78bfa",
   "splurger-soft": "rgba(167, 139, 250, 0.18)",
-  blueprint: "#2dd4bf",
-  "blueprint-soft": "rgba(45, 212, 191, 0.18)",
   "node-header": "#2f4f4f",
   "node-header-text": "#f5f5f4",
 };
@@ -163,7 +158,5 @@ export const TEXT_ON_BACKGROUND_PAIRS: readonly (readonly [string, string])[] = 
   ["mismatch", "surface-card"],
   ["splurger", "splurger-soft"],
   ["splurger", "surface-panel"],
-  ["blueprint", "blueprint-soft"],
-  ["blueprint", "surface-panel"],
   ["node-header-text", "node-header"],
 ];

@@ -6,14 +6,13 @@
 // `SampleFactoryPreview.tsx` (its own, separate `<ReactFlow>` instance) can
 // import the exact same node/edge renderers instead of redefining them.
 import { RecipeNode, SinkNode, SplurgerNode, StorageNode } from "./nodes";
-import { BlueprintNode, OutpostIoNode, OutpostNode, BoundaryEdge } from "./outposts";
+import { OutpostIoNode, OutpostNode, BoundaryEdge } from "./outposts";
 import { ConnectionEdge } from "./edges";
 
 /** `"recipe"` matches the `type` string `useYjsSync.ts`'s `nodeRecordToFlowNode` assigns to every `kind: "recipe"` node; `"outpost"` matches `containerToOutpostFlowNode`'s synthetic boundary nodes. */
 export const nodeTypes = {
   recipe: RecipeNode,
   outpost: OutpostNode,
-  blueprint: BlueprintNode,
   splurger: SplurgerNode,
   sink: SinkNode,
   depot: SinkNode,

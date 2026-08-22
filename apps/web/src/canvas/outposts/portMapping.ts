@@ -113,7 +113,7 @@ export function boundaryPortId(edgeId: string, direction: "in" | "out"): string 
 }
 
 /**
- * Outpost/Blueprint rework: the handle id a boundary port should render
+ * Outpost rework: the handle id a boundary port should render
  * with, from the container's own perspective. When the INSIDE endpoint is
  * specifically the container's own locked pass-through node (`outposts/
  * io.ts`'s `outpost-input`/`outpost-output` kind), the port is real and

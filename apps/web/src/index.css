@@ -147,31 +147,10 @@
   --splurger-border: rgba(124, 58, 237, 0.55);
 
   /*
-   * Job 026 (Blueprints): a fifth "own identity" accent, teal — distinct
-   * from `--accent` (indigo), `--outpost` (amber), `--splurger` (violet),
-   * and `--mismatch` (red-orange). A blueprint IS an outpost underneath
-   * (same `kind` union — Job 007), so it deliberately keeps the SAME card
-   * shape/structure as `OutpostNode.tsx` (`BlueprintNode.tsx` is a close
-   * sibling, not a redesign) — this token is what makes it read as its own
-   * *kind* of outpost at a glance, same "own identity" reasoning
-   * `--outpost`'s comment (Job 014) and `--splurger`'s (Job 024) already
-   * established.
-   */
-  /*
-   * Job 029: darkened from the original #0d9488 — as text on
-   * `--blueprint-soft` the original measured only 2.84:1, well under WCAG
-   * AA's 4.5:1 (the worst light-theme contrast failure found in this job's
-   * audit).
-   */
-  --blueprint: #0a6b62;
-  --blueprint-soft: rgba(13, 148, 136, 0.14);
-  --blueprint-border: rgba(13, 148, 136, 0.55);
-
-  /*
    * Add-a-machine redesign: alternate-recipe highlighting in
    * `RecipeChooser.tsx`'s recipe list (a blue badge/row-tint, Steam-app-
-   * inspired). A sixth "own identity" accent, same reasoning as
-   * `--outpost`/`--splurger`/`--blueprint` above — kept distinct from
+   * inspired). A fifth "own identity" accent, same reasoning as
+   * `--outpost`/`--splurger` above — kept distinct from
    * `--accent` (indigo, already means "selected/primary interactive"
    * elsewhere, e.g. the machine filter list's selected state) so this reads
    * as its own semantic, not a mis-clicked selection.
@@ -266,11 +245,6 @@
   --splurger: #a78bfa;
   --splurger-soft: rgba(167, 139, 250, 0.18);
   --splurger-border: rgba(167, 139, 250, 0.55);
-
-  /* Job 026 — see the light theme's own comment above for the full rationale. */
-  --blueprint: #2dd4bf;
-  --blueprint-soft: rgba(45, 212, 191, 0.18);
-  --blueprint-border: rgba(45, 212, 191, 0.55);
 
   /* See the light theme's own comment above for the full rationale. */
   --alt-recipe: #60a5fa;

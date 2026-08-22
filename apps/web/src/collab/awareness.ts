@@ -57,7 +57,7 @@ export interface AwarenessEditingField {
 }
 
 export interface AwarenessDraggingNode {
-  /** A real `NodeRecord` id or (Job 013) an outpost/blueprint `Container` id — the same dual id space `useYjsSync.ts`'s `onNodeDragStop` already writes back through, so no separate "is this a container" flag is needed on the wire. */
+  /** A real `NodeRecord` id or (Job 013) an outpost `Container` id — the same dual id space `useYjsSync.ts`'s `onNodeDragStop` already writes back through, so no separate "is this a container" flag is needed on the wire. */
   id: string;
   x: number;
   y: number;

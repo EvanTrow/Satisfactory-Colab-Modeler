@@ -29,7 +29,7 @@ describe("computeStorageBufferNodes", () => {
     expect(result.nodes[0]).toMatchObject({
       id: storageConsumerNodeId("storage1", "Iron Ore"),
       limit: null,
-      blueprintCopyBasis: { perCopyRates: { "Iron Ore": "-1" }, perCopyPowerMW: 0 },
+      syntheticCopyBasis: { perCopyRates: { "Iron Ore": "-1" }, perCopyPowerMW: 0 },
     });
     expect(result.edges).toEqual([
       {
@@ -49,7 +49,7 @@ describe("computeStorageBufferNodes", () => {
     expect(result.nodes[0]).toMatchObject({
       id: storageProducerNodeId("storage1", "Iron Ore"),
       limit: null,
-      blueprintCopyBasis: { perCopyRates: { "Iron Ore": "1" }, perCopyPowerMW: 0 },
+      syntheticCopyBasis: { perCopyRates: { "Iron Ore": "1" }, perCopyPowerMW: 0 },
     });
     expect(result.edges).toEqual([
       {

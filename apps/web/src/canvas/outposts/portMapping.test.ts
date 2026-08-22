@@ -41,7 +41,6 @@ function makeFixture() {
     color: "#4b5563",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   const outpost = addContainer(sfmDoc, {
     kind: "outpost",
@@ -50,7 +49,6 @@ function makeFixture() {
     color: "#4b5563",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   return { sfmDoc, root, outpost };
 }
@@ -77,7 +75,6 @@ describe("buildContainerParentMap / resolveNodeLocation", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const parentOf = buildContainerParentMap([root, outpost, nested]);
     // A node two levels deep, viewed from root, resolves to the *first*
@@ -97,7 +94,6 @@ describe("buildContainerParentMap / resolveNodeLocation", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const parentOf = buildContainerParentMap([root, outpost, sibling]);
     // Viewed *from inside* the outpost, a node that's actually in a sibling
@@ -116,7 +112,6 @@ describe("isContainerWithinSubtree", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const parentOf = buildContainerParentMap([root, outpost, nested]);
     expect(isContainerWithinSubtree(outpost.id, outpost.id, parentOf)).toBe(true);
@@ -234,7 +229,6 @@ describe("computeOutpostPorts", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const a = addNode(sfmDoc, baseNode(outpost.id, "A"));
     const b = addNode(sfmDoc, baseNode(sibling.id, "B"));

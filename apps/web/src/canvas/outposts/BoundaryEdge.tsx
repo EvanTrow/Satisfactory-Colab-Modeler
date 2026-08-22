@@ -19,7 +19,7 @@
 // waypoints to apply, `buildStyledPathD`'s 2-point case handles a bare
 // source-to-target run for straight/bezier/step alike). Previously hardcoded
 // `getSmoothStepPath`, ignoring the setting entirely — a small gap when
-// boundary crossings were rare, but now the primary way an outpost/blueprint
+// boundary crossings were rare, but now the primary way an outpost
 // connects to anything, so it needed to actually follow the setting.
 //
 // Calculation-validation visuals pass: this edge's `id` prop is always the
@@ -90,8 +90,8 @@ export const BoundaryEdge = memo(function BoundaryEdge({
   // a connection touching a locked Inputs/Outputs node, exactly like any
   // other connection. `resolveEdgeRate` additionally falls back to whichever
   // real endpoint's own party rate when there's no complete circuit yet
-  // (`formatRate.ts`'s own doc comment) — the same fallback the outpost/
-  // blueprint card's own rows already show, so a still-one-sided connection
+  // (`formatRate.ts`'s own doc comment) — the same fallback the outpost
+  // card's own rows already show, so a still-one-sided connection
   // doesn't read as "no idea" on the wire while the card right next to it
   // shows a number.
   const iconUrl = getIconUrl(record.part);

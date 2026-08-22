@@ -12,7 +12,6 @@ function makeFixture() {
     color: "#4b5563",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   const outer = addContainer(sfmDoc, {
     kind: "outpost",
@@ -21,7 +20,6 @@ function makeFixture() {
     color: "#4b5563",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   const inner = addContainer(sfmDoc, {
     kind: "outpost",
@@ -30,7 +28,6 @@ function makeFixture() {
     color: "#4b5563",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   return { sfmDoc, root, outer, inner };
 }

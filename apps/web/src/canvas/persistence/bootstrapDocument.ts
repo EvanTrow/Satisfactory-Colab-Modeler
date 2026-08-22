@@ -53,7 +53,6 @@ export function bootstrapSfmDocument(doc: Y.Doc): BootstrappedDocument {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
   }
 

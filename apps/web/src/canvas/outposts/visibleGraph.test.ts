@@ -48,7 +48,6 @@ function makeFixture() {
     color: "#4b5563",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   const outpost = addContainer(sfmDoc, {
     kind: "outpost",
@@ -57,7 +56,6 @@ function makeFixture() {
     color: "#4b5563",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   return { sfmDoc, root, outpost };
 }
@@ -119,7 +117,6 @@ describe("computeVisibleEdges", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const a = addNode(sfmDoc, baseNode(outpost.id, "A"));
     const b = addNode(sfmDoc, baseNode(sibling.id, "B"));
@@ -148,7 +145,6 @@ describe("computeVisibleEdges", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const a = addNode(sfmDoc, baseNode(outpost.id, "A"));
     const b = addNode(sfmDoc, baseNode(sibling.id, "B"));
@@ -159,7 +155,7 @@ describe("computeVisibleEdges", () => {
     expect(computeVisibleEdges(outpost.id, [a, b], [edge], parentOf)).toEqual([]);
   });
 
-  it("Outpost/Blueprint I/O rework: a DIRECT edge into the locked Outputs node uses the real ${dir}:${part} handle, not its raw stored (possibly wildcard) port", () => {
+  it("Outpost I/O rework: a DIRECT edge into the locked Outputs node uses the real ${dir}:${part} handle, not its raw stored (possibly wildcard) port", () => {
     // The exact bug this regression test locks in: dragging a NEW connection
     // onto the always-present "+" row bootstraps an edge whose OWN toPort
     // stays the literal wildcard sentinel forever (`edges/connectionLogic.ts`'s
@@ -197,7 +193,7 @@ describe("computeVisibleEdges", () => {
     ]);
   });
 
-  it("Outpost/Blueprint I/O rework: a DIRECT edge OUT of the locked Inputs node uses the real handle too", () => {
+  it("Outpost I/O rework: a DIRECT edge OUT of the locked Inputs node uses the real handle too", () => {
     const { sfmDoc, root, outpost } = makeFixture();
     const inputsNode = addNode(sfmDoc, { ...baseNode(outpost.id, "Inputs"), kind: "outpost-input" });
     const consumer = addNode(sfmDoc, baseNode(outpost.id, "Consumer"));

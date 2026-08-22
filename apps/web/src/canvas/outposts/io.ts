@@ -1,7 +1,7 @@
-// Outpost/Blueprint rework: the two permanent, non-removable pass-through
-// nodes every outpost/blueprint container gets — one for external inputs,
+// Outpost rework: the two permanent, non-removable pass-through
+// nodes every outpost container gets — one for external inputs,
 // one for external outputs. Dragging a connection directly onto the outer
-// boundary card (`OutpostNode.tsx`/`BlueprintNode.tsx`) is redirected
+// boundary card (`OutpostNode.tsx`) is redirected
 // (`edges/connectionLogic.ts`'s `resolveEdgeEndpoints`) to land on one of
 // these two REAL `NodeRecord`s instead of the container id itself — see
 // this job's plan doc for the full "why". They're rendered inside the
@@ -13,9 +13,7 @@
 // Ids are DETERMINISTIC (derived from the container id), not randomly
 // generated, so two clients racing to backfill the same legacy container
 // (see `useYjsSync.ts`'s one-time backfill effect) converge on the same
-// record via ordinary Yjs CRDT idempotency instead of creating duplicates —
-// the same trick `workers/blueprintCollapse.ts`'s `blueprintCompoundNodeId`
-// already uses for its own synthetic id.
+// record via ordinary Yjs CRDT idempotency instead of creating duplicates.
 import { add, parseRational, type Rational } from "@scm/rational";
 import type { EdgeSolveResult, NodeSolveResult } from "@scm/solver";
 import { addNode, getNode, type EdgeRecord, type SfmDocument } from "@scm/ydoc";
@@ -47,7 +45,7 @@ export function isOutpostIoKind(kind: string): boolean {
  * Outputs node, fed by internal producers — see `OutpostIoNode.tsx`'s own
  * `internalDirection`). Shared by `OutpostIoNode.tsx` (the internal card,
  * which already had this exact per-part-set comparison) and
- * `OutpostNode.tsx`/`BlueprintNode.tsx` (the OUTER boundary card, which
+ * `OutpostNode.tsx` (the OUTER boundary card, which
  * couldn't tell a "genuinely no rate yet" port apart from a "half-wired,
  * waiting on the other side" one without this) so the two views can never
  * disagree about which parts are dangling.
@@ -163,7 +161,7 @@ export function computeIoPartRate(
 /**
  * Creates whichever of the two locked pass-through nodes `containerId` is
  * still missing, inside one transaction. Idempotent — safe to call on every
- * outpost/blueprint creation AND, separately, as a one-time backfill for
+ * outpost creation AND, separately, as a one-time backfill for
  * documents that predate this feature (`useYjsSync.ts`).
  */
 export function ensureOutpostIoNodes(sfmDoc: SfmDocument, containerId: string, color: string): void {

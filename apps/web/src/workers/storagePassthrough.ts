@@ -1,4 +1,4 @@
-// Storage Container (`kind: "storage"`) — same synthetic-`blueprintCopyBasis`
+// Storage Container (`kind: "storage"`) — same synthetic-`syntheticCopyBasis`
 // rewrite `sinkPassthrough.ts` uses for AWESOME Sink/Dimensional Depot, but
 // shaped differently: a Storage Container's whole point is that its input
 // and output sides are DECOUPLED — unlike a Splurger, in doesn't have to
@@ -126,7 +126,7 @@ function synthesizeSide(
         limitMode: "ppm",
         clock: null,
         shards: 0,
-        blueprintCopyBasis: { perCopyRates: { [edge.part]: sign }, perCopyPowerMW: 0 },
+        syntheticCopyBasis: { perCopyRates: { [edge.part]: sign }, perCopyPowerMW: 0 },
         ...(cappablePartsFromIntake?.has(edge.part)
           ? { capMachineCountAtNodeId: storageConsumerNodeId(storageNodeId, edge.part) }
           : {}),

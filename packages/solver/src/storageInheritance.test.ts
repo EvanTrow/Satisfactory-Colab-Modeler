@@ -1,7 +1,7 @@
 // `SolverNode.capMachineCountAtNodeId` (see `snapshot.ts`'s own doc
 // comment) — the fix for `apps/web/src/workers/storagePassthrough.ts`'s
 // Storage Container rewrite, whose intake and outflow sides are two
-// separate synthetic `blueprintCopyBasis` nodes with NO solver edge between
+// separate synthetic `syntheticCopyBasis` nodes with NO solver edge between
 // them. Without this field, the outflow side could only ever resolve its
 // machine count from a REAL downstream neighbor's own pin — anything else
 // (nothing downstream pinned at all) fell all the way through to Basic/Full
@@ -44,7 +44,7 @@ function buildSnapshot(minerPpm: string, smelterPpm: string | null): SolverSnaps
         limitMode: "ppm",
         clock: null,
         shards: 0,
-        blueprintCopyBasis: { perCopyRates: { "Iron Ore": "-1" }, perCopyPowerMW: 0 },
+        syntheticCopyBasis: { perCopyRates: { "Iron Ore": "-1" }, perCopyPowerMW: 0 },
       },
       {
         id: "stg-out",
@@ -55,7 +55,7 @@ function buildSnapshot(minerPpm: string, smelterPpm: string | null): SolverSnaps
         limitMode: "ppm",
         clock: null,
         shards: 0,
-        blueprintCopyBasis: { perCopyRates: { "Iron Ore": "1" }, perCopyPowerMW: 0 },
+        syntheticCopyBasis: { perCopyRates: { "Iron Ore": "1" }, perCopyPowerMW: 0 },
         capMachineCountAtNodeId: "stg-in",
       },
       {

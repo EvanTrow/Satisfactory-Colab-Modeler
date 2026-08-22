@@ -1,6 +1,6 @@
 // Live drag broadcasting: turns in-progress `onNodesChange` position events
 // into throttled `awareness.setLocalStateField("dragging", ...)` calls, so
-// every other peer sees a node (or Job 013 outpost/blueprint boundary node)
+// every other peer sees a node (or Job 013 outpost boundary node)
 // glide across the canvas as it's dragged — not just jump to its final spot
 // once the dragger releases it, which is all `useYjsSync.ts`'s
 // `onNodeDragStop` (a single write, at drag end) provided on its own.

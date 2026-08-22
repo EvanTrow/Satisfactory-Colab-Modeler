@@ -1,5 +1,5 @@
-// Outpost/Blueprint rework: the two permanent, non-removable pass-through
-// nodes rendered INSIDE an outpost/blueprint (`io.ts`'s `outpost-input`/
+// Outpost rework: the two permanent, non-removable pass-through
+// nodes rendered INSIDE an outpost (`io.ts`'s `outpost-input`/
 // `outpost-output` kinds) — "Inputs" and "Outputs". Modeled closely on
 // `SplurgerNode.tsx` (a real node whose ports are driven entirely by
 // whichever edges happen to be wired to it, not a fixed recipe part list).

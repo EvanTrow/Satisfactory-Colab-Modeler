@@ -154,8 +154,8 @@ export interface NodeProfile {
   /** Non-empty only when the node's recipe/machine/shards couldn't be resolved — see the module header. */
   readonly issues: readonly string[];
   /**
-   * Job 026 (Blueprints): present ONLY for a synthetic blueprint-compound
-   * profile (`buildBlueprintCompoundProfile`) — signed MW at exactly 1 of
+   * Present ONLY for a synthetic compound profile
+   * (`buildSyntheticCompoundProfile`) — signed MW at exactly 1 of
    * this node's "machine count" (i.e. 1 copy). When set, `nodePower` uses
    * this directly (`syntheticPowerAtOneUnit * machineCount`) instead of
    * the real-machine `effectivePower`/`overclockExponent`/`powerAtClock`
@@ -181,7 +181,7 @@ function emptyProfile(node: SolverNode, issues: string[], recipe?: Recipe): Node
   };
 }
 
-/** Builds both `NodeProfile.refRatePerPart` and `refRatePerPartByDirection` from a recipe's parts in one pass — shared by `buildBlueprintCompoundProfile` (which already has each part's final rate) and `buildNodeProfile` (which derives it from `baseRecipeRatePerMinuteForEntry` × ratio) below. */
+/** Builds both `NodeProfile.refRatePerPart` and `refRatePerPartByDirection` from a recipe's parts in one pass — shared by `buildSyntheticCompoundProfile` (which already has each part's final rate) and `buildNodeProfile` (which derives it from `baseRecipeRatePerMinuteForEntry` × ratio) below. */
 function buildRefRateMaps(
   parts: readonly RecipePart[],
   rateForEntry: (entry: RecipePart) => Rational,
@@ -200,23 +200,22 @@ function buildRefRateMaps(
 }
 
 // ---------------------------------------------------------------------------
-// Job 026 (Blueprints): a synthetic "compound" profile for a node whose
-// rates come directly from `SolverNode.blueprintCopyBasis` instead of a
-// `@scm/gamedata` recipe/machine lookup. Builds a fully-valid, if synthetic,
-// `Recipe` object (every field `basic.ts`/`full.ts`/`summary.ts`/
-// `nodeResult.ts`/`edgeValidation.ts` might read — just `.parts`, in
-// practice, since none of those modules gate on anything else) so this
-// compound node behaves EXACTLY like a real recipe node to every one of
-// those modules, with zero changes needed to any of them: propagation,
-// even-split/water-fill sibling grouping, edge validation, node-result/
-// summary building all treat it as an ordinary (if unusually-shaped) recipe.
-// See jobs/026-blueprints.md's Handoff notes ("How PLAN.md §10.3 was
-// resolved") for why this is the chosen mechanism.
+// A synthetic "compound" profile for a node whose rates come directly from
+// `SolverNode.syntheticCopyBasis` instead of a `@scm/gamedata` recipe/machine
+// lookup. Builds a fully-valid, if synthetic, `Recipe` object (every field
+// `basic.ts`/`full.ts`/`summary.ts`/`nodeResult.ts`/`edgeValidation.ts`
+// might read — just `.parts`, in practice, since none of those modules gate
+// on anything else) so this compound node behaves EXACTLY like a real
+// recipe node to every one of those modules, with zero changes needed to
+// any of them: propagation, even-split/water-fill sibling grouping, edge
+// validation, node-result/summary building all treat it as an ordinary (if
+// unusually-shaped) recipe. Current consumers:
+// `apps/web/src/workers/sinkPassthrough.ts` and `storagePassthrough.ts`.
 // ---------------------------------------------------------------------------
 
-function buildBlueprintCompoundProfile(
+function buildSyntheticCompoundProfile(
   node: SolverNode,
-  basis: NonNullable<SolverNode["blueprintCopyBasis"]>,
+  basis: NonNullable<SolverNode["syntheticCopyBasis"]>,
 ): NodeProfile {
   const issues: string[] = [];
   const parts: RecipePart[] = [];
@@ -232,12 +231,12 @@ function buildBlueprintCompoundProfile(
       // `buildRefRateMaps` below, one entry per name is guaranteed.
       refRatePerPartByDirection.set(part, isPositive(amount) ? { output: amount } : { input: amount });
     } catch {
-      issues.push(`blueprint compound node "${node.id}": invalid per-copy rate "${rateString}" for part "${part}"`);
+      issues.push(`synthetic compound node "${node.id}": invalid per-copy rate "${rateString}" for part "${part}"`);
     }
   }
 
   const recipe: Recipe = {
-    name: `blueprint:${node.id}`,
+    name: `synthetic:${node.id}`,
     // Not a real machine family — nothing reads `Recipe.machine` for a
     // compound profile (resolution is short-circuited before
     // `resolveNodeMachine` ever runs), this just satisfies the type.
@@ -275,8 +274,8 @@ function buildBlueprintCompoundProfile(
 
 /** Resolves `node` against `gameData` into a `NodeProfile`. Never throws — see the module header. */
 export function buildNodeProfile(node: SolverNode, gameData: GameData): NodeProfile {
-  if (node.blueprintCopyBasis) {
-    return buildBlueprintCompoundProfile(node, node.blueprintCopyBasis);
+  if (node.syntheticCopyBasis) {
+    return buildSyntheticCompoundProfile(node, node.syntheticCopyBasis);
   }
 
   const recipe = gameData.recipesByName.get(node.recipe);

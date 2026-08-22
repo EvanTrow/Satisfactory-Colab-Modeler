@@ -66,7 +66,7 @@
       "body": "Give it a target item and rate, and it'll generate a complete, connected production chain for you."
     },
     {
-      "title": "Outposts & blueprints",
+      "title": "Outposts",
       "body": "Group machines into outposts to keep sprawling factories organized and readable."
     },
     {
@@ -158,11 +158,6 @@
   "canvas.defaultOutpostTitle": "New Outpost",
   "canvas.outpostName": "Outpost name",
   "canvas.createOutpost": "Create outpost",
-  "canvas.newBlueprintTitle": "Create a nested blueprint container here",
-  "canvas.newBlueprintHeading": "New blueprint",
-  "canvas.defaultBlueprintTitle": "New Blueprint",
-  "canvas.blueprintName": "Blueprint name",
-  "canvas.createBlueprint": "Create blueprint",
   "canvas.comingSoon": "Not available yet",
   "canvas.otherBuildings": "More buildings",
   "canvas.searchRecipes": "Search recipes…",

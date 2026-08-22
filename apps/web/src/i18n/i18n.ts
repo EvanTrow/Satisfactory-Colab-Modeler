@@ -13,7 +13,7 @@
 //     `de.json` maps it -> `"Eisenerz"`, etc.) — see `gameTerm.ts`.
 //   - `app` — new keys for UI genuinely novel to this reimplementation with
 //     no reasonable original-app analogue (presence, connection status,
-//     Splurger/priority UI, blueprints, auto-round, the solver-mode/summary
+//     Splurger/priority UI, auto-round, the solver-mode/summary
 //     specifics...). English only; every other locale relies on
 //     `fallbackLng` to reach the en-US bundle for this namespace, since
 //     authoring translations is explicitly out of this job's scope.

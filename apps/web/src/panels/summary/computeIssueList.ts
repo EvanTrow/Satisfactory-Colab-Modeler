@@ -7,8 +7,8 @@
 // ids.
 //
 // Every synthetic id family this app's passthrough workers mint (a Sink's
-// per-part consumer, a Storage Container's per-part consumer/producer, a
-// Blueprint's compound node) is invisible to this module — it only ever
+// per-part consumer, a Storage Container's per-part consumer/producer) is
+// invisible to this module — it only ever
 // sees whatever `resolveNode`/`resolveEdge` can map back to a REAL,
 // on-canvas node id. This keeps the id-unwinding (which varies per node
 // kind and needs live doc data this module deliberately doesn't touch —

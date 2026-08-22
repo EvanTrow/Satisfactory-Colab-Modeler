@@ -19,13 +19,10 @@ import { useCommittedTextField } from "../nodes/useCommittedTextField";
 export interface NodeContextMenuState {
   nodeId: string;
   /**
-   * `"outpost"`/`"blueprint"` when the right-clicked node is a Job
-   * 013/026 container boundary node (`data.container` set), `null` for a
-   * real recipe node. Job 026 widened this from a plain `isOutpost:
-   * boolean` so the menu can offer the right "Convert to..." action for
-   * whichever kind it currently is.
+   * `"outpost"` when the right-clicked node is a Job 013 container
+   * boundary node (`data.container` set), `null` for a real recipe node.
    */
-  containerKind: "outpost" | "blueprint" | null;
+  containerKind: "outpost" | null;
   /**
    * The live `Container` record when `containerKind` is set — drives the
    * rename field below. Re-derived every render from the current doc state
@@ -42,7 +39,7 @@ export interface NodeContextMenuState {
    */
   recipeRecord?: NodeRecord;
   /**
-   * Outpost/Blueprint rework: `true` for a right-clicked node whose kind is
+   * Outpost I/O rework: `true` for a right-clicked node whose kind is
    * one of `io.ts`'s `LOCKED_NODE_KINDS` (the two permanent Inputs/Outputs
    * pass-through nodes) — hides the "Move to..." actions below, since these
    * nodes are structurally tied to their own container and can't be moved
@@ -55,16 +52,14 @@ export interface NodeContextMenuState {
 
 export interface NodeContextMenuProps {
   state: NodeContextMenuState;
-  /** Outposts/blueprints visible in the *current* view (i.e. `data.container` nodes other than `state.nodeId` itself) — candidate "move into" targets for a real node. */
+  /** Outposts visible in the *current* view (i.e. `data.container` nodes other than `state.nodeId` itself) — candidate "move into" targets for a real node. */
   siblingOutposts: Container[];
   /** The current view's own parent container, or `null` at root (root has nothing to move "up" into). */
   parentContainer: Container | null;
   onMoveToContainer: (nodeId: string, containerId: string) => void;
   onOpenOutpost: (containerId: string) => void;
   /** Opens the Cancel/Keep Contents/Delete Everything dialog — see `DeleteOutpostDialog.tsx`. Deletion itself no longer happens directly from this menu. */
-  onRequestDelete: (containerId: string, containerKind: "outpost" | "blueprint") => void;
-  /** Job 026: flips `Container.kind` between `"outpost"` and `"blueprint"` — the blueprint creation/conversion UI this job's own scope asks for ("an outpost can be marked/converted to `kind: 'blueprint'`"). */
-  onConvertContainerKind: (containerId: string, kind: "outpost" | "blueprint") => void;
+  onRequestDelete: (containerId: string, containerKind: "outpost") => void;
   /** Only needed to render `state.recipeRecord`'s quick settings section — unused for a container boundary node. */
   numberFormats: NumberFormats;
   onClose: () => void;
@@ -79,7 +74,6 @@ export function NodeContextMenu({
   onMoveToContainer,
   onOpenOutpost,
   onRequestDelete,
-  onConvertContainerKind,
   numberFormats,
   onClose,
 }: NodeContextMenuProps) {
@@ -138,7 +132,7 @@ export function NodeContextMenu({
                 <span className="text-[var(--text-secondary)]">Name</span>
                 <input
                   type="text"
-                  placeholder={state.containerKind === "outpost" ? "Outpost" : "Blueprint"}
+                  placeholder="Outpost"
                   className="w-32 rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1 text-[var(--text-primary)] placeholder:italic placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none"
                   {...containerTitleField}
                   onMouseDown={(event) => event.stopPropagation()}
@@ -156,22 +150,6 @@ export function NodeContextMenu({
             >
               Open {state.containerKind}
             </button>
-            {/* Job 026: blueprint creation/conversion — "an outpost can be marked/converted to kind: 'blueprint'" (jobs/026-blueprints.md's own scope wording), and reversible the same way. */}
-            <button
-              type="button"
-              className={itemClass}
-              onClick={() => {
-                onConvertContainerKind(state.nodeId, state.containerKind === "outpost" ? "blueprint" : "outpost");
-                onClose();
-              }}
-              title={
-                state.containerKind === "outpost"
-                  ? "Makes this outpost duplicable — put a limit on something inside to define one copy; the copy count is then computed from external demand."
-                  : "Converts back to a plain (non-duplicable) outpost."
-              }
-            >
-              Convert to {state.containerKind === "outpost" ? "blueprint" : "outpost"}
-            </button>
             <button
               type="button"
               className={`${itemClass} text-[var(--danger)] hover:bg-[var(--danger-soft)]`}
@@ -187,7 +165,7 @@ export function NodeContextMenu({
           <>
             {state.locked ? (
               <p className="px-2 py-1.5 text-xs text-[var(--text-muted)]">
-                This node is a permanent part of its outpost/blueprint and can't be moved or removed.
+                This node is a permanent part of its outpost and can't be moved or removed.
               </p>
             ) : (
               <>

@@ -4,7 +4,7 @@ A browser-based, real-time collaborative rebuild of [Satisfactory Modeler](https
 
 See [`PLAN.md`](./PLAN.md) for the full architecture and roadmap, and [`jobs/`](./jobs) for the job queue this project was built through.
 
-**All 29 jobs in the roadmap are complete** (see [`jobs/INDEX.md`](./jobs/INDEX.md)) — the full MVP (Phases 0-5: auth, canvas editing, persistence, calculators, multiplayer) plus Phase 6 (the Full calculator, priority nodes, relational projection) and Phase 7 (blueprints, polish, i18n, accessibility, and production-deploy readiness) have all landed. This is a real, working application, not a scaffold.
+**All 29 jobs in the roadmap are complete** (see [`jobs/INDEX.md`](./jobs/INDEX.md)) — the full MVP (Phases 0-5: auth, canvas editing, persistence, calculators, multiplayer) plus Phase 6 (the Full calculator, priority nodes, relational projection) and Phase 7 (polish, i18n, accessibility, and production-deploy readiness) have all landed. This is a real, working application, not a scaffold.
 
 ## Project structure
 

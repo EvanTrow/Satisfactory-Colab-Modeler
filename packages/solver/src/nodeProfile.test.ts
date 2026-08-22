@@ -155,9 +155,9 @@ describe("pinnedMachineCount: a null limit is always unpinned, in every mode", (
     expect(pinnedMachineCount(profile)).toEqual({});
   });
 
-  it("still returns unpinned ({}) for a null limit in ppm mode on a synthetic blueprint-compound node (AWESOME Sink/Dimensional Depot/Storage Container consumer)", () => {
+  it("still returns unpinned ({}) for a null limit in ppm mode on a synthetic compound node (AWESOME Sink/Dimensional Depot/Storage Container consumer)", () => {
     // Reproduces `sinkPassthrough.ts`'s/`storagePassthrough.ts`'s exact
-    // synthetic node shape: `blueprintCopyBasis` with a bookkeeping
+    // synthetic node shape: `syntheticCopyBasis` with a bookkeeping
     // per-copy rate, `limit: null`, `limitMode: "ppm"` (both modules
     // hardcode this pair for a freshly-connected, untouched sink/depot/
     // storage node).
@@ -170,7 +170,7 @@ describe("pinnedMachineCount: a null limit is always unpinned, in every mode", (
       limitMode: "ppm",
       clock: null,
       shards: 0,
-      blueprintCopyBasis: { perCopyRates: { "Iron Ore": "-1" }, perCopyPowerMW: 0 },
+      syntheticCopyBasis: { perCopyRates: { "Iron Ore": "-1" }, perCopyPowerMW: 0 },
     };
     const profile = buildNodeProfile(node, defaultGameData);
     expect(profile.syntheticPowerAtOneUnit).toBeDefined();

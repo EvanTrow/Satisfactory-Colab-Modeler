@@ -17,11 +17,9 @@
 // would make `partition.ts`'s components (and therefore the dirty-subgraph
 // cache) wrong in exactly the way this job's spec calls out as the single
 // biggest risk.
-import { defaultGameData, type GameData } from "@scm/gamedata";
-import { listContainers, listEdges, listNodes, type SfmDocument } from "@scm/ydoc";
-import type { SolverEdge, SolverMode, SolverNode, SolverSnapshot } from "@scm/solver";
+import { listEdges, listNodes, type SfmDocument } from "@scm/ydoc";
+import type { SolverEdge, SolverNode, SolverSnapshot } from "@scm/solver";
 
-import { collapseBlueprints, type BlueprintDisplayInfo } from "./blueprintCollapse";
 import { computeSinkConsumerNodes } from "./sinkPassthrough";
 import { computeSplurgerPassthroughEdges } from "./splurgerPassthrough";
 import { computeStorageBufferNodes } from "./storagePassthrough";
@@ -53,13 +51,13 @@ import { computeStorageBufferNodes } from "./storagePassthrough";
  * `kind: "storage"` (Storage Container) get the same "rewrite before the
  * filter runs" treatment, via `sinkPassthrough.ts`/`storagePassthrough.ts`
  * — except neither erases itself into a direct edge between two REAL
- * nodes; each synthesizes its own tiny single-part `blueprintCopyBasis`
- * compound node(s) (Job 026's escape hatch for a node with no real
- * gamedata recipe) to stand in for what it consumes/produces, since none of
- * these three kinds has a fixed recipe ratio the way a Splurger's
- * passthrough rewrite can lean on. See those two modules' headers for why.
+ * nodes; each synthesizes its own tiny single-part `syntheticCopyBasis`
+ * compound node(s) (an escape hatch for a node with no real gamedata
+ * recipe) to stand in for what it consumes/produces, since none of these
+ * three kinds has a fixed recipe ratio the way a Splurger's passthrough
+ * rewrite can lean on. See those two modules' headers for why.
  *
- * Outpost/Blueprint I/O rework: the Splurger/outpost-input/outpost-output
+ * Outpost I/O rework: the Splurger/outpost-input/outpost-output
  * rewrite runs FIRST, against the raw edges, and its OUTPUT (not the raw
  * edges) is what Sink/Storage/Depot's own rewrite sees. This ordering
  * matters for a chain like "producer -> outpost Outputs node -> AWESOME
@@ -82,9 +80,9 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   const splurgerNodes = allNodes.filter((node) => node.kind === "splurger");
   const sinkNodes = allNodes.filter((node) => node.kind === "sink" || node.kind === "depot");
   const storageNodes = allNodes.filter((node) => node.kind === "storage");
-  // Outpost/Blueprint rework: the two locked pass-through nodes every
-  // outpost/blueprint container gets (`canvas/outposts/io.ts`) are erased
-  // into direct recipe-to-recipe edges the exact same way a Splurger is —
+  // Outpost I/O rework: the two locked pass-through nodes every outpost
+  // container gets (`canvas/outposts/io.ts`) are erased into direct
+  // recipe-to-recipe edges the exact same way a Splurger is —
   // `computeSplurgerPassthroughEdges` is already fully generic (nothing in
   // it is actually Splurger-specific), so it's reused as-is rather than
   // duplicating a near-identical module. See `canvas/outposts/io.ts`'s
@@ -111,7 +109,7 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   const allEdges = listEdges(sfmDoc);
 
   // Splurger + outpost-input/outpost-output pass-through rewrite (Job 024,
-  // Outpost/Blueprint I/O rework) — run FIRST, see this function's own
+  // Outpost I/O rework) — run FIRST, see this function's own
   // header comment for why. Every edge incident to one of these nodes is
   // erased from the pool entirely (whether it produced a synthetic
   // replacement or was dangling/unsupported — see `splurgerPassthrough.ts`'s
@@ -137,7 +135,7 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   // Sink/Depot (Job's AWESOME Sink/Dimensional Depot addition) and Storage
   // Container rewrites — see this function's own header comment above and
   // `sinkPassthrough.ts`/`storagePassthrough.ts`'s headers. Each contributes
-  // its own synthetic `blueprintCopyBasis` compound nodes, which join
+  // its own synthetic `syntheticCopyBasis` compound nodes, which join
   // `representableNodeIds` alongside real recipe nodes so the edge filters
   // below don't drop the very edges just rewritten to target them. Fed
   // `effectiveEdges` (already Splurger/outpost-io-composed), not the raw
@@ -176,33 +174,4 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   const edges: SolverEdge[] = [...directEdges, ...specialtyEdges];
 
   return { nodes, edges };
-}
-
-/**
- * Job 026 (Blueprints, PLAN.md §10.3): `buildSolverSnapshot`'s raw,
- * container-agnostic flattening, THEN — Basic/Full mode only, and only when
- * the document actually has a `kind: "blueprint"` container — collapsing
- * each top-level blueprint's internal recipe subgraph into one compound
- * `SolverNode` via `blueprintCollapse.ts`'s `collapseBlueprints`. See that
- * module's header for the full "how §10.3 was resolved" writeup; this
- * function is just the one new call site in the existing snapshot-building
- * pipeline. Returns the (possibly collapsed) snapshot plus the metadata
- * `useSolver.ts` needs to expand the compound's solved result back into
- * real, correctly-scaled per-internal-node/edge entries for display —
- * `blueprints` is `[]` (and `snapshot` identical to `buildSolverSnapshot`'s
- * own output) for every document with no blueprint container at all, i.e.
- * zero behavior change for every project that predates this job.
- */
-export function buildSolverSnapshotWithBlueprints(
-  sfmDoc: SfmDocument,
-  mode: SolverMode,
-  gameData: GameData = defaultGameData,
-): { snapshot: SolverSnapshot; blueprints: readonly BlueprintDisplayInfo[]; skippedNestedBlueprintIds: readonly string[] } {
-  const rawSnapshot = buildSolverSnapshot(sfmDoc);
-  const containers = listContainers(sfmDoc);
-  if (!containers.some((c) => c.kind === "blueprint")) {
-    return { snapshot: rawSnapshot, blueprints: [], skippedNestedBlueprintIds: [] };
-  }
-  const nodes = listNodes(sfmDoc);
-  return collapseBlueprints(containers, nodes, rawSnapshot, mode, gameData);
 }

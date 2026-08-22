@@ -37,7 +37,7 @@ describe("buildSolverSnapshot", () => {
   it("includes only kind:recipe nodes", () => {
     const sfmDoc = createDocument();
     const root = "root";
-    addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+    addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
 
     const recipe = makeRecipeNode(sfmDoc, root, { title: "Recipe node" });
     addNode(sfmDoc, {
@@ -68,7 +68,7 @@ describe("buildSolverSnapshot", () => {
   it("maps NodeRecord fields onto SolverNode with the documented conventions", () => {
     const sfmDoc = createDocument();
     const root = "root";
-    addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+    addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
 
     makeRecipeNode(sfmDoc, root, {
       recipe: "Iron Ore",
@@ -95,7 +95,7 @@ describe("buildSolverSnapshot", () => {
   it("maps null recipe/machine to empty strings rather than passing null through", () => {
     const sfmDoc = createDocument();
     const root = "root";
-    addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+    addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
     makeRecipeNode(sfmDoc, root, { recipe: null, machine: null });
 
     const snapshot = buildSolverSnapshot(sfmDoc);
@@ -106,7 +106,7 @@ describe("buildSolverSnapshot", () => {
   it("includes an edge only when both endpoints are recipe nodes", () => {
     const sfmDoc = createDocument();
     const root = "root";
-    addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+    addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
 
     const a = makeRecipeNode(sfmDoc, root, { title: "A" });
     const b = makeRecipeNode(sfmDoc, root, { title: "B" });
@@ -142,7 +142,7 @@ describe("buildSolverSnapshot", () => {
   it("builds the real underlying graph across container boundaries, not a container-scoped slice — the same result regardless of which outpost each node currently lives in", () => {
     const sfmDoc = createDocument();
     const root = "root";
-    addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+    addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
     const outpost = addContainer(sfmDoc, {
       kind: "outpost",
       parentId: root,
@@ -150,7 +150,6 @@ describe("buildSolverSnapshot", () => {
       color: "#000",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
 
     // `a` lives in the outpost, `b` lives at root — a real boundary-crossing
@@ -193,7 +192,7 @@ describe("buildSolverSnapshot", () => {
     it("never turns a Splurger itself into a SolverNode", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
       const splurger = makeSplurger(sfmDoc, root);
       const snapshot = buildSolverSnapshot(sfmDoc);
       expect(snapshot.nodes.some((n) => n.id === splurger.id)).toBe(false);
@@ -202,7 +201,7 @@ describe("buildSolverSnapshot", () => {
     it("rewrites a 1-input/N-output Splurger into direct recipe-to-recipe edges carrying the assigned tier", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
 
       const producer = makeRecipeNode(sfmDoc, root, { title: "Producer" });
       const consumerA = makeRecipeNode(sfmDoc, root, { title: "ConsumerA" });
@@ -259,7 +258,7 @@ describe("buildSolverSnapshot", () => {
     it("excludes a multi-input/multi-output Splurger's edges from the snapshot entirely rather than guessing", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
 
       const producerA = makeRecipeNode(sfmDoc, root, { title: "ProducerA" });
       const producerB = makeRecipeNode(sfmDoc, root, { title: "ProducerB" });
@@ -324,7 +323,7 @@ describe("buildSolverSnapshot", () => {
     it("never turns a Sink itself into a SolverNode", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
       const sink = makeSink(sfmDoc, root);
       const snapshot = buildSolverSnapshot(sfmDoc);
       expect(snapshot.nodes.some((n) => n.id === sink.id)).toBe(false);
@@ -333,7 +332,7 @@ describe("buildSolverSnapshot", () => {
     it("caps the upstream producer's rate at the sink's own ppm limit", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
 
       const producer = makeRecipeNode(sfmDoc, root, { title: "Producer" });
       const sink = makeSink(sfmDoc, root, { limit: "10", limitMode: "ppm" });
@@ -358,7 +357,7 @@ describe("buildSolverSnapshot", () => {
     it("consumes each distinct connected part independently, at the sink's own limit each", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
 
       const ironProducer = makeRecipeNode(sfmDoc, root, { title: "Iron", recipe: "Iron Ingot", machine: "Smelter" });
       const copperProducer = makeRecipeNode(sfmDoc, root, { title: "Copper", recipe: "Copper Ingot", machine: "Smelter" });
@@ -400,7 +399,7 @@ describe("buildSolverSnapshot", () => {
     it("never turns a Storage Container itself into a SolverNode", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
       const storage = makeStorage(sfmDoc, root);
       const snapshot = buildSolverSnapshot(sfmDoc);
       expect(snapshot.nodes.some((n) => n.id === storage.id)).toBe(false);
@@ -409,7 +408,7 @@ describe("buildSolverSnapshot", () => {
     it("decouples input from output — a pinned upstream producer and a differently-pinned downstream consumer both resolve independently, with no forced conservation across the storage node", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
 
       const producer = makeRecipeNode(sfmDoc, root, { title: "Producer", limit: "5", limitMode: "machines" });
       const consumer = makeRecipeNode(sfmDoc, root, { title: "Consumer", recipe: "Iron Rod", machine: "Constructor", limit: "3", limitMode: "machines" });
@@ -430,7 +429,7 @@ describe("buildSolverSnapshot", () => {
     it("routes multiple producers of the same part into one shared consumer node on the input side", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
 
       // Basic mode has no splitter/merger *preference* — a shared consumer's
       // total demand is even-split across its sibling producer edges
@@ -455,7 +454,7 @@ describe("buildSolverSnapshot", () => {
     });
   });
 
-  describe("Outpost/Blueprint rework: outpost-input/outpost-output pass-through", () => {
+  describe("Outpost I/O rework: outpost-input/outpost-output pass-through", () => {
     function makeIoNode(sfmDoc: SfmDocument, containerId: string, kind: "outpost-input" | "outpost-output", id: string) {
       return addNode(sfmDoc, {
         id,
@@ -482,8 +481,8 @@ describe("buildSolverSnapshot", () => {
     it("never turns an outpost-input/outpost-output node itself into a SolverNode", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
-      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
+      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0 });
       const inputs = makeIoNode(sfmDoc, outpost.id, "outpost-input", "io-in:" + outpost.id);
 
       const snapshot = buildSolverSnapshot(sfmDoc);
@@ -493,8 +492,8 @@ describe("buildSolverSnapshot", () => {
     it("rewrites a chain crossing through the Inputs and Outputs nodes into one direct recipe-to-recipe edge, exactly as if the outpost weren't there", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
-      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
+      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0 });
 
       const externalProducer = makeRecipeNode(sfmDoc, root, { title: "External producer" });
       const internalConsumer = makeRecipeNode(sfmDoc, outpost.id, { title: "Internal consumer", recipe: "Iron Plate", machine: "Constructor" });
@@ -536,8 +535,8 @@ describe("buildSolverSnapshot", () => {
       // BOTH endpoints representable.
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
-      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
+      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0 });
 
       const producer = makeRecipeNode(sfmDoc, outpost.id, { title: "Producer", limit: "2", limitMode: "machines" });
       const outputs = makeIoNode(sfmDoc, outpost.id, "outpost-output", "io-out:" + outpost.id);
@@ -591,8 +590,8 @@ describe("buildSolverSnapshot", () => {
     it("splitting an outpost output between a real recipe AND a Sink solves BOTH branches (not just one)", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
-      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
+      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0 });
 
       const producer = makeRecipeNode(sfmDoc, outpost.id, { title: "Producer", limit: "1", limitMode: "machines" });
       const outputs = makeIoNode(sfmDoc, outpost.id, "outpost-output", "io-out:" + outpost.id);
@@ -638,8 +637,8 @@ describe("buildSolverSnapshot", () => {
     it("composes the same chain into a Storage Container", () => {
       const sfmDoc = createDocument();
       const root = "root";
-      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
-      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0, copiesLimit: null });
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
+      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0 });
 
       const producer = makeRecipeNode(sfmDoc, outpost.id, { title: "Producer", limit: "2", limitMode: "machines" });
       const outputs = makeIoNode(sfmDoc, outpost.id, "outpost-output", "io-out:" + outpost.id);

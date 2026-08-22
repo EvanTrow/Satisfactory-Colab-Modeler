@@ -46,7 +46,6 @@ function makeFixture() {
     color: "#4b5563",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   const outpost = addContainer(sfmDoc, {
     kind: "outpost",
@@ -55,7 +54,6 @@ function makeFixture() {
     color: "#4b5563",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   return { sfmDoc, root, outpost };
 }
@@ -109,7 +107,6 @@ describe("deleteOutpost", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
 
     deleteOutpost(sfmDoc, outpost.id);
@@ -169,7 +166,6 @@ describe("deleteOutpostWithContents", () => {
       color: "#4b5563",
       x: 0,
       y: 0,
-      copiesLimit: null,
     });
     const a = addNode(sfmDoc, baseNode(outpost.id, "A"));
     const b = addNode(sfmDoc, baseNode(nested.id, "B"));

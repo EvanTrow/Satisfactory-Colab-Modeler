@@ -22,7 +22,7 @@ What it lacks is collaboration. It is a single-user desktop app whose sharing st
 | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | `resources/game_data/game_data.json`                         | 136 KB. `Machines` (32), `MultiMachines` (7), `Parts` (170), `Recipes` (332)                     | **Directly reusable** as the game database                                                                 |
 | `resources/images/icons/`                                    | 204 PNGs — one per part and machine, plus `Conveyor_Merger` and `Smart_Splitter`                 | **Directly reusable** as node/part icons                                                                   |
-| `resources/images/custom_icons/`                             | `anypart.png`, `Blueprint.png`, `Outpost.png`                                                    | Icons for the three abstract node types                                                                    |
+| `resources/images/custom_icons/`                             | `anypart.png`, `Outpost.png`                                                                     | Icons for the abstract node types                                                                           |
 | `resources/images/ui_icons/`                                 | 43 UI glyphs (`clockspeed`, `somersloop`, `waypoints`, `limit`, `align`, `summary`, `popout`, …) | Reference for the toolbar/feature surface; we'll likely use a modern icon set instead                      |
 | `resources/languages/languages.json` + `translations/*.json` | 55 locales; `en-US.json` has ~600 keys                                                           | **The single most valuable file** — the complete UI string table, which reveals the entire feature surface |
 
@@ -64,7 +64,7 @@ Findings that shape the implementation:
 
 ### Feature surface revealed by `en-US.json`
 
-The string table exposes the whole app without needing the binary. Highlights: four solver modes with help text; outposts and blueprints; priority splitters/mergers/splurgers; storage-container fill modes; auto-round; waypoints with documented double-click gestures; per-location number formatting (fraction vs decimal, digits, rounding mode); scoped operations (`Everything` / `Current Outpost` / `Current Outpost & Below` / `Selected` / `Selected & Below` / `Selected + Connected`); red/orange validity highlighting; undo/redo; and a summary panel of made/used/unmade/unused/sunk/points/power.
+The string table exposes the whole app without needing the binary. Highlights: four solver modes with help text; outposts and blueprints (this reimplementation does not carry blueprints forward); priority splitters/mergers/splurgers; storage-container fill modes; auto-round; waypoints with documented double-click gestures; per-location number formatting (fraction vs decimal, digits, rounding mode); scoped operations (`Everything` / `Current Outpost` / `Current Outpost & Below` / `Selected` / `Selected & Below` / `Selected + Connected`); red/orange validity highlighting; undo/redo; and a summary panel of made/used/unmade/unused/sunk/points/power.
 
 **Sources:** [itch.io page](https://satisfactorymodeler.itch.io/satisfactorymodeler) · [Official docs](https://satisfactorymodeler.github.io/docs/) · [Quick Start](https://satisfactorymodeler.github.io/docs/quick_start/quick_start.html) · [Specialty Machines](https://satisfactorymodeler.github.io/docs/specialty_machines/specialty_machines.html) · [Calculators](https://satisfactorymodeler.github.io/docs/calculators/calculators.html) · [FAQ](https://satisfactorymodeler.github.io/docs/faq/faq.html)
 
@@ -85,11 +85,10 @@ Characterized from the official docs plus the string table. **This is the part w
 | Auto-round    | Toggle that continuously solves clock speed so machine count is a whole number. Manually touching clock or limit switches it off. Signalled by black field backgrounds.                                                           |
 | Waypoints     | Double-left-click a connection label or waypoint to add one; double-right-click a waypoint to delete it; double-right-click a bare label to delete the connection. Waypoints are draggable and stay put when their machine moves. |
 | Outposts      | Nested containers, "like folders." Drill in to edit contents; from outside, the outpost is a single node with input/output ports.                                                                                                 |
-| Blueprints    | An outpost whose contents are _duplicable_. Put a limit on something inside to define one copy; the blueprint's calculated value is how many copies to build.                                                                     |
 
 **Critical modeling philosophy** (stated in Planning Basics): the tool is _a visual calculator, not a layout planner_. The correct usage is **one node per recipe**, letting the solver compute quantities — not one node per physical machine. This keeps node counts moderate (tens to low hundreds per outpost), which is what makes DOM-based rendering viable.
 
-**Specialty node types:** Outpost · Blueprint · Splurger (explicit splitter/merger; usually unnecessary since "all connection points act as splitters or mergers by default") · Priority Splurger / Priority Splitter / Priority Merger (two priority tiers — top drains first, bottom takes overflow) · AWESOME Sink (with belt-tier cap) · Storage Container (four modes: Partially Full / Full / Empty / Input = Output) · Dimensional Depot Uploader · Space Elevator phases · Any Part (wildcard).
+**Specialty node types:** Outpost · Splurger (explicit splitter/merger; usually unnecessary since "all connection points act as splitters or mergers by default") · Priority Splurger / Priority Splitter / Priority Merger (two priority tiers — top drains first, bottom takes overflow) · AWESOME Sink (with belt-tier cap) · Storage Container (four modes: Partially Full / Full / Empty / Input = Output) · Dimensional Depot Uploader · Space Elevator phases · Any Part (wildcard).
 
 **The four calculators:**
 
@@ -118,7 +117,7 @@ Characterized from the official docs plus the string table. **This is the part w
 
 ### Later phases
 
-Full calculator with splitter/merger priority · blueprints (duplicable outposts) · auto-round mode · version history with restore and named snapshots · `.sfmd` import/export (requires reverse-engineering the format — see Open Questions) · 55-locale i18n (string tables are already in the repo) · comments/annotations on nodes · minimap · tier-gated recipe filtering by save progression · custom node colors and styles · connection style options (Direct/Curves/Horizontal/Vertical) · pop-out summary windows · public project gallery.
+Full calculator with splitter/merger priority · auto-round mode · version history with restore and named snapshots · `.sfmd` import/export (requires reverse-engineering the format — see Open Questions) · 55-locale i18n (string tables are already in the repo) · comments/annotations on nodes · minimap · tier-gated recipe filtering by save progression · custom node colors and styles · connection style options (Direct/Curves/Horizontal/Vertical) · pop-out summary windows · public project gallery.
 
 ### Explicitly out of scope
 
@@ -279,7 +278,7 @@ Y.Doc
 │                         spaceElevatorMultiplier, snapMachines, gridMachine{x,y},
 │                         snapWaypoints, gridWaypoint{x,y}, numberFormats, connectionStyle }
 ├─ containers  Y.Map<containerId, Y.Map>
-│     { id, kind: 'root'|'outpost'|'blueprint', parentId, title, color, x, y, copiesLimit }
+│     { id, kind: 'root'|'outpost', parentId, title, color, x, y }
 ├─ nodes       Y.Map<nodeId, Y.Map>
 │     { id, containerId, kind, recipe, machine, x, y, title, color,
 │       limit, limitMode: 'machines'|'ppm', clock, autoRound, shards,
@@ -456,7 +455,7 @@ Two boundaries worth defending:
 | **4 · Calculators**        | `packages/solver`: **Manual**, **Basic**, **None** over exact rationals. Cancellable Web Worker + debounce + dirty-subgraph caching. Summary panel with scope selector. Red/orange value highlighting. Number-format settings.                                                                                                                                     | Golden-value tests pass against known Satisfactory ratios; a ~200-node factory solves under 200 ms.        |
 | **5 · Multiplayer**        | Hocuspocus server, ticket auth, roles, share-by-link + invites, presence avatars/cursors/selection, soft field indicators, integrity reducer on both ends, connection-status UI.                                                                                                                                                                                   | Two browsers edit one factory concurrently; concurrent delete-vs-connect converges with no dangling edges. |
 | **6 · Full calculator**    | Splitter/merger even-split preference and priority splitters/mergers as an exact-rational LP. Priority Splurger node type. Progress + STOP UI. Relational projection tables.                                                                                                                                                                                       | Full-mode results match the desktop tool on a shared benchmark set.                                        |
-| **7 · Polish & deploy**    | Blueprints, auto-round, connection styles, minimap, i18n wiring (55 locales already in `resources/`), accessibility pass, production deploy, backups, error tracking.                                                                                                                                                                                              | Deployed, monitored, backed up.                                                                            |
+| **7 · Polish & deploy**    | Auto-round, connection styles, minimap, i18n wiring (55 locales already in `resources/`), accessibility pass, production deploy, backups, error tracking.                                                                                                                                                                                              | Deployed, monitored, backed up.                                                                            |
 
 Phases 0–5 are the MVP. A rough sizing, assuming one developer: Phase 2 and Phase 5 are the two large ones, Phase 6 is the highest-variance.
 
@@ -481,9 +480,8 @@ Still open — none block Phase 0, but the starred ones should be settled before
 
 1. **★ Guest access (needed by Phase 1).** Ferrumium offers "try without registering." Do we want anonymous projects that later claim to a Discord account? It's cheap now (a nullable `owner_id` plus a claim flow) and awkward to retrofit once sharing exists.
 2. **★ Node visual density (needed by Phase 2).** Satisfactory Modeler's nodes are dense — every part row shows a live number. Ferrumium's are cleaner cards. Do you want the full dense readout by default, or a compact node that expands on selection/hover? This is the single biggest UI-feel decision.
-3. **★ Blueprint semantics (Phase 7, but affects the Phase 2 schema).** Blueprints multiply their contents by a solved copy count. Confirm the copy count should participate in the same solve rather than being a post-multiply — it changes whether the container needs a variable in the solver.
-4. **`.sfmd` import.** Would let people bring existing desktop models over, and would be the strongest possible adoption lever. But the format is undocumented and the app is closed-source, so it means reverse-engineering a binary/serialized format from sample files. Worth it only if you have models to migrate — and I'd want a few sample `.sfmd` files to assess feasibility before committing.
-5. **Game-data updates.** `game_data.json` is versioned per Satisfactory patch. When it changes, existing projects may reference recipes that no longer exist. Pin each project to a `game_data_version` (already in the schema) and offer an explicit migration, or auto-upgrade and flag broken nodes?
-6. **Real-time comments/annotations.** In scope as a later phase, or not wanted?
-7. **Attribution footer.** Community tools conventionally carry a short "not affiliated with Coffee Stain Studios" line alongside game-asset attribution. Want one?
+3. **`.sfmd` import.** Would let people bring existing desktop models over, and would be the strongest possible adoption lever. But the format is undocumented and the app is closed-source, so it means reverse-engineering a binary/serialized format from sample files. Worth it only if you have models to migrate — and I'd want a few sample `.sfmd` files to assess feasibility before committing.
+4. **Game-data updates.** `game_data.json` is versioned per Satisfactory patch. When it changes, existing projects may reference recipes that no longer exist. Pin each project to a `game_data_version` (already in the schema) and offer an explicit migration, or auto-upgrade and flag broken nodes?
+5. **Real-time comments/annotations.** In scope as a later phase, or not wanted?
+6. **Attribution footer.** Community tools conventionally carry a short "not affiliated with Coffee Stain Studios" line alongside game-asset attribution. Want one?
 8. **Project scale ceiling.** What's the largest factory you'd expect anyone to model? It sets the performance budget and decides whether the level-of-detail fallback is Phase 2 work or Phase 7 work.

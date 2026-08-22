@@ -64,7 +64,7 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
     if (!enabled) return;
 
     /**
-     * Outpost/Blueprint rework: excludes the two locked `outpost-input`/
+     * Outpost rework: excludes the two locked `outpost-input`/
      * `outpost-output` pass-through nodes (`outposts/io.ts`'s
      * `LOCKED_NODE_KINDS`) from every selection-driven action this hook
      * performs (copy/cut/delete) — they're structurally tied to their own
@@ -120,8 +120,8 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
      * won't match anything there, so a selection that includes an outpost
      * silently copies only the real nodes in it. Copying/pasting an outpost
      * itself (with its contents) isn't built here — see
-     * jobs/013-outposts.md's Handoff notes for why that's left to
-     * Blueprints (Job 026) rather than this job's own clipboard.
+     * jobs/013-outposts.md's Handoff notes for why that's left out of
+     * this job's own clipboard scope.
      */
     function writeSelectionToClipboard(event: ClipboardEvent): boolean {
       const payload = buildClipboard(sfmDoc, selectedNodeIds());

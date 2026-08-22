@@ -39,7 +39,7 @@ import * as Y from "yjs";
 import { createDocument, listContainers, listEdges, listNodes, type SfmDocument } from "./document";
 import { isNoopRepair, runIntegrityReducer } from "./integrity";
 import { addContainer, addEdge, addNode, removeContainer, removeNode, updateNode } from "./mutations";
-import type { ContainerKind, NodeRecord } from "./schema";
+import type { NodeRecord } from "./schema";
 
 // ---------------------------------------------------------------------------
 // Deterministic PRNG (mulberry32) — every sequence is seeded by its own
@@ -233,15 +233,13 @@ function performRandomOp(sfmDoc: SfmDocument, rng: () => number): void {
     }
     case "addContainer": {
       const parent = pick(containers, rng);
-      const containerKind: ContainerKind = rng() < 0.8 ? "outpost" : "blueprint";
       addContainer(sfmDoc, {
-        kind: containerKind,
+        kind: "outpost",
         parentId: parent.id,
         title: "Outpost",
         color: "#4b5563",
         x: randomInt(rng, 1000),
         y: randomInt(rng, 1000),
-        copiesLimit: containerKind === "blueprint" ? randomInt(rng, 5) : null,
       });
       return;
     }
@@ -299,7 +297,6 @@ function createSeedBytes(): Uint8Array {
     color: "#4b5563",
     x: 0,
     y: 0,
-    copiesLimit: null,
   });
   return Y.encodeStateAsUpdate(seed.doc);
 }

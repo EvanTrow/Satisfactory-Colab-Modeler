@@ -88,7 +88,6 @@ export function addContainer(
     map.set("color", input.color);
     map.set("x", input.x);
     map.set("y", input.y);
-    map.set("copiesLimit", input.copiesLimit);
     sfmDoc.containers.set(id, map);
     result = containerToPlain(map);
   }, origin);

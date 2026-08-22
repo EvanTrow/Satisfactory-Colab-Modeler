@@ -236,8 +236,8 @@ export function resolveEdgeEndpoints(sfmDoc: SfmDocument, connection: Connection
     return null;
   }
 
-  // Outpost/Blueprint rework: dragging a connection straight onto the outer
-  // boundary card (`OutpostNode.tsx`/`BlueprintNode.tsx`) reports that
+  // Outpost rework: dragging a connection straight onto the outer
+  // boundary card (`OutpostNode.tsx`) reports that
   // card's own flow-node id, which IS the `Container` id (see
   // `useYjsSync.ts`'s `containerToOutpostFlowNode`). Redirect it to the
   // container's own locked pass-through node — the Outputs node when it's

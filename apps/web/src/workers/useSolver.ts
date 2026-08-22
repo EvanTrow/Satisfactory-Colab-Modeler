@@ -34,9 +34,7 @@ import { getSettings, listEdges, listNodes, type SfmDocument } from "@scm/ydoc";
 import type { EdgeSolveResult, NodeSolveResult, SolveResult, SolverMode } from "@scm/solver";
 import { create } from "zustand";
 
-import { buildSolverSnapshotWithBlueprints } from "./buildSnapshot";
-import { expandBlueprintResults, type BlueprintDisplayInfo } from "./blueprintCollapse";
-import { mergeComponentResults } from "./mergeResults";
+import { buildSolverSnapshot } from "./buildSnapshot";
 import type { HostToWorkerMessage, WorkerToHostMessage } from "./protocol";
 import { originalEdgeIdFromSinkEdgeId } from "./sinkPassthrough";
 import { computePassthroughEdgeAliases } from "./splurgerPassthrough";
@@ -47,26 +45,14 @@ const EMPTY_ALIASES = new Map<string, string>();
 
 interface SolveStoreState extends SolveHostState {
   /**
-   * Job 026: the current document's blueprint collapse metadata — updated
-   * SYNCHRONOUSLY on every `resync()` (independent of the async
-   * debounce/worker round trip `result` goes through), so it always
-   * reflects the LATEST doc state even while `result` is still catching up.
-   * See `blueprintCollapse.ts`'s `expandBlueprintResults` for how the two
-   * are combined; briefly pairing a fresh `blueprints` with a stale `result`
-   * during the debounce window is the same, already-tolerated kind of
-   * staleness `staleness: "stale-recomputing"` already signals elsewhere.
-   */
-  blueprints: readonly BlueprintDisplayInfo[];
-  /**
-   * Outpost/Blueprint I/O rework: original-edge-id -> synthetic-edge-id,
-   * for every Splurger AND outpost-input/outpost-output edge this rewrite
-   * could unambiguously alias (`splurgerPassthrough.ts`'s
-   * `computePassthroughEdgeAliases`) — updated synchronously alongside
-   * `blueprints`, same reasoning as that field's own doc comment.
+   * Outpost I/O rework: original-edge-id -> synthetic-edge-id, for every
+   * Splurger AND outpost-input/outpost-output edge this rewrite could
+   * unambiguously alias (`splurgerPassthrough.ts`'s
+   * `computePassthroughEdgeAliases`) — updated synchronously, ahead of the
+   * scheduler's own async debounce/worker round trip for `result`.
    */
   passthroughAliases: ReadonlyMap<string, string>;
   setState: (state: SolveHostState) => void;
-  setBlueprints: (blueprints: readonly BlueprintDisplayInfo[]) => void;
   setPassthroughAliases: (aliases: ReadonlyMap<string, string>) => void;
 }
 
@@ -75,10 +61,8 @@ function createSolveStore() {
     result: null,
     staleness: "fresh",
     fullProgress: null,
-    blueprints: [],
     passthroughAliases: EMPTY_ALIASES,
     setState: (state) => set(state),
-    setBlueprints: (blueprints) => set({ blueprints }),
     setPassthroughAliases: (passthroughAliases) => set({ passthroughAliases }),
   }));
 }
@@ -140,7 +124,7 @@ function indexEdges(
     const originalId = originalEdgeIdFromSinkEdgeId(e.edgeId) ?? originalEdgeIdFromStorageEdgeId(e.edgeId);
     if (originalId && !map.has(originalId)) map.set(originalId, e);
   }
-  // Outpost/Blueprint I/O rework (and, incidentally, the same pre-existing
+  // Outpost I/O rework (and, incidentally, the same pre-existing
   // gap for a plain Splurger): `passthroughAliases` only ever contains an
   // UNAMBIGUOUS original-id -> synthetic-id mapping (see
   // `computePassthroughEdgeAliases`'s header) — a genuinely multi-way edge
@@ -228,18 +212,8 @@ export function useSolver(sfmDoc: SfmDocument, diagnostics?: UseSolverDiagnostic
         settingsMode === "manual" || settingsMode === "basic" || settingsMode === "full"
           ? settingsMode
           : "none";
-      // Job 026: the blueprint collapse step is synchronous (a plain
-      // `solve()` call per blueprint, bounded by that blueprint's own size —
-      // see `blueprintCollapse.ts`) and, for the overwhelmingly common case
-      // of a document with NO blueprint container at all, an exact no-op
-      // (`snapshot`/`blueprints` are `buildSolverSnapshot`'s own untouched
-      // output) — zero behavior change for every project that predates this
-      // job. `blueprints` updates the store SYNCHRONOUSLY, ahead of the
-      // scheduler's own async debounce/worker round trip for `result` — see
-      // `SolveStoreState.blueprints`'s own doc comment for why that's safe.
-      const { snapshot, blueprints } = buildSolverSnapshotWithBlueprints(sfmDoc, mode);
-      useStore.getState().setBlueprints(blueprints);
-      // Outpost/Blueprint I/O rework: computed independently of the
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      // Outpost I/O rework: computed independently of the
       // snapshot build above (same underlying `computeSplurgerPassthroughEdges`
       // call, just also asking for its `sourceEdgeIds`) — cheap, pure, and
       // kept as its own step rather than threading a new field through
@@ -258,44 +232,31 @@ export function useSolver(sfmDoc: SfmDocument, diagnostics?: UseSolverDiagnostic
     // `containerId` — see this module's header. `sfmDoc.settings.observe`
     // (shallow, matching `useSettings.ts`'s own reasoning) is enough since
     // `updateSettings` always replaces `solverMode` as a whole top-level
-    // key, never mutates in place. `sfmDoc.containers.observeDeep` (Job 026)
-    // is new — a blueprint's `kind`/`copiesLimit`, or a node moving into/out
-    // of one, must re-trigger the collapse step, and neither lives under
-    // `sfmDoc.nodes`/`.edges`.
+    // key, never mutates in place. `sfmDoc.containers` isn't observed here —
+    // container membership (which outpost a node lives in) doesn't affect
+    // `buildSolverSnapshot`'s output at all, see that module's header.
     sfmDoc.nodes.observeDeep(resync);
     sfmDoc.edges.observeDeep(resync);
-    sfmDoc.containers.observeDeep(resync);
     sfmDoc.settings.observe(resync);
 
     return () => {
       sfmDoc.nodes.unobserveDeep(resync);
       sfmDoc.edges.unobserveDeep(resync);
-      sfmDoc.containers.unobserveDeep(resync);
       sfmDoc.settings.unobserve(resync);
       scheduler.dispose();
       if (schedulerRef.current === scheduler) schedulerRef.current = null;
     };
   }, [sfmDoc, useStore]);
 
-  const blueprints = useStore((s) => s.blueprints);
   const passthroughAliases = useStore((s) => s.passthroughAliases);
-  const expandedResult = useMemo(
-    () => (result ? expandBlueprintResults(result, blueprints, mergeComponentResults) : result),
-    [result, blueprints],
-  );
-  const nodeResultById = useMemo(() => indexNodes(expandedResult), [expandedResult]);
+  const nodeResultById = useMemo(() => indexNodes(result), [result]);
   const edgeResultById = useMemo(
-    () => indexEdges(expandedResult, passthroughAliases),
-    [expandedResult, passthroughAliases],
+    () => indexEdges(result, passthroughAliases),
+    [result, passthroughAliases],
   );
   const fullProgress = useStore((s) => s.fullProgress);
 
-  // Job 026: `result` itself is the EXPANDED result (blueprint compound
-  // nodes' summary contribution excluded in favor of their real, scaled
-  // internal members — see `expandBlueprintResults`'s own doc comment) so
-  // Job 019's summary panel reads correct made/used/power/sink totals for a
-  // document with blueprints, not just the per-node/per-edge lookup maps.
-  return { result: expandedResult, staleness, fullProgress, nodeResultById, edgeResultById, stop };
+  return { result, staleness, fullProgress, nodeResultById, edgeResultById, stop };
 }
 
 export type { SolveHostState, SolveStaleness };
