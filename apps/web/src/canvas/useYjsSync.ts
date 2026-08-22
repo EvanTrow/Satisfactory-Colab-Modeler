@@ -43,7 +43,7 @@
 //   3. Edges that cross a container boundary are *projected* onto those
 //      synthetic nodes (`outposts/visibleGraph.ts`'s `computeVisibleEdges`)
 //      instead of reaching into a container that isn't currently rendered.
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { create } from "zustand";
 
 import {
@@ -296,8 +296,86 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
   const edges = useStore((state) => state.edges);
   const containers = useStore((state) => state.containers);
 
+  // The other half of the object-identity cache below (`syncAll`'s
+  // `nodeCache`/`outpostCache`) — this one persists for this hook's whole
+  // lifetime (not just one `containerId`), since a node's rendered
+  // dimensions don't depend on which container is currently being viewed.
+  // React Flow reports a node's actual measured size back through
+  // `onNodesChange`'s `type: "dimensions"` change (fired once its
+  // `ResizeObserver` first measures the DOM element) — this is the ONLY
+  // place that value ever reaches this file, since `CanvasNode` objects
+  // *we* construct never carry a `.measured` field themselves. Read by
+  // `syncAll` below so a freshly-rebuilt node (its position moved, so it's
+  // a new object — see that cache's own header comment) can still carry
+  // its already-known size forward. This matters far beyond a paint
+  // optimization: `@xyflow/system`'s `adoptUserNodes`/`parseHandles`
+  // treats `!userNode.measured` as "never measured, discard whatever
+  // `handleBounds` (the actual per-port coordinates every edge's endpoint
+  // resolution depends on) I had for this id" — so *every* node whose
+  // position changes, not just ones genuinely new, has its handle
+  // positions wiped and must be fully rediscovered via `ResizeObserver`
+  // from scratch. That's fine for one node moving alone (the rediscovery
+  // finishes within a frame), but a multi-selection drag of several
+  // machines at once resets all of them together, and React Flow's own
+  // recovery for that many at once isn't reliable — confirmed by direct
+  // testing: nodes come back, but some edges permanently fail to resolve
+  // their endpoints and never render again until a full page reload, even
+  // though the underlying document was never actually missing anything.
+  // Carrying `measured` forward here means a mere position change no
+  // longer looks like "never measured" at all, so `parseHandles` falls
+  // through to reusing the *previous* `handleBounds` instead of discarding
+  // it — correctly, since moving a node doesn't change where its handles
+  // sit relative to its own card.
+  const measuredByIdRef = useRef<Map<string, { width?: number; height?: number }>>(new Map());
+
   useEffect(() => {
     const { setNodes, setEdges, setContainers } = useStore.getState();
+
+    // Object-identity cache, keyed by id — reused across every `syncAll()`
+    // call for as long as this effect stays attached (fresh per `sfmDoc`/
+    // `containerId`, same lifetime as the Zustand store above). Without
+    // this, every single call rebuilt a brand-new `CanvasNode`/`CanvasEdge`
+    // object for literally every node/edge on *every* doc change, even ones
+    // whose own data hadn't changed at all — harmless in isolation, but
+    // React Flow's own `adoptUserNodes` (`@xyflow/system`) only preserves a
+    // node's already-measured dimensions across a `nodes` prop update when
+    // it sees the *exact same object reference* for that id; a fresh object
+    // every time makes it treat every node as brand-new and re-measure it
+    // via `ResizeObserver` from scratch, unconditionally, on every change —
+    // including ones an entirely different node caused. Under a fast,
+    // rapid-fire sequence of updates (a quick node drag broadcasting its
+    // final position, or several in a row) that re-measurement can never
+    // catch up before the next reset arrives, and every node gets stuck
+    // permanently `visibility: hidden` (React Flow's own "not measured yet"
+    // style) until a full page reload — this is what was reported as a
+    // dragged node's connection, then the node itself, vanishing for a
+    // public read-only viewer specifically: that view's `renderedNodes`/
+    // `renderedEdges` (`CanvasView.tsx`) unconditionally rebuild on every
+    // render to inject `readOnly`, doing strictly more per-update work than
+    // an editor's (which gets a cheap early-return whenever nothing's being
+    // remotely dragged), making it the first to fall behind and never
+    // recover. Reusing the previous object whenever a node/edge's own
+    // *content* (and carried-over `selected` state) is unchanged means only
+    // the node(s) that actually changed ever need re-measuring, so the
+    // ResizeObserver dance stays proportional to what actually moved instead
+    // of the whole canvas, every time.
+    const nodeCache = new Map<string, { record: NodeRecord; selected: boolean; flowNode: CanvasNode }>();
+    const outpostCache = new Map<
+      string,
+      { container: Container; ports: DerivedOutpostPort[]; selected: boolean; flowNode: CanvasNode }
+    >();
+    const edgeCache = new Map<string, { projected: ProjectedEdge; selected: boolean; flowEdge: CanvasEdge }>();
+
+    // `nodeToPlain`/`edgeToPlain`/`containerToPlain` already produce plain
+    // JSON-serializable objects (no functions/`Y.*` instances), so a
+    // `JSON.stringify` comparison is a correct (if not the most efficient
+    // possible) deep-equality check — plenty cheap at the "tens to low
+    // hundreds of nodes" scale this module's own header comment already
+    // budgets for, same tolerance `syncAll`'s full-resync-on-any-change
+    // discipline itself relies on.
+    function sameContent(a: unknown, b: unknown): boolean {
+      return JSON.stringify(a) === JSON.stringify(b);
+    }
 
     // Job 012's `.observeDeep` full-resync-on-any-change discipline,
     // unchanged in spirit — every doc mutation anywhere (not just ones
@@ -330,17 +408,58 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
       const childContainers = allContainers.filter((container) => container.parentId === containerId);
 
       const flowNodes: CanvasNode[] = [
-        ...directNodes.map((node) => nodeRecordToFlowNode(node, previouslySelectedNodes.has(node.id))),
+        ...directNodes.map((node) => {
+          const selected = previouslySelectedNodes.has(node.id);
+          const cached = nodeCache.get(node.id);
+          if (cached && cached.selected === selected && sameContent(cached.record, node)) {
+            return cached.flowNode;
+          }
+          const flowNode = nodeRecordToFlowNode(node, selected);
+          const measured = measuredByIdRef.current.get(node.id);
+          if (measured) flowNode.measured = measured;
+          nodeCache.set(node.id, { record: node, selected, flowNode });
+          return flowNode;
+        }),
         ...childContainers.map((container) => {
           const ports = computeOutpostPorts(container.id, allNodes, allEdges, parentOf);
-          return containerToOutpostFlowNode(container, ports, previouslySelectedNodes.has(container.id));
+          const selected = previouslySelectedNodes.has(container.id);
+          const cached = outpostCache.get(container.id);
+          if (
+            cached &&
+            cached.selected === selected &&
+            sameContent(cached.container, container) &&
+            sameContent(cached.ports, ports)
+          ) {
+            return cached.flowNode;
+          }
+          const flowNode = containerToOutpostFlowNode(container, ports, selected);
+          const measured = measuredByIdRef.current.get(container.id);
+          if (measured) flowNode.measured = measured;
+          outpostCache.set(container.id, { container, ports, selected, flowNode });
+          return flowNode;
         }),
       ];
+      // Drops cache entries for any id no longer present (deleted, or
+      // navigated away from) — otherwise these maps would grow forever
+      // across a long session's worth of edits.
+      const currentNodeIds = new Set(directNodes.map((node) => node.id));
+      for (const id of nodeCache.keys()) if (!currentNodeIds.has(id)) nodeCache.delete(id);
+      const currentOutpostIds = new Set(childContainers.map((container) => container.id));
+      for (const id of outpostCache.keys()) if (!currentOutpostIds.has(id)) outpostCache.delete(id);
 
       const visibleEdges = computeVisibleEdges(containerId, allNodes, allEdges, parentOf);
-      const flowEdges: CanvasEdge[] = visibleEdges.map((projectedEdge) =>
-        projectedEdgeToFlowEdge(projectedEdge, previouslySelectedEdges.has(projectedEdge.record.id)),
-      );
+      const flowEdges: CanvasEdge[] = visibleEdges.map((projectedEdge) => {
+        const selected = previouslySelectedEdges.has(projectedEdge.record.id);
+        const cached = edgeCache.get(projectedEdge.record.id);
+        if (cached && cached.selected === selected && sameContent(cached.projected, projectedEdge)) {
+          return cached.flowEdge;
+        }
+        const flowEdge = projectedEdgeToFlowEdge(projectedEdge, selected);
+        edgeCache.set(projectedEdge.record.id, { projected: projectedEdge, selected, flowEdge });
+        return flowEdge;
+      });
+      const currentEdgeIds = new Set(visibleEdges.map((edge) => edge.record.id));
+      for (const id of edgeCache.keys()) if (!currentEdgeIds.has(id)) edgeCache.delete(id);
 
       setNodes(flowNodes);
       setEdges(flowEdges);
@@ -378,6 +497,13 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
   }, [sfmDoc, useStore, containerId]);
 
   const onNodesChange: OnNodesChange<CanvasNode> = (changes: NodeChange<CanvasNode>[]) => {
+    // See `measuredByIdRef`'s own doc comment — this is the one place React
+    // Flow ever reports a node's actual rendered size back to this file.
+    for (const change of changes) {
+      if (change.type === "dimensions" && change.dimensions) {
+        measuredByIdRef.current.set(change.id, change.dimensions);
+      }
+    }
     const { nodes: current, setNodes } = useStore.getState();
     setNodes(applyNodeChanges(changes, current));
   };
@@ -427,39 +553,64 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
     // on-screen delta the nodes themselves just moved by, further down.
     const deltaById = new Map<string, { dx: number; dy: number }>();
 
-    for (const draggedNode of nodes) {
-      const position = settings.snapMachines
-        ? snapPointToGrid(draggedNode.position, settings.gridMachine)
-        : draggedNode.position;
+    // Every write below happens inside ONE outer transaction — every
+    // `moveNode`/`updateContainer`/`updateWaypoint` call wraps itself in its
+    // own `sfmDoc.doc.transact()` (`mutations.ts`), but Yjs collapses a
+    // nested `transact()` call into whichever one is already open rather
+    // than starting a new one, so wrapping the whole gesture here is what
+    // turns "one `Y.Doc` update (and one `observeDeep`/`afterTransaction`
+    // firing on every connected client) per dragged node/waypoint" into
+    // "exactly one, for the whole gesture." That distinction matters a lot
+    // more than it looks: a multi-selection drag of N nodes used to fire N
+    // separate updates in a tight synchronous loop, each one triggering a
+    // full `syncAll()` re-derivation (`useYjsSync.ts`'s own header comment
+    // on why that's a full doc re-read) *and* the client-side integrity
+    // reducer (`clientIntegrity.ts`) on every connected peer, including
+    // itself — and since `syncAll` handed React Flow a brand-new object for
+    // every node on every one of those N passes (fixed separately, see that
+    // module's own cache), a node whose position hadn't even changed YET in
+    // this gesture could still get caught mid-remeasurement by the very
+    // next pass. Under a large multi-select drag this pile-up was enough to
+    // permanently strand every node's React Flow internals at "not yet
+    // measured" (`visibility: hidden`) — the "select all the nodes and move
+    // them at once makes everything disappear" report. Batching collapses
+    // all of that back down to the one update a drag-stop always should
+    // have produced.
+    sfmDoc.doc.transact(() => {
+      for (const draggedNode of nodes) {
+        const position = settings.snapMachines
+          ? snapPointToGrid(draggedNode.position, settings.gridMachine)
+          : draggedNode.position;
 
-      if (draggedNode.data.container) {
-        const previous = getContainer(sfmDoc, draggedNode.id);
-        if (previous) deltaById.set(draggedNode.id, { dx: position.x - previous.x, dy: position.y - previous.y });
-        updateContainer(sfmDoc, draggedNode.id, { x: position.x, y: position.y });
-      } else {
-        const previous = getNode(sfmDoc, draggedNode.id);
-        if (previous) deltaById.set(draggedNode.id, { dx: position.x - previous.x, dy: position.y - previous.y });
-        moveNode(sfmDoc, draggedNode.id, position.x, position.y);
+        if (draggedNode.data.container) {
+          const previous = getContainer(sfmDoc, draggedNode.id);
+          if (previous) deltaById.set(draggedNode.id, { dx: position.x - previous.x, dy: position.y - previous.y });
+          updateContainer(sfmDoc, draggedNode.id, { x: position.x, y: position.y });
+        } else {
+          const previous = getNode(sfmDoc, draggedNode.id);
+          if (previous) deltaById.set(draggedNode.id, { dx: position.x - previous.x, dy: position.y - previous.y });
+          moveNode(sfmDoc, draggedNode.id, position.x, position.y);
+        }
       }
-    }
 
-    // A waypoint is a fixed point in the container's coordinate space, not
-    // relative to either endpoint — so on a single-node drag, leaving it in
-    // place is correct (that's what lets a manually-routed edge keep its
-    // shape while just one end moves). But when *both* of an edge's
-    // endpoints were dragged together (the multi-selection case this fix's
-    // header comment describes), the whole edge moved as a rigid group with
-    // nothing about its routing actually changing relative to its two
-    // anchors — so its waypoints need to ride along by that same delta,
-    // or the route stays behind while the nodes slide out from under it.
-    for (const edgeRecord of listEdges(sfmDoc)) {
-      if (edgeRecord.waypoints.length === 0) continue;
-      const delta = deltaById.get(edgeRecord.fromNode);
-      if (!delta || !deltaById.has(edgeRecord.toNode)) continue;
-      edgeRecord.waypoints.forEach((waypoint, index) => {
-        updateWaypoint(sfmDoc, edgeRecord.id, index, { x: waypoint.x + delta.dx, y: waypoint.y + delta.dy });
-      });
-    }
+      // A waypoint is a fixed point in the container's coordinate space, not
+      // relative to either endpoint — so on a single-node drag, leaving it in
+      // place is correct (that's what lets a manually-routed edge keep its
+      // shape while just one end moves). But when *both* of an edge's
+      // endpoints were dragged together (the multi-selection case this fix's
+      // header comment describes), the whole edge moved as a rigid group with
+      // nothing about its routing actually changing relative to its two
+      // anchors — so its waypoints need to ride along by that same delta,
+      // or the route stays behind while the nodes slide out from under it.
+      for (const edgeRecord of listEdges(sfmDoc)) {
+        if (edgeRecord.waypoints.length === 0) continue;
+        const delta = deltaById.get(edgeRecord.fromNode);
+        if (!delta || !deltaById.has(edgeRecord.toNode)) continue;
+        edgeRecord.waypoints.forEach((waypoint, index) => {
+          updateWaypoint(sfmDoc, edgeRecord.id, index, { x: waypoint.x + delta.dx, y: waypoint.y + delta.dy });
+        });
+      }
+    });
   };
 
   return { nodes, edges, containers, onNodesChange, onEdgesChange, onNodeDragStop };

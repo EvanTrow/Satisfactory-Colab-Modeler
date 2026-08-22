@@ -55,6 +55,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useUpdateNodeInternals,
   type FinalConnectionState,
   type NodeChange,
 } from "@xyflow/react";
@@ -128,6 +129,19 @@ import { SolveStatusIndicator } from "./SolveStatusIndicator";
 
 /** Node kinds whose right-click menu shows `RecipeNodeQuickSettings.tsx` (at minimum the Name field, plus recipe-only fields it gates itself). */
 const QUICK_SETTINGS_KINDS = new Set(["recipe", "splurger", "sink", "depot", "storage"]);
+
+/**
+ * How long the remote-drag-in-progress overlay (a peer's live node drag,
+ * and the equivalent waypoint/label drag) keeps showing its last known live
+ * position after that peer's Awareness `dragging`/`edgeDragging` field
+ * clears, before falling back to whatever `nodes`/`edges` (the Yjs-doc-
+ * derived arrays) currently say — see `remoteDraggingByNodeId`'s own doc
+ * comment for why this gap exists at all and why a fast/long drag makes it
+ * visible. Comfortably above one `useRemotePresence.ts` staleness re-check
+ * tick (150ms) so an expiry is actually noticed promptly, and comfortably
+ * below anything a user would perceive as "stuck."
+ */
+const DRAG_RELEASE_GRACE_MS = 250;
 
 // `@xyflow/react/dist/style.css`'s `.react-flow__controls-button svg` rule
 // hard-codes `fill: currentColor` and `max-width/max-height: 12px` — fine for
@@ -879,6 +893,31 @@ function CanvasFlow({
   const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = sync;
   const { sfmDoc, containerId, undoManager, navigateToContainer, awareness, localPresence } =
     useCanvasDoc();
+  // Safety net for a React Flow measurement race (`@xyflow/system`'s
+  // `adoptUserNodes`/`ResizeObserver`-driven `internals.handleBounds`):
+  // under a burst of doc-driven `nodes`/`edges` updates — most reliably, a
+  // multi-selection drag of several machines at once, especially several
+  // production chains deep — React Flow can end up with a node stuck
+  // "not yet measured" (rendered `visibility: hidden`) or an edge that can't
+  // resolve its endpoints' handle positions and simply doesn't render,
+  // *even after the burst stops* (confirmed by direct testing: the
+  // underlying document is never actually missing anything — a page reload
+  // always shows everything correctly, immediately). `useYjsSync.ts`'s own
+  // per-node/edge object-identity cache and `onNodeDragStop`'s single-
+  // transaction batching both cut down how often and how hard this gets
+  // triggered, but neither can fully rule out React Flow's own internal
+  // timing losing this race under a big enough burst. This effect is the
+  // actual recovery: once `nodes`/`edges` stop changing for a moment (the
+  // debounce below), explicitly ask React Flow to recheck every current
+  // node's measurements — self-healing any node/edge that got stuck,
+  // without requiring a manual page refresh.
+  const updateNodeInternals = useUpdateNodeInternals();
+  useEffect(() => {
+    if (nodes.length === 0) return;
+    const nodeIds = nodes.map((node) => node.id);
+    const timer = setTimeout(() => updateNodeInternals(nodeIds), 300);
+    return () => clearTimeout(timer);
+  }, [nodes, updateNodeInternals]);
   const {
     selectedWaypoints,
     setSelectedWaypoints,
@@ -1089,7 +1128,28 @@ function CanvasFlow({
   // marquee, keybinds, the node context menu) keeps reading, so a remote
   // drag overlay can never leak into a local selection/edit operation.
   const remotePresence = useRemotePresence(awareness);
+  // Bridges the gap between "a peer's drag ended" (Awareness — arrives the
+  // instant `dragPublisher.clear()` fires) and "the node's real position
+  // actually landed in the doc" (`moveNode`'s Yjs update — a separate
+  // message on a separate channel, with no ordering guarantee relative to
+  // the first). Without this, the moment `dragging` clears, this override
+  // stops and rendering falls through to `nodes`' own (possibly not-yet-
+  // updated) position — for a small/slow drag that's an imperceptible
+  // sub-frame flicker, but for a fast, long drag the pre-drag position can
+  // be far enough away (off-screen, behind another node) to read as the
+  // node — and, since its edges follow it, the connection too —
+  // momentarily vanishing. `DRAG_RELEASE_GRACE_MS` holds the last live
+  // position a little past `dragging` clearing, giving the doc update time
+  // to actually land before this stops overriding; `remotePresence` itself
+  // already re-evaluates at least every `useRemotePresence.ts`'s
+  // `STALE_CHECK_INTERVAL_MS` (150ms) even with no genuine change, which is
+  // what lets a held entry's expiry actually get noticed without a
+  // dedicated timer here.
+  const heldDraggingRef = useRef<Map<string, { value: { x: number; y: number; color: string; displayName: string }; expiresAt: number }>>(
+    new Map(),
+  );
   const remoteDraggingByNodeId = useMemo(() => {
+    const now = Date.now();
     const map = new Map<string, { x: number; y: number; color: string; displayName: string }>();
     for (const { state } of remotePresence) {
       if (!isDraggingVisibleInContainer(state.dragging, containerId)) continue;
@@ -1100,6 +1160,18 @@ function CanvasFlow({
           color: state.color,
           displayName: state.displayName,
         });
+      }
+    }
+    const held = heldDraggingRef.current;
+    for (const [id, value] of map) {
+      held.set(id, { value, expiresAt: now + DRAG_RELEASE_GRACE_MS });
+    }
+    for (const [id, entry] of held) {
+      if (map.has(id)) continue;
+      if (now < entry.expiresAt) {
+        map.set(id, entry.value);
+      } else {
+        held.delete(id);
       }
     }
     return map;
@@ -1126,6 +1198,16 @@ function CanvasFlow({
         return readOnly ? { ...node, data: { ...node.data, readOnly } } : node;
       }
       const position = smoothedRemoteDragging.get(node.id) ?? { x: remote.x, y: remote.y };
+      // The doc's own (persisted) position has already caught up to within
+      // a pixel of the live/held remote one — the real `moveNode` commit
+      // has landed, so there's no gap left to bridge. Releases the grace
+      // hold immediately rather than waiting out the rest of
+      // `DRAG_RELEASE_GRACE_MS` (see `remoteDraggingByNodeId`'s doc comment)
+      // for no reason once the truth has already arrived.
+      if (Math.abs(node.position.x - position.x) < 1 && Math.abs(node.position.y - position.y) < 1) {
+        heldDraggingRef.current.delete(node.id);
+        return readOnly ? { ...node, data: { ...node.data, readOnly } } : node;
+      }
       return {
         ...node,
         data: { ...node.data, readOnly },
@@ -1154,7 +1236,17 @@ function CanvasFlow({
   // (`remoteWaypointDrag`) instead of a separate context, mirroring how
   // `record`/`projected` already ride along on every edge — `ConnectionEdge`
   // reads it exactly like its own local drag state.
+  const heldEdgeDraggingRef = useRef<
+    Map<
+      string,
+      {
+        value: { mode: "move" | "insert"; waypointIndex: number; x: number; y: number; color: string; displayName: string };
+        expiresAt: number;
+      }
+    >
+  >(new Map());
   const remoteEdgeDraggingByEdgeId = useMemo(() => {
+    const now = Date.now();
     const map = new Map<
       string,
       {
@@ -1177,6 +1269,22 @@ function CanvasFlow({
         color: state.color,
         displayName: state.displayName,
       });
+    }
+    // Same bridging-the-gap reasoning as `remoteDraggingByNodeId` above —
+    // this edge/waypoint's real `updateWaypoint`/`addWaypoint` commit can
+    // land slightly after `edgeDragging` clears, and a fast label/waypoint
+    // drag makes that gap's stale-position revert visible.
+    const held = heldEdgeDraggingRef.current;
+    for (const [id, value] of map) {
+      held.set(id, { value, expiresAt: now + DRAG_RELEASE_GRACE_MS });
+    }
+    for (const [id, entry] of held) {
+      if (map.has(id)) continue;
+      if (now < entry.expiresAt) {
+        map.set(id, entry.value);
+      } else {
+        held.delete(id);
+      }
     }
     return map;
   }, [remotePresence, containerId]);
