@@ -375,11 +375,12 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
 
   /**
    * Storage Container (`kind: "storage"`) — unlike Sink/Depot, not a real
-   * `@scm/gamedata` `Machines` entry, so `machine` stays `null` and its icon
-   * is looked up by the literal string `"Storage Container"` instead (see
-   * `canvas/nodes/StorageNode.tsx`). Defaults to the `"partiallyFull"`
-   * `storageMode` — see `workers/storagePassthrough.ts`'s header for which
-   * of the four modes actually has solver behavior right now.
+   * `@scm/gamedata` `Machines` entry, so `machine` stays `null`; its header
+   * icon is looked up by `"Storage Container"` or `"Fluid Buffer"` depending
+   * on the held item (see `canvas/nodes/StorageNode.tsx`). `storageMode`
+   * stays `null` — the four-mode picker was removed (only the default mode
+   * ever had real solver behavior; see `workers/storagePassthrough.ts`'s
+   * header).
    */
   function handleCreateStorage() {
     const node = addNode(sfmDoc, {
@@ -398,7 +399,7 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
       shards: 0,
       purity: null,
       beltTier: null,
-      storageMode: "partiallyFull",
+      storageMode: null,
       splurgerVariant: null,
     });
     if (pendingConnection) {

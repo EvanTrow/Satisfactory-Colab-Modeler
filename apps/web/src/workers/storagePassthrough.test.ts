@@ -63,6 +63,30 @@ describe("computeStorageBufferNodes", () => {
     ]);
   });
 
+  it("caps the producer's machine count at the consumer's when both sides have the SAME part", () => {
+    const result = computeStorageBufferNodes(
+      [storage1],
+      [
+        edge({ id: "in1", part: "Iron Ore", toNode: "storage1", fromNode: "producerA" }),
+        edge({ id: "out1", part: "Iron Ore", fromNode: "storage1", toNode: "consumerA" }),
+      ],
+    );
+    const producer = result.nodes.find((n) => n.id === storageProducerNodeId("storage1", "Iron Ore"));
+    expect(producer?.capMachineCountAtNodeId).toBe(storageConsumerNodeId("storage1", "Iron Ore"));
+  });
+
+  it("does NOT cap a producer whose part has no matching intake side", () => {
+    const result = computeStorageBufferNodes(
+      [storage1],
+      [
+        edge({ id: "in1", part: "Copper Ore", toNode: "storage1", fromNode: "producerA" }),
+        edge({ id: "out1", part: "Iron Ore", fromNode: "storage1", toNode: "consumerA" }),
+      ],
+    );
+    const producer = result.nodes.find((n) => n.id === storageProducerNodeId("storage1", "Iron Ore"));
+    expect(producer?.capMachineCountAtNodeId).toBeUndefined();
+  });
+
   it("handles decoupled in/out — an unbalanced in vs out is not an error at this layer", () => {
     const result = computeStorageBufferNodes(
       [storage1],

@@ -92,7 +92,7 @@
 // and reports `options.onProgress` — see `FullSolveOptions`'s own doc
 // comment below and jobs/023-full-calculator.md's Handoff notes for exactly
 // how Job 018's worker host should wire this through `postMessage`.
-import { ONE, ZERO, abs, add, equals, isNegative, isPositive, isZero, negate, toFractionString, type Rational } from "@scm/rational";
+import { ONE, ZERO, abs, add, compare, equals, isNegative, isPositive, isZero, negate, toFractionString, type Rational } from "@scm/rational";
 import type { GameData } from "@scm/gamedata";
 import { resolveEdgesJointly, sourceKey, targetKey } from "./edgeResolution";
 import { groupConnectedComponents, type JointFlowEdge } from "./jointFlow";
@@ -387,6 +387,16 @@ export function propagateMachineCountsFull(
       const profile = profiles.get(nodeId);
       if (!profile?.recipe) continue;
 
+      // `capMachineCountAtNodeId` — see `snapshot.ts`'s own doc comment and
+      // `basic.ts`'s identical gate (same reasoning, mirrored here since
+      // Full mode has its own separate propagation function): withhold
+      // resolving this node AT ALL until the cap node itself has resolved,
+      // so this node can never lock in an uncapped downstream-demand number
+      // before the cap becomes known.
+      const capNodeId = profile.node.capMachineCountAtNodeId;
+      if (capNodeId && !resolved.has(capNodeId)) continue;
+      const capCount = capNodeId ? counts.get(capNodeId) : undefined;
+
       // Group nodeId's own incident edges by part FIRST, so a part can only
       // become an `impliedByPart` candidate once EVERY edge touching nodeId
       // for that part has a resolved counterpart. Without this gate, a node
@@ -434,7 +444,21 @@ export function propagateMachineCountsFull(
         }
         impliedByPart.set(part, total);
       }
-      if (impliedByPart.size === 0) continue;
+      if (impliedByPart.size === 0) {
+        // No real neighbor's demand could be fully resolved for this node
+        // this pass — if it has a cap, that cap alone is its resolved
+        // supply (the "nothing downstream happens to be pinned" case: a
+        // Storage Container just passes through exactly what it's
+        // receiving). One known imprecision: a storage output split across
+        // SEVERAL downstream consumers where only some have resolved so far
+        // reads as "no signal yet" here (the sibling-completeness gate
+        // above), so it can commit to the cap and permanently resolve
+        // before the full water-filled split would have — still a large
+        // improvement over the flat `ONE`-machine default it replaces, just
+        // not Full mode's usual per-sibling precision for this shape.
+        if (capCount !== undefined) updates.set(nodeId, capCount);
+        continue;
+      }
 
       // Deterministic pivot — identical rule to `basic.ts`: the recipe's
       // own primary part if it has an implied rate, else the
@@ -452,7 +476,10 @@ export function propagateMachineCountsFull(
       const signedTarget = isPositive(partEntry.amount) ? impliedMagnitude : negate(impliedMagnitude);
       const count = machineCountForTargetRate(profile, chosenPart, signedTarget);
       if (count && !isNegative(count) && !isZero(count)) {
-        updates.set(nodeId, count);
+        // See `basic.ts`'s identical cap-vs-demand comment — below the cap
+        // (or with none at all) downstream's own number stands untouched;
+        // above it, this node commits to the cap instead.
+        updates.set(nodeId, capCount !== undefined && compare(capCount, count) < 0 ? capCount : count);
       }
     }
 

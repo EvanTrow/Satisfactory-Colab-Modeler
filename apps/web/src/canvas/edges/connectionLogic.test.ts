@@ -12,6 +12,7 @@ import {
   parsePortHandleId,
   reconnectEdge,
   resolveEdgeEndpoints,
+  storageNodePart,
 } from "./connectionLogic";
 
 function makeDoc(): { sfmDoc: SfmDocument; containerId: string; nodeA: string; nodeB: string; nodeC: string } {
@@ -78,10 +79,11 @@ describe("parsePortHandleId", () => {
 
 // Shared across every describe block below that only ever resolves
 // connections between fake/nonexistent node ids ("n1", "splurger1", etc.) —
-// `isDepotConnectionAllowed`'s `getNode`/`listEdges` lookups simply find
-// nothing for an id never written to this doc and fall through to "allowed",
-// so a single never-mutated doc is safe to reuse across all of them (real
-// depot-specific behavior gets its own dedicated docs further down).
+// `isDepotConnectionAllowed`/`isStorageConnectionAllowed`'s `getNode`/
+// `listEdges` lookups simply find nothing for an id never written to this
+// doc and fall through to "allowed", so a single never-mutated doc is safe
+// to reuse across all of them (real depot/storage-specific behavior gets its
+// own dedicated docs further down).
 const pureLogicDoc = createDocument();
 
 describe("resolveEdgeEndpoints", () => {
@@ -572,6 +574,156 @@ describe("Dimensional Depot connection restrictions", () => {
         targetHandle: `in:${WILDCARD_PART}`,
       }),
     ).toBe(true);
+  });
+});
+
+describe("Storage Container connection restrictions", () => {
+  // Mirrors `makeDepotDoc` above — a storage node accepting both directions
+  // (unlike a Depot's input-only) plus a plain recipe-shaped node to connect
+  // it to.
+  function makeStorageDoc() {
+    const sfmDoc = createDocument();
+    const root = addContainer(sfmDoc, {
+      kind: "root",
+      parentId: null,
+      title: "Root",
+      color: "#4b5563",
+      x: 0,
+      y: 0,
+      copiesLimit: null,
+    });
+    const baseNode = {
+      containerId: root.id,
+      recipe: null,
+      machine: null,
+      x: 400,
+      y: 0,
+      title: "",
+      color: "#7c3aed",
+      limit: null,
+      limitMode: "machines" as const,
+      clock: null,
+      autoRound: false,
+      shards: 0,
+      purity: null,
+      beltTier: null,
+      storageMode: null,
+      splurgerVariant: null,
+    };
+    const storage = addNode(sfmDoc, { ...baseNode, kind: "storage", title: "Storage Container" });
+    return { sfmDoc, containerId: root.id, storageId: storage.id };
+  }
+
+  it("accepts a fluid part into an empty Storage Container (unlike a Depot)", () => {
+    const { sfmDoc, storageId } = makeStorageDoc();
+    expect(
+      isValidPortConnection(sfmDoc, {
+        source: "producer",
+        sourceHandle: "out:Water",
+        target: storageId,
+        targetHandle: `in:${WILDCARD_PART}`,
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a second, different part once the Storage Container already has one connected, on either side", () => {
+    const { sfmDoc, containerId, storageId } = makeStorageDoc();
+    connectPorts(sfmDoc, containerId, {
+      source: "producerA",
+      sourceHandle: "out:Iron Plate",
+      target: storageId,
+      targetHandle: `in:${WILDCARD_PART}`,
+    });
+    // A different part rejected on the INPUT side...
+    expect(
+      isValidPortConnection(sfmDoc, {
+        source: "producerB",
+        sourceHandle: "out:Iron Rod",
+        target: storageId,
+        targetHandle: `in:${WILDCARD_PART}`,
+      }),
+    ).toBe(false);
+    // ...and on the OUTPUT side.
+    expect(
+      isValidPortConnection(sfmDoc, {
+        source: storageId,
+        sourceHandle: `out:${WILDCARD_PART}`,
+        target: "consumer",
+        targetHandle: "in:Iron Rod",
+      }),
+    ).toBe(false);
+  });
+
+  it("still accepts more of the SAME part, and the matching output side, once one is connected", () => {
+    const { sfmDoc, containerId, storageId } = makeStorageDoc();
+    connectPorts(sfmDoc, containerId, {
+      source: "producerA",
+      sourceHandle: "out:Iron Plate",
+      target: storageId,
+      targetHandle: `in:${WILDCARD_PART}`,
+    });
+    expect(
+      isValidPortConnection(sfmDoc, {
+        source: "producerB",
+        sourceHandle: "out:Iron Plate",
+        target: storageId,
+        targetHandle: `in:${WILDCARD_PART}`,
+      }),
+    ).toBe(true);
+    expect(
+      isValidPortConnection(sfmDoc, {
+        source: storageId,
+        sourceHandle: `out:${WILDCARD_PART}`,
+        target: "consumer",
+        targetHandle: "in:Iron Plate",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("storageNodePart", () => {
+  it("is undefined for a storage node with no connections", () => {
+    const { sfmDoc, nodeA } = makeDoc();
+    expect(storageNodePart(sfmDoc, nodeA)).toBeUndefined();
+  });
+
+  it("reads the held part off whichever side (in or out) is wired", () => {
+    const sfmDoc = createDocument();
+    const root = addContainer(sfmDoc, {
+      kind: "root",
+      parentId: null,
+      title: "Root",
+      color: "#4b5563",
+      x: 0,
+      y: 0,
+      copiesLimit: null,
+    });
+    const storage = addNode(sfmDoc, {
+      containerId: root.id,
+      kind: "storage",
+      recipe: null,
+      machine: null,
+      x: 400,
+      y: 0,
+      title: "Storage Container",
+      color: "#7c3aed",
+      limit: null,
+      limitMode: "machines",
+      clock: null,
+      autoRound: false,
+      shards: 0,
+      purity: null,
+      beltTier: null,
+      storageMode: null,
+      splurgerVariant: null,
+    });
+    connectPorts(sfmDoc, root.id, {
+      source: storage.id,
+      sourceHandle: `out:${WILDCARD_PART}`,
+      target: "consumer",
+      targetHandle: "in:Iron Plate",
+    });
+    expect(storageNodePart(sfmDoc, storage.id)).toBe("Iron Plate");
   });
 });
 

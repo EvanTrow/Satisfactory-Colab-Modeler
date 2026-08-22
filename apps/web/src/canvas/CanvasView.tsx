@@ -91,7 +91,7 @@ import {
 import { SettingsMenu } from "./SettingsMenu";
 import { SolverResultContext } from "./SolverResultContext";
 import { type ClickPoint, isDoubleClick } from "./doubleClick";
-import { parsePortHandleId, useConnectionHandlers } from "./edges";
+import { parsePortHandleId, storageNodePart, useConnectionHandlers } from "./edges";
 import { edgeTypes, nodeTypes } from "./flowTypes";
 import { useAutoRound } from "./nodes";
 import {
@@ -1467,6 +1467,14 @@ function CanvasFlow({
    * (`RecipeChooser`'s `pendingConnection` prop), only when the drag ended
    * on empty canvas (`connectionState.toHandle` is `null` — a successful
    * drop onto a real handle already went through `onConnect` above).
+   *
+   * A Storage Container's own `Handle`s are permanent wildcards (see
+   * `storageNodePart`'s doc comment for why they can never be renamed to a
+   * real part after the fact), so `portInfo.part` alone would be `"*"` for
+   * one — substituted here with whatever item it's actually already holding,
+   * so dragging from its output pre-filters the chooser exactly like
+   * dragging from a real recipe port does, instead of falling back to
+   * "unfiltered."
    */
   const handleConnectEnd = (
     event: MouseEvent | TouchEvent,
@@ -1478,11 +1486,16 @@ function CanvasFlow({
     const portInfo = parsePortHandleId(connectionState.fromHandle.id);
     if (!portInfo) return;
     const point = eventClientPoint(event);
+    const fromNodeRecord = getNode(sfmDoc, connectionState.fromHandle.nodeId);
+    const part =
+      fromNodeRecord?.kind === "storage"
+        ? (storageNodePart(sfmDoc, connectionState.fromHandle.nodeId) ?? portInfo.part)
+        : portInfo.part;
     openChooserAt(point.x, point.y, {
       nodeId: connectionState.fromHandle.nodeId,
       handleId: connectionState.fromHandle.id ?? "",
       direction: portInfo.direction,
-      part: portInfo.part,
+      part,
     });
   };
 

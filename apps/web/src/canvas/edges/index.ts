@@ -10,6 +10,7 @@ export {
   parsePortHandleId,
   reconnectEdge,
   resolveEdgeEndpoints,
+  storageNodePart,
   type ConnectionLike,
   type PortInfo,
   type ResolvedEndpoints,

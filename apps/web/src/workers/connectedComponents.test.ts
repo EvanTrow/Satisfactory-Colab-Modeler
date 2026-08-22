@@ -75,4 +75,38 @@ describe("computeConnectedComponents", () => {
     expect(components).toHaveLength(1);
     expect(components[0]!.nodeIds).toEqual([...nodeIds].sort());
   });
+
+  describe("extraGroupingLinks", () => {
+    it("unions two otherwise-disconnected nodes into one component", () => {
+      const components = computeConnectedComponents(["a", "b"], [], [{ fromNode: "a", toNode: "b" }]);
+      expect(components).toHaveLength(1);
+      expect(components[0]!.nodeIds).toEqual(["a", "b"]);
+    });
+
+    it("never appears in the resulting component's edgeIds — grouping only, not a real edge", () => {
+      const components = computeConnectedComponents(["a", "b"], [], [{ fromNode: "a", toNode: "b" }]);
+      expect(components[0]!.edgeIds).toEqual([]);
+    });
+
+    it("composes with real edges — a grouping link can bridge two real-edge chains into one component", () => {
+      const components = computeConnectedComponents(
+        ["a", "b", "c", "d"],
+        [edge("e1", "a", "b"), edge("e2", "c", "d")],
+        [{ fromNode: "b", toNode: "c" }],
+      );
+      expect(components).toHaveLength(1);
+      expect(components[0]!.nodeIds).toEqual(["a", "b", "c", "d"]);
+      expect(components[0]!.edgeIds).toEqual(["e1", "e2"]);
+    });
+
+    it("ignores a grouping link referencing a node id outside the given node set", () => {
+      const components = computeConnectedComponents(["a", "b"], [], [{ fromNode: "a", toNode: "ghost" }]);
+      expect(components).toHaveLength(2);
+    });
+
+    it("defaults to no grouping links when the parameter is omitted", () => {
+      const components = computeConnectedComponents(["a", "b"], []);
+      expect(components).toHaveLength(2);
+    });
+  });
 });

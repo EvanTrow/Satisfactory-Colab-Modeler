@@ -95,6 +95,41 @@ export interface SolverNode {
     /** Signed MW at exactly 1 copy — the float power boundary, same as every other node's `power` field. */
     readonly perCopyPowerMW: number;
   };
+  /**
+   * Storage Container support: an UPPER BOUND on this node's own resolved
+   * machine count, taken from the referenced node's own resolved count —
+   * "this node can never supply more than that one is actually providing,"
+   * enforced by Basic/Full mode's `propagateMachineCounts`/
+   * `propagateMachineCountsFull` regardless of how much downstream demand
+   * this node would otherwise imply. Below the cap (or with no cap at all,
+   * or when downstream demand can't be derived at all), this node resolves
+   * exactly as it always has; ABOVE it, this node commits to the cap
+   * instead and leaves the over-demanding downstream neighbor's own edge
+   * looking under-supplied — the ordinary rate-mismatch/shortage machinery
+   * (`edgeValidation.ts`/`apps/web`'s `computeInputShortage.ts`) then flags
+   * that neighbor exactly like it would for any two ordinary mismatched
+   * pinned nodes, no special-casing needed for this field. The referenced
+   * node's own resolution is a genuine prerequisite (see `basic.ts`'s
+   * doc comment on where this is consulted for exactly why: a fixed-point
+   * pass's `resolved` set is permanent, so this node withholds resolving
+   * at all until the cap becomes known, rather than resolving off
+   * downstream demand and never getting a chance to be capped
+   * retroactively) — so a CHAIN of these still propagates correctly, just
+   * one extra pass per hop. Ignored entirely by None/Manual mode
+   * (`manual.ts`'s own header: "never infers a machine count from the
+   * graph" — this field IS an inference, so it stays out).
+   *
+   * The one current use: `apps/web/src/workers/storagePassthrough.ts`
+   * splits a Storage Container into two solver nodes with NO edge between
+   * them (deliberately — its input and output don't have to balance), which
+   * means neither side's resolved count can otherwise reach the other's at
+   * all. The outflow side's `capMachineCountAtNodeId` points at the intake
+   * side's node id: a real storage buffer can't emit more per minute than
+   * it's actually receiving, no matter what's downstream asking for more —
+   * see that module's header for the full writeup, and `basic.ts`'s/
+   * `full.ts`'s propagation functions for where this is actually consulted.
+   */
+  readonly capMachineCountAtNodeId?: string;
 }
 
 /**

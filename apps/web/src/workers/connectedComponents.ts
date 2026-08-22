@@ -33,22 +33,40 @@ export interface GraphComponent {
 }
 
 /**
+ * A grouping-only link: two node ids that must land in the same component,
+ * WITHOUT being a real edge — never added to a `GraphComponent`'s own
+ * `edgeIds`, and carries no `id` of its own (nothing needs to reference it
+ * afterward; its only job is to influence union-find). See
+ * `partitionSnapshot`'s own doc comment for the one current use: a Storage
+ * Container's `capMachineCountAtNodeId` cross-reference between two solver
+ * nodes that deliberately have no real edge between them.
+ */
+export interface GroupingLink {
+  readonly fromNode: string;
+  readonly toNode: string;
+}
+
+/**
  * Partitions `nodeIds` into connected components using `edges` — union-find
  * with path compression and union-by-size, so this is fast (effectively
  * linear) even at the 500-node/800-edge budget PLAN.md §9 names. An edge
  * whose `fromNode`/`toNode` isn't in `nodeIds` is ignored (defensive — a
  * `SolverSnapshot` already filtered to recipe-kind nodes only, per
  * `buildSnapshot.ts`, should never produce one, but a dangling reference
- * shouldn't crash partitioning either way).
+ * shouldn't crash partitioning either way). `extraGroupingLinks` (optional)
+ * are unioned exactly like a real edge for the PURPOSE of grouping nodes
+ * into components, but never appear in any component's own `edgeIds` — see
+ * `GroupingLink`'s own doc comment.
  *
- * Deterministic regardless of `nodeIds`/`edges` array order: union-by-size
- * ties are broken by `idCompare` on the two candidate roots, and every
- * returned list (`nodeIds`, `edgeIds`, and the component list itself, keyed
- * by its smallest node id) is sorted before returning.
+ * Deterministic regardless of `nodeIds`/`edges`/`extraGroupingLinks` array
+ * order: union-by-size ties are broken by `idCompare` on the two candidate
+ * roots, and every returned list (`nodeIds`, `edgeIds`, and the component
+ * list itself, keyed by its smallest node id) is sorted before returning.
  */
 export function computeConnectedComponents(
   nodeIds: readonly string[],
   edges: readonly ComponentEdgeLike[],
+  extraGroupingLinks: readonly GroupingLink[] = [],
 ): GraphComponent[] {
   const parent = new Map<string, string>();
   const size = new Map<string, number>();
@@ -98,6 +116,13 @@ export function computeConnectedComponents(
     if (!parent.has(edge.fromNode) || !parent.has(edge.toNode)) continue;
     validEdges.push(edge);
     union(edge.fromNode, edge.toNode);
+  }
+  // Grouping-only links affect union-find but never join `validEdges` — see
+  // `GroupingLink`'s own doc comment for why (they'd otherwise show up in a
+  // component's `edgeIds` as a reference to an edge id that doesn't exist).
+  for (const link of extraGroupingLinks) {
+    if (!parent.has(link.fromNode) || !parent.has(link.toNode)) continue;
+    union(link.fromNode, link.toNode);
   }
 
   const nodesByRoot = new Map<string, string[]>();

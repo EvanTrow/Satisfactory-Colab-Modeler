@@ -3,41 +3,42 @@
 // established), unlike a Splurger DELIBERATELY decoupled: input and output
 // don't have to balance (that's the whole point — "shows the difference").
 // See `../../workers/storagePassthrough.ts`'s header for how that's modeled
-// in the solver (one synthetic uncapped consumer per distinct incoming
-// part, one synthetic uncapped producer per distinct outgoing part) and why
-// per-part rates here are read from THOSE synthetic nodes' own
+// in the solver (one synthetic uncapped consumer for the incoming part, one
+// synthetic producer for the outgoing part — capped at the consumer's own
+// resolved rate, since a real buffer can never emit more than it received)
+// and why the net rate here is read from THOSE synthetic nodes' own
 // `NodeSolveResult.partRates` rather than from a per-edge lookup.
 //
-// `node.storageMode` exposes all four `STORAGE_MODES` (PLAN.md §2's
-// "Partially Full / Full / Empty / Input = Output"), but only the default
-// `"partiallyFull"` has real solver behavior as of this addition — the
-// other three would each need genuinely different solver semantics
-// (`"full"`/`"empty"` behave like an always-available/never-accepting
-// source or sink; `"inputEqualsOutput"` is real conservation, like a
-// Splurger) and aren't implemented yet. Selecting one of them just changes
-// what's stored on the record; it doesn't change how this node solves.
-// Flagged here rather than silently pretending it works, same posture
-// `SplurgerNode.tsx`'s own "unsupported shape" banner takes.
+// Redesign pass: dropped `node.storageMode` (PLAN.md §2's "Partially Full /
+// Full / Empty / Input = Output") entirely — only the default
+// `"partiallyFull"` behavior was ever real (the other three would each need
+// genuinely different solver semantics that were never implemented), so the
+// picker was pure clutter offering three modes that silently did nothing.
+// The field itself stays on `NodeRecord` (an open `string | null`, no
+// migration needed per `packages/ydoc/src/schema.ts`'s own note) — this
+// component just stops reading/writing it.
 //
-// A Storage Container is allowed to carry more than one distinct part at
-// once (this job's own scope decision — allow it, flag visually, rather
-// than blocking the connection) — the banner below fires whenever this
-// node's own incident edges touch more than one distinct part. Downgraded
-// from `--danger`/red to `--warning`/yellow in the calculation-validation
-// visuals pass: per this file's own header, multi-part is an ALLOWED,
-// deliberately-supported state (each part tracked independently below), not
-// a broken one — red overstated it.
+// Also dropped multi-item support: a Storage Container now holds exactly ONE
+// item type, enforced at connection time by `edges/connectionLogic.ts`'s
+// `isStorageConnectionAllowed` (mirroring a Dimensional Depot Uploader's own
+// single-item restriction). That collapses this card down to a single row —
+// styled after `RecipeNode.tsx`'s own `PartRow`, but with both the input AND
+// output `Handle` on that same row (a Constructor needs two rows, one per
+// direction, because its input and output are usually different parts; a
+// Storage Container's input and output are always the SAME part, so one row
+// covers both) — showing just the net rate (positive = filling, negative =
+// draining) rather than separate in/out readouts.
 //
-// Calculation-validation visuals pass: each per-part row's validity now also
-// reuses `computeNodeValidityState`/`computeMismatchDetails` (the exact same
-// functions `RecipeNode.tsx`/`SinkNode.tsx` use) against BOTH the synthetic
-// consumer (incoming edges) and synthetic producer (outgoing edges) for that
-// part, combined via `worseValidity` below — a row can be mismatched on
-// either its intake or its outflow independently, since (unlike a Splurger)
-// the two sides are deliberately decoupled here.
+// The card header's own icon switches on whether the held part is a
+// fluid/gas (`@scm/gamedata`'s `Part.fluid`) — the real Storage Container
+// building only ever holds solid items, so a fluid/gas part is shown with
+// the Fluid Buffer building's icon instead, matching which real building
+// would actually hold it. Falls back to the plain Storage Container icon
+// before any item is known (nothing connected yet).
 import { memo } from "react";
 
-import { getNode, listEdges, updateNode, STORAGE_MODES, type NodeRecord, type StorageMode } from "@scm/ydoc";
+import { defaultGameData } from "@scm/gamedata";
+import { getNode, listEdges, type NodeRecord } from "@scm/ydoc";
 import { abs, isNegative, isZero, parseRational, subtract, ZERO, type Rational } from "@scm/rational";
 import { Handle, Position, useConnection, type NodeProps } from "@xyflow/react";
 
@@ -64,20 +65,13 @@ function rowRingClass(validity: RecipeNodeValidity | undefined): string {
   return "";
 }
 
-/** `invalid > mismatched > unresolved > valid` — same severity order `computeValidity.ts`'s own `escalate` uses, for combining a row's independent in-side and out-side validity into one. `undefined` (no result for that side at all) never wins over an actual reading from the other side. */
+/** `invalid > mismatched > unresolved > valid` — same severity order `computeValidity.ts`'s own `escalate` uses, for combining the row's independent in-side and out-side validity into one. `undefined` (no result for that side at all) never wins over an actual reading from the other side. */
 const SEVERITY_ORDER: readonly RecipeNodeValidity[] = ["invalid", "mismatched", "unresolved", "valid"];
 function worseValidity(a: RecipeNodeValidity | undefined, b: RecipeNodeValidity | undefined): RecipeNodeValidity | undefined {
   if (!a) return b;
   if (!b) return a;
   return SEVERITY_ORDER.indexOf(a) <= SEVERITY_ORDER.indexOf(b) ? a : b;
 }
-
-const STORAGE_MODE_LABELS: Record<StorageMode, string> = {
-  partiallyFull: "Partially Full",
-  full: "Full",
-  empty: "Empty",
-  inputEqualsOutput: "Input = Output",
-};
 
 export const StorageNode = memo(function StorageNode({ id, data, selected }: NodeProps<CanvasNode>) {
   const { sfmDoc } = useCanvasDoc();
@@ -96,21 +90,52 @@ export const StorageNode = memo(function StorageNode({ id, data, selected }: Nod
   const allEdges = listEdges(sfmDoc);
   const incoming = allEdges.filter((edge) => edge.toNode === id);
   const outgoing = allEdges.filter((edge) => edge.fromNode === id);
-  const distinctParts = [...new Set([...incoming, ...outgoing].map((edge) => edge.part))].sort();
-  const isMultiPart = distinctParts.length > 1;
+  // Enforced single-item type (`isStorageConnectionAllowed`) — every
+  // incident edge already carries the same part, so any one of them names
+  // it. `undefined` when nothing is wired up yet.
+  const part = incoming[0]?.part ?? outgoing[0]?.part;
 
-  function neighborTitles(part: string): string {
-    const inTitles = incoming.filter((e) => e.part === part).map((e) => getNode(sfmDoc, e.fromNode)?.title || e.fromNode);
-    const outTitles = outgoing.filter((e) => e.part === part).map((e) => getNode(sfmDoc, e.toNode)?.title || e.toNode);
+  function neighborTitles(): string {
+    const inTitles = incoming.map((e) => getNode(sfmDoc, e.fromNode)?.title || e.fromNode);
+    const outTitles = outgoing.map((e) => getNode(sfmDoc, e.toNode)?.title || e.toNode);
     return [...inTitles, ...outTitles].join(", ");
   }
 
-  function rateFor(nodeId: string, part: string): Rational | undefined {
-    const rateStr = nodeResultById.get(nodeId)?.partRates[part];
+  function rateFor(nodeId: string, partName: string): Rational | undefined {
+    const rateStr = nodeResultById.get(nodeId)?.partRates[partName];
     return rateStr !== undefined ? parseRational(rateStr) : undefined;
   }
 
-  const iconUrl = getIconUrl("Storage Container");
+  const isFluid = part ? defaultGameData.partsByName.get(part)?.fluid === true : false;
+  const headerIconUrl = getIconUrl(isFluid ? "Fluid Buffer" : "Storage Container");
+  const partIconUrl = part ? getIconUrl(part) : undefined;
+
+  const inEdges = incoming.map((e) => ({ edgeId: e.id, part: e.part }));
+  const outEdges = outgoing.map((e) => ({ edgeId: e.id, part: e.part }));
+  const inRate = part ? rateFor(storageConsumerNodeId(id, part), part) : undefined;
+  const outRate = part ? rateFor(storageProducerNodeId(id, part), part) : undefined;
+  // `inRate` (the synthetic consumer's own rate) is negative — a
+  // consumption. `outRate` (the synthetic producer's own rate) is positive —
+  // a supply. Net = how fast the container is FILLING (positive) or
+  // DRAINING (negative): intake magnitude minus outflow.
+  const net = subtract(inRate ? abs(inRate) : ZERO, outRate ?? ZERO);
+  const inValidity = part ? computeNodeValidityState(nodeResultById.get(storageConsumerNodeId(id, part)), inEdges, edgeResultById) : undefined;
+  const outValidity = part ? computeNodeValidityState(nodeResultById.get(storageProducerNodeId(id, part)), outEdges, edgeResultById) : undefined;
+  const rowSeverity = worseValidity(inValidity?.overall, outValidity?.overall);
+  const rowDetail =
+    rowSeverity === "mismatched" && part
+      ? [computeMismatchDetails(inEdges, edgeResultById)[part], computeMismatchDetails(outEdges, edgeResultById)[part]]
+          .filter((d): d is string => !!d)
+          .join("; ")
+      : undefined;
+  const rowTitle =
+    rowSeverity === "mismatched"
+      ? `Rate mismatch: ${rowDetail || "doesn't match a connected neighbor"}.`
+      : rowSeverity === "invalid"
+        ? "Connection could not be resolved."
+        : part
+          ? neighborTitles()
+          : "No connections yet — drag a wire to either side.";
 
   return (
     <div
@@ -119,8 +144,8 @@ export const StorageNode = memo(function StorageNode({ id, data, selected }: Nod
       }`}
     >
       <div className="flex items-center gap-2 rounded-t-[7px] bg-[var(--node-header)] px-2 py-1.5">
-        {iconUrl ? (
-          <img src={iconUrl} alt="" className="h-6 w-6 shrink-0 rounded-md bg-black/20 object-contain p-0.5 shadow-inner" />
+        {headerIconUrl ? (
+          <img src={headerIconUrl} alt="" className="h-6 w-6 shrink-0 rounded-md bg-black/20 object-contain p-0.5 shadow-inner" />
         ) : (
           <span className="h-6 w-6 shrink-0 rounded-md bg-black/20" aria-hidden />
         )}
@@ -129,100 +154,38 @@ export const StorageNode = memo(function StorageNode({ id, data, selected }: Nod
         </p>
       </div>
 
-      <Handle
-        type="target"
-        position={Position.Left}
-        id={`in:${WILDCARD_PART}`}
-        className={`${handleClass} ${isHandleFaded(`in:${WILDCARD_PART}`, "target") ? handleFadeClass : ""}`}
-      />
-      <Handle
-        type="source"
-        position={Position.Right}
-        id={`out:${WILDCARD_PART}`}
-        className={`${handleClass} ${isHandleFaded(`out:${WILDCARD_PART}`, "source") ? handleFadeClass : ""}`}
-      />
-
-      {isMultiPart && (
-        <p className="mx-2 mt-1.5 rounded-md bg-[var(--warning-soft)] px-2 py-1 text-[10px] text-[var(--warning)]">
-          Carrying more than one item type — each is tracked independently.
-        </p>
-      )}
-
-      <div className="divide-y divide-[var(--border-subtle)] py-0.5">
-        {distinctParts.length === 0 ? (
-          <p className="px-2 py-1.5 text-[11px] text-[var(--text-muted)]">No connections yet — drag a wire to either side.</p>
+      <div className={`relative flex items-center gap-1.5 px-2 py-1.5 text-[11px] ${rowRingClass(rowSeverity)}`} title={rowTitle}>
+        <Handle
+          type="target"
+          position={Position.Left}
+          id={`in:${WILDCARD_PART}`}
+          className={`${handleClass} ${isHandleFaded(`in:${WILDCARD_PART}`, "target") ? handleFadeClass : ""}`}
+        />
+        {partIconUrl ? (
+          <img src={partIconUrl} alt="" className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)] object-contain p-0.5" />
         ) : (
-          distinctParts.map((part) => {
-            const inRate = rateFor(storageConsumerNodeId(id, part), part);
-            const outRate = rateFor(storageProducerNodeId(id, part), part);
-            // `inRate` (the synthetic consumer's own rate) is negative — a
-            // consumption. `outRate` (the synthetic producer's own rate) is
-            // positive — a supply. Net = how fast the container is FILLING
-            // (positive) or DRAINING (negative): intake magnitude minus outflow.
-            const net = subtract(inRate ? abs(inRate) : ZERO, outRate ?? ZERO);
-
-            const inEdges = incoming.filter((e) => e.part === part).map((e) => ({ edgeId: e.id, part }));
-            const outEdges = outgoing.filter((e) => e.part === part).map((e) => ({ edgeId: e.id, part }));
-            const inValidity = computeNodeValidityState(nodeResultById.get(storageConsumerNodeId(id, part)), inEdges, edgeResultById);
-            const outValidity = computeNodeValidityState(nodeResultById.get(storageProducerNodeId(id, part)), outEdges, edgeResultById);
-            const rowSeverity = worseValidity(inValidity?.overall, outValidity?.overall);
-            const rowDetail =
-              rowSeverity === "mismatched"
-                ? [computeMismatchDetails(inEdges, edgeResultById)[part], computeMismatchDetails(outEdges, edgeResultById)[part]]
-                    .filter((d): d is string => !!d)
-                    .join("; ")
-                : undefined;
-            const rowTitle =
-              rowSeverity === "mismatched"
-                ? `Rate mismatch: ${rowDetail || "doesn't match a connected neighbor"}.`
-                : rowSeverity === "invalid"
-                  ? "Connection could not be resolved."
-                  : neighborTitles(part);
-            return (
-              <div
-                key={part}
-                className={`flex flex-col gap-0.5 px-2 py-1 text-[11px] ${rowRingClass(rowSeverity)}`}
-                title={rowTitle}
-              >
-                <span className="truncate text-[var(--text-primary)]">{part}</span>
-                <div className="flex items-center justify-between text-[var(--text-muted)]">
-                  <span>in {inRate ? formatRate(inRate, numberFormats) : "0"}/min</span>
-                  <span>out {outRate ? formatRate(outRate, numberFormats) : "0"}/min</span>
-                  <span
-                    className={
-                      isZero(net)
-                        ? "text-[var(--text-secondary)]"
-                        : isNegative(net)
-                          ? "text-[var(--danger)]"
-                          : "text-[var(--accent)]"
-                    }
-                  >
-                    net {isNegative(net) ? "-" : "+"}
-                    {formatRate(net, numberFormats)}/min
-                  </span>
-                </div>
-              </div>
-            );
-          })
+          <span className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)]" aria-hidden />
         )}
+        <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]">
+          {part ?? "No item — drag a wire to either side"}
+        </span>
+        {part && (
+          <span
+            className={`shrink-0 tabular-nums ${
+              isZero(net) ? "text-[var(--text-secondary)]" : isNegative(net) ? "text-[var(--danger)]" : "text-[var(--accent)]"
+            }`}
+          >
+            {isNegative(net) ? "-" : "+"}
+            {formatRate(net, numberFormats)}/min
+          </span>
+        )}
+        <Handle
+          type="source"
+          position={Position.Right}
+          id={`out:${WILDCARD_PART}`}
+          className={`${handleClass} ${isHandleFaded(`out:${WILDCARD_PART}`, "source") ? handleFadeClass : ""}`}
+        />
       </div>
-
-      <label className="flex items-center justify-between gap-2 border-t border-[var(--border-subtle)] px-2 py-1.5 text-[11px]">
-        <span className="text-[var(--text-secondary)]">Mode</span>
-        <select
-          value={node.storageMode ?? "partiallyFull"}
-          onChange={(event) => updateNode(sfmDoc, id, { storageMode: event.target.value })}
-          // Public-link work: see `RecipeNode.tsx`'s identical `disabled={data.readOnly}` doc comment.
-          disabled={data.readOnly}
-          className={`nodrag rounded border border-[var(--border-default)] bg-[var(--surface-sunken)] px-1.5 py-0.5 text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none ${data.readOnly ? "cursor-default opacity-70" : ""}`}
-        >
-          {STORAGE_MODES.map((mode) => (
-            <option key={mode} value={mode}>
-              {STORAGE_MODE_LABELS[mode]}
-            </option>
-          ))}
-        </select>
-      </label>
     </div>
   );
 });

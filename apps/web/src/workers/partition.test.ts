@@ -99,4 +99,60 @@ describe("partitionSnapshot", () => {
   it("returns an empty array for an empty snapshot", () => {
     expect(partitionSnapshot({ nodes: [], edges: [] })).toEqual([]);
   });
+
+  // Regression: a Storage Container's synthetic intake/outflow pair
+  // (`storagePassthrough.ts`) has NO real edge between them by design — the
+  // producer's `capMachineCountAtNodeId` is the only link. Reproduced live
+  // bug: connecting a new downstream node to the producer's side, once the
+  // consumer's side was already cached from an earlier solve, left the
+  // producer's `solve()` call with no idea the consumer node even existed,
+  // permanently defaulting to the `ONE`-machine fallback — "works after a
+  // fresh page load (cold cache, solved together once), broken after a live
+  // edit (warm cache, solved separately)". These co-partitioning tests are
+  // the fix's own regression coverage.
+  describe("capMachineCountAtNodeId co-partitioning", () => {
+    it("puts a capped node in the SAME component as its cap target even with no edge between them", () => {
+      const components = partitionSnapshot({
+        nodes: [node("consumer"), node("producer", { capMachineCountAtNodeId: "consumer" })],
+        edges: [],
+      });
+      expect(components).toHaveLength(1);
+      expect(components[0]!.snapshot.nodes.map((n) => n.id).sort()).toEqual(["consumer", "producer"]);
+    });
+
+    it("does NOT add a phantom edge for the cap link — the component's own edges stay exactly the real ones", () => {
+      const components = partitionSnapshot({
+        nodes: [node("consumer"), node("producer", { capMachineCountAtNodeId: "consumer" })],
+        edges: [],
+      });
+      expect(components[0]!.snapshot.edges).toEqual([]);
+    });
+
+    it("a live edit on the capped (producer) side still keeps both nodes co-partitioned, so the consumer's resolved state is always visible to it", () => {
+      // Simulates the reproduced scenario: "consumer" already has its own
+      // real upstream edge (as if from an earlier solve); a NEW downstream
+      // node/edge is added on the producer's side. Both must still land in
+      // ONE component (and therefore one `solve()` call) despite the
+      // producer/consumer pair itself having no edge.
+      const components = partitionSnapshot({
+        nodes: [node("upstream"), node("consumer"), node("producer", { capMachineCountAtNodeId: "consumer" }), node("downstream")],
+        edges: [edge("e1", "upstream", "consumer"), edge("e2", "producer", "downstream")],
+      });
+      expect(components).toHaveLength(1);
+      expect(components[0]!.snapshot.nodes.map((n) => n.id).sort()).toEqual(["consumer", "downstream", "producer", "upstream"]);
+    });
+
+    it("still separates two otherwise-unrelated cap pairs into their own components", () => {
+      const components = partitionSnapshot({
+        nodes: [
+          node("consumer1"),
+          node("producer1", { capMachineCountAtNodeId: "consumer1" }),
+          node("consumer2"),
+          node("producer2", { capMachineCountAtNodeId: "consumer2" }),
+        ],
+        edges: [],
+      });
+      expect(components).toHaveLength(2);
+    });
+  });
 });

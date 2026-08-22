@@ -1,11 +1,10 @@
 // Storage Container (`kind: "storage"`) — same synthetic-`blueprintCopyBasis`
 // rewrite `sinkPassthrough.ts` uses for AWESOME Sink/Dimensional Depot, but
-// shaped differently: a Storage Container's whole point (per PLAN.md §2's
-// "four modes: Partially Full / Full / Empty / Input = Output") is that its
-// input and output sides are DECOUPLED — unlike a Splurger, in doesn't have
-// to equal out. So instead of one passthrough edge per part connecting a
-// real producer straight to a real consumer, each side gets its OWN
-// independent synthetic compound node per distinct part:
+// shaped differently: a Storage Container's whole point is that its input
+// and output sides are DECOUPLED — unlike a Splurger, in doesn't have to
+// equal out. So instead of one passthrough edge per part connecting a real
+// producer straight to a real consumer, each side gets its OWN independent
+// synthetic compound node per distinct part:
 //   - an incoming part-group becomes a synthetic CONSUMER (`perCopyRates:
 //     { [part]: "-1" }`) with `limit: null` — a Storage Container always
 //     accepts everything routed into it, no cap (the "unlimited input" the
@@ -14,12 +13,29 @@
 //     { [part]: "1" }`) with `limit: null` — supplies exactly as much as
 //     whatever's downstream demands, uncapped, the mirror image of an
 //     unpinned real recipe node deriving its own rate from demand.
-// Only the default `"partiallyFull"` `storageMode` gets this treatment —
-// see `canvas/nodes/StorageNode.tsx`'s header for why the other three modes
-// (which would each need genuinely different solver semantics: "Full"/
-// "Empty" behave like an always-available/never-accepting source or sink,
-// "Input = Output" is actual conservation like a Splurger) are accepted,
-// flagged known gaps rather than implemented here.
+//
+// The consumer and producer nodes for the SAME part have no solver edge
+// between them at all (that's the decoupling) — which means, on its own, an
+// upstream pin can propagate into the intake side but has no graph path to
+// reach the outflow side, AND the outflow side has no way to know it can
+// never emit more than the intake side actually received. Left alone, the
+// first half of that made a Storage Container's output default to
+// Basic/Full mode's plain `ONE`-machine fallback (an almost-always-wrong
+// flat rate) unless the user happened to also pin something downstream; the
+// second half meant that once something downstream WAS pinned, the output
+// would happily report whatever downstream demanded even if it exceeded
+// what the intake side was actually supplying (physically impossible for a
+// real buffer — you can't emit more than you take in). Both fixed via
+// `@scm/solver`'s `SolverNode.capMachineCountAtNodeId` (see that field's own
+// doc comment in `snapshot.ts`): the producer node for a part that also has
+// an intake-side consumer node points `capMachineCountAtNodeId` at that
+// consumer's id, so once the intake side resolves (from whatever's actually
+// feeding it), Basic/Full mode's propagation loop both (a) lets the outflow
+// side borrow that count when nothing downstream can supply one at all, and
+// (b) CAPS the outflow side at it even when downstream demands more — with
+// the shortfall then flagged on the downstream node via the ordinary rate-
+// mismatch/insufficient-input machinery, same as any two ordinary mismatched
+// pinned nodes.
 //
 // A Storage Container is allowed to carry more than one distinct part at
 // once (per this job's own scope decision — "allow it, flag visually"
@@ -84,6 +100,14 @@ function synthesizeSide(
   direction: "in" | "out",
   nodes: SolverNode[],
   rewrittenEdges: SolverEdge[],
+  // Only ever passed for the "out" side — see `computeStorageBufferNodes`.
+  // The set of parts the "in" side ALSO has a synthetic consumer node for,
+  // so the producer can be capped at that consumer's resolved machine count
+  // (`@scm/solver`'s `SolverNode.capMachineCountAtNodeId`) once it resolves
+  // — both as a fallback whenever nothing downstream happens to be pinned,
+  // AND as a hard ceiling even when downstream demands more than the intake
+  // side actually received.
+  cappablePartsFromIntake?: ReadonlySet<string>,
 ): void {
   const idFor = direction === "in" ? storageConsumerNodeId : storageProducerNodeId;
   const sign = direction === "in" ? "-1" : "1";
@@ -103,6 +127,9 @@ function synthesizeSide(
         clock: null,
         shards: 0,
         blueprintCopyBasis: { perCopyRates: { [edge.part]: sign }, perCopyPowerMW: 0 },
+        ...(cappablePartsFromIntake?.has(edge.part)
+          ? { capMachineCountAtNodeId: storageConsumerNodeId(storageNodeId, edge.part) }
+          : {}),
       });
     }
     rewrittenEdges.push(
@@ -135,8 +162,9 @@ export function computeStorageBufferNodes(
     const distinctParts = new Set([...incoming, ...outgoing].map((e) => e.part));
     if (distinctParts.size > 1) multiPartNodeIds.add(storage.id);
 
+    const intakeParts = new Set(incoming.map((e) => e.part));
     synthesizeSide(storage.id, incoming, "in", nodes, rewrittenEdges);
-    synthesizeSide(storage.id, outgoing, "out", nodes, rewrittenEdges);
+    synthesizeSide(storage.id, outgoing, "out", nodes, rewrittenEdges, intakeParts);
   }
 
   return { nodes, edges: rewrittenEdges, multiPartNodeIds };

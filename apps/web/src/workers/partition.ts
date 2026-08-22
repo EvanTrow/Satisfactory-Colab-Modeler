@@ -6,7 +6,7 @@
 // component actually needs to go back through the worker.
 import type { SolverEdge, SolverNode, SolverSnapshot } from "@scm/solver";
 
-import { computeConnectedComponents } from "./connectedComponents";
+import { computeConnectedComponents, type GroupingLink } from "./connectedComponents";
 import { idCompare } from "./ordering";
 
 export interface SolverComponent {
@@ -49,9 +49,38 @@ function componentSignature(nodes: readonly SolverNode[], edges: readonly Solver
   return JSON.stringify({ nodes: sortedNodes, edges: sortedEdges });
 }
 
+/**
+ * `SolverNode.capMachineCountAtNodeId` (Storage Container's intake/outflow
+ * cap — see `@scm/solver`'s `snapshot.ts`) is a real solve-time dependency
+ * between two nodes that deliberately have NO edge between them
+ * (`storagePassthrough.ts`'s whole point). Left out of partitioning
+ * entirely, the two nodes could land in different components — and once
+ * the cap-source side's component is cached (a cache HIT, not resent to the
+ * worker on a later tick — see `solveScheduler.ts`), a live edit that only
+ * dirties the capped side's own component would `solve()` it with no idea
+ * the cap-source node even exists, permanently falling back to the
+ * `ONE`-machine default regardless of what the cap-source actually
+ * resolved to. This is exactly the "correct after a fresh page load (cold
+ * cache, every component solved together at least once), wrong after a
+ * live edit (warm cache)" bug this function's own regression test exercises.
+ * Fixed by treating every node's `capMachineCountAtNodeId` as an additional
+ * grouping link (`computeConnectedComponents`'s `extraGroupingLinks`) —
+ * the two nodes are now always co-partitioned, so a live edit to either
+ * side's edges always dirties (and re-solves) both together.
+ */
+function capGroupingLinks(nodes: readonly SolverNode[]): GroupingLink[] {
+  const links: GroupingLink[] = [];
+  for (const node of nodes) {
+    if (node.capMachineCountAtNodeId) {
+      links.push({ fromNode: node.id, toNode: node.capMachineCountAtNodeId });
+    }
+  }
+  return links;
+}
+
 export function partitionSnapshot(full: SolverSnapshot): SolverComponent[] {
   const nodeIds = full.nodes.map((n) => n.id);
-  const graphComponents = computeConnectedComponents(nodeIds, full.edges);
+  const graphComponents = computeConnectedComponents(nodeIds, full.edges, capGroupingLinks(full.nodes));
 
   const nodeById = new Map(full.nodes.map((n) => [n.id, n] as const));
   const edgeById = new Map(full.edges.map((e) => [e.id, e] as const));

@@ -137,6 +137,45 @@ function isDepotConnectionAllowed(sfmDoc: SfmDocument, toNode: string, part: str
 }
 
 /**
+ * A Storage Container (`kind: "storage"`) holds exactly one item type —
+ * `StorageNode.tsx`'s redesign collapsed it from "allow multiple, flag
+ * visually" down to a hard rule, matching a Dimensional Depot Uploader's own
+ * single-item restriction just above. Rejects a new connection touching
+ * either side of a storage node whose existing edges already carry a
+ * DIFFERENT part; `true` (nothing to gate) once every incident edge (if any)
+ * already agrees with `part`, or when neither side is a storage node at all.
+ */
+function isStorageConnectionAllowed(sfmDoc: SfmDocument, fromNode: string, toNode: string, part: string): boolean {
+  for (const nodeId of [fromNode, toNode]) {
+    const node = getNode(sfmDoc, nodeId);
+    if (!node || node.kind !== "storage") continue;
+    const hasOtherPart = listEdges(sfmDoc).some(
+      (edge) => (edge.fromNode === nodeId || edge.toNode === nodeId) && edge.part !== part,
+    );
+    if (hasOtherPart) return false;
+  }
+  return true;
+}
+
+/**
+ * A Storage Container's own `Handle`s stay plain wildcards forever (never
+ * renamed to the real part — see `StorageNode.tsx`'s header for why: an
+ * `EdgeRecord.fromPort`/`.toPort` is fixed at connect time, so a Handle
+ * whose id changed later would silently orphan the edge already anchored to
+ * the old one). That means `parsePortHandleId` alone can't tell a caller
+ * what item a storage node actually holds — this reads it straight off
+ * whichever edge (either side) is currently wired to it instead, since
+ * `isStorageConnectionAllowed` above guarantees every incident edge agrees.
+ * `undefined` when nothing is connected yet. Used by `CanvasView.tsx`'s
+ * `handleConnectEnd` so dragging FROM a storage node's output pre-filters
+ * the Recipe Chooser by the real held part, the same way dragging from a
+ * real recipe port already does, instead of falling back to "unfiltered."
+ */
+export function storageNodePart(sfmDoc: SfmDocument, nodeId: string): string | undefined {
+  return listEdges(sfmDoc).find((edge) => edge.fromNode === nodeId || edge.toNode === nodeId)?.part;
+}
+
+/**
  * Normalizes a React-Flow-`Connection`-shaped object into `@scm/ydoc`'s
  * directional `fromNode/fromPort -> toNode/toPort` edge endpoints, with
  * `fromPort` always the `"out:"` handle and `toPort` always the `"in:"`
@@ -195,6 +234,7 @@ export function resolveEdgeEndpoints(sfmDoc: SfmDocument, connection: Connection
   }
 
   if (!isDepotConnectionAllowed(sfmDoc, resolved.toNode, part)) return null;
+  if (!isStorageConnectionAllowed(sfmDoc, resolved.fromNode, resolved.toNode, part)) return null;
   return resolved;
 }
 

@@ -84,7 +84,7 @@
 //     snapshot's own array order. See `determinism.test.ts` for the test
 //     that exercises exactly this: the same logical graph, submitted with
 //     shuffled node/edge array order, produces identical output.
-import { ONE, ZERO, add, isNegative, isZero, negate, isPositive, type Rational } from "@scm/rational";
+import { ONE, ZERO, add, compare, isNegative, isZero, negate, isPositive, type Rational } from "@scm/rational";
 import type { GameData } from "@scm/gamedata";
 import { buildEdgeGroups, edgeShareFromSource, edgeShareFromTarget } from "./edgeGroups";
 import { resolveEdgesJointly } from "./edgeResolution";
@@ -158,6 +158,23 @@ export function propagateMachineCounts(
       const profile = profiles.get(nodeId);
       if (!profile?.recipe) continue;
 
+      // `capMachineCountAtNodeId` (see `snapshot.ts`'s own doc comment) —
+      // a Storage Container's outflow side can never supply more than its
+      // intake side is actually receiving, no matter how much downstream
+      // demands. Withholding entirely until the cap node itself resolves
+      // (rather than letting this node resolve off downstream demand THEN
+      // trying to retroactively cap it) matters because `resolved` is
+      // permanent once set within this fixed point — a node resolved off
+      // an uncapped downstream pin in an earlier pass could never be
+      // revisited once the cap becomes known in a later one. Deferring
+      // guarantees the cap is always known before this node ever commits,
+      // at the cost of one extra pass whenever both sides hard-pin in the
+      // very same pass (Jacobi semantics: a node resolved in pass N isn't
+      // visible to another node's SAME pass N, only pass N+1 onward).
+      const capNodeId = profile.node.capMachineCountAtNodeId;
+      if (capNodeId && !resolved.has(capNodeId)) continue;
+      const capCount = capNodeId ? counts.get(capNodeId) : undefined;
+
       // Known limitation: keyed by bare part name, so an UNPINNED node that
       // has incident edges on BOTH sides of a part name a recipe lists
       // twice (an input entry and a separate byproduct output entry — e.g.
@@ -184,7 +201,14 @@ export function propagateMachineCounts(
           : edgeShareFromSource(incident.edge, otherProfile, otherCount, groups);
         impliedByPart.set(incident.part, add(impliedByPart.get(incident.part) ?? ZERO, share));
       }
-      if (impliedByPart.size === 0) continue;
+      if (impliedByPart.size === 0) {
+        // No real (downstream-demand) neighbor could seed this node this
+        // pass — if it has a cap, that cap alone is its resolved supply
+        // (the "nothing downstream happens to be pinned" case: a Storage
+        // Container just passes through exactly what it's receiving).
+        if (capCount !== undefined) updates.set(nodeId, capCount);
+        continue;
+      }
 
       // Deterministic pivot: the recipe's own primary part if it has an
       // implied rate, else the alphabetically-first part name that does.
@@ -203,7 +227,15 @@ export function propagateMachineCounts(
       const signedTarget = isPositive(partEntry.amount) ? impliedMagnitude : negate(impliedMagnitude);
       const count = machineCountForTargetRate(profile, chosenPart, signedTarget);
       if (count && !isNegative(count) && !isZero(count)) {
-        updates.set(nodeId, count);
+        // Downstream wants `count` — but never more than the cap allows.
+        // Below the cap (or no cap at all), downstream's own number stands
+        // untouched; ABOVE it, this node commits to the cap instead, which
+        // leaves the demanding downstream neighbor's own edge looking
+        // under-supplied — the exact same rate-mismatch/shortage machinery
+        // (`edgeValidation.ts`/`computeInputShortage.ts`) that already
+        // flags any two ordinary mismatched pinned nodes, no special-casing
+        // needed for this node kind.
+        updates.set(nodeId, capCount !== undefined && compare(capCount, count) < 0 ? capCount : count);
       }
     }
 
