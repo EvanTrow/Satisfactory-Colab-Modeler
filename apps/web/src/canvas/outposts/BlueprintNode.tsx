@@ -28,19 +28,21 @@
 import { memo, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 
 import { formatRational, parseRational, toFractionString } from "@scm/rational";
-import { updateContainer } from "@scm/ydoc";
+import { listEdges, updateContainer } from "@scm/ydoc";
 import { Handle, Position, useConnection, type NodeProps } from "@xyflow/react";
 
-import { getBlueprintIconUrl } from "../../assets/icons";
+import { getBlueprintIconUrl, getIconUrl } from "../../assets/icons";
 import { useRemotePresence } from "../../collab";
 import { blueprintCompoundNodeId } from "../../workers";
 import { useCanvasDoc } from "../CanvasDocContext";
 import { classifyEdgeValidity } from "../edges/classifyEdgeValidity";
-import { isValidDragCandidate } from "../edges/connectionLogic";
+import { WILDCARD_PART, isValidDragCandidate } from "../edges/connectionLogic";
+import { formatRate } from "../formatRate";
 import { computeNodeValidityState } from "../nodes/computeValidity";
 import { useSolverResult } from "../SolverResultContext";
 import { useSettings } from "../useSettings";
 import type { CanvasNode } from "../useYjsSync";
+import { computeIoDanglingParts, computeIoNodePorts, computeIoPartRate, outpostInputNodeId, outpostOutputNodeId } from "./io";
 
 const blueprintIconUrl = getBlueprintIconUrl();
 
@@ -117,16 +119,89 @@ export const BlueprintNode = memo(function BlueprintNode({ id, data, selected }:
   const container = data.container;
   // Defensive only — `containerToBlueprintFlowNode` always sets `data.container` for a `type: "blueprint"` node.
   if (!container) return null;
-  const ports = data.ports ?? [];
 
   const copiesResult = nodeResultById.get(blueprintCompoundNodeId(container.id));
   const copiesLimitField = useCopiesLimitField(container, sfmDoc);
+
+  // Outpost/Blueprint I/O rework: see `OutpostNode.tsx`'s identical
+  // treatment for the full "why" — the interactive rows are driven directly
+  // by the locked Inputs/Outputs nodes' own incident edges (from EITHER
+  // side), not just a boundary-crossing one, so a part shows up as soon as
+  // it's wired on ONE side.
+  const allEdges = listEdges(sfmDoc);
+  const inputsNodeId = outpostInputNodeId(container.id);
+  const outputsNodeId = outpostOutputNodeId(container.id);
+  const inRows = computeIoNodePorts(allEdges, inputsNodeId);
+  const outRows = computeIoNodePorts(allEdges, outputsNodeId);
+  const danglingInParts = computeIoDanglingParts(allEdges, inputsNodeId, "out");
+  const danglingOutParts = computeIoDanglingParts(allEdges, outputsNodeId, "in");
+  const legacyPorts = (data.ports ?? []).filter((port) => port.id.startsWith("boundary:"));
+
+  interface Row {
+    id: string;
+    direction: "in" | "out";
+    part: string;
+    validity: ReturnType<typeof classifyEdgeValidity>;
+    rate: ReturnType<typeof computeIoPartRate>;
+    dangling: boolean;
+  }
+
+  const VALIDITY_RANK: Record<ReturnType<typeof classifyEdgeValidity>, number> = {
+    invalid: 3,
+    mismatched: 2,
+    unknown: 1,
+    valid: 0,
+  };
+
+  function worstValidity(edgeIds: readonly string[]): ReturnType<typeof classifyEdgeValidity> {
+    return edgeIds
+      .map((edgeId) => classifyEdgeValidity(edgeResultById.get(edgeId)))
+      .reduce((worst, current) => (VALIDITY_RANK[current] > VALIDITY_RANK[worst] ? current : worst), "valid" as ReturnType<typeof classifyEdgeValidity>);
+  }
+
+  const rows: Row[] = [
+    ...inRows.map(({ part, edgeIds }) => ({
+      id: `in:${part}`,
+      direction: "in" as const,
+      part,
+      validity: worstValidity(edgeIds),
+      rate: computeIoPartRate(allEdges, inputsNodeId, part, edgeResultById, nodeResultById),
+      dangling: danglingInParts.has(part),
+    })),
+    ...outRows.map(({ part, edgeIds }) => ({
+      id: `out:${part}`,
+      direction: "out" as const,
+      part,
+      validity: worstValidity(edgeIds),
+      rate: computeIoPartRate(allEdges, outputsNodeId, part, edgeResultById, nodeResultById),
+      dangling: danglingOutParts.has(part),
+    })),
+    ...legacyPorts.map((port) => {
+      const legacyRate = edgeResultById.get(port.edgeId)?.rate;
+      return {
+        id: port.id,
+        direction: port.direction,
+        part: port.part,
+        validity: classifyEdgeValidity(edgeResultById.get(port.edgeId)),
+        rate: legacyRate !== undefined ? parseRational(legacyRate) : null,
+        dangling: false,
+      };
+    }),
+  ];
+
   // The compound node's own incident edges, from the solver's perspective,
   // are exactly this container's boundary-crossing edges — a blueprint
   // compound node is a real `SolverNode` whose ports ARE these boundary
-  // edges (`blueprintCollapse.ts`'s own header). Reused for both the
-  // whole-card validity below and each individual port's own ring.
-  const boundaryIncidentEdges = ports.map((port) => ({ edgeId: port.edgeId, part: port.part }));
+  // edges (`blueprintCollapse.ts`'s own header). Reused for the whole-card
+  // validity below; now gathered from every edge touching either locked
+  // node (not just the ones that happened to cross the boundary) plus the
+  // legacy rows, so a still-one-sided connection's own issues (if any) are
+  // still represented.
+  const boundaryIncidentEdges = [
+    ...inRows.flatMap(({ part, edgeIds }) => edgeIds.map((edgeId) => ({ edgeId, part }))),
+    ...outRows.flatMap(({ part, edgeIds }) => edgeIds.map((edgeId) => ({ edgeId, part }))),
+    ...legacyPorts.map((port) => ({ edgeId: port.edgeId, part: port.part })),
+  ];
   const copiesValidity = computeNodeValidityState(copiesResult, boundaryIncidentEdges, edgeResultById);
 
   function isHandleFaded(handleId: string, type: "source" | "target"): boolean {
@@ -184,51 +259,77 @@ export const BlueprintNode = memo(function BlueprintNode({ id, data, selected }:
       </div>
 
       <div className="divide-y divide-[var(--border-subtle)] py-0.5">
-        {ports.length === 0 ? (
+        {rows.length === 0 && (
           <p className="px-2 py-1.5 text-[11px] text-[var(--text-muted)]">
-            No connections cross this blueprint&apos;s boundary yet.
+            No connections yet — drag a wire to either side.
           </p>
-        ) : (
-          ports.map((port) => {
-            const validity = classifyEdgeValidity(edgeResultById.get(port.edgeId));
-            const ring = portRingClass(validity);
-            return (
-              <div
-                key={port.id}
-                className="relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)]"
-                title={
-                  validity === "invalid"
+        )}
+        {rows.map((row) => {
+          const ring = portRingClass(row.validity);
+          const iconUrl = getIconUrl(row.part);
+          return (
+            <div
+              key={row.id}
+              className={`relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)] ${row.dangling ? "bg-[var(--danger-soft)]" : ""}`}
+              title={
+                row.dangling
+                  ? `${row.part} needs the other side wired — open this blueprint and connect it to a machine.`
+                  : row.validity === "invalid"
                     ? "Connection could not be resolved."
-                    : validity === "mismatched"
+                    : row.validity === "mismatched"
                       ? "Rate mismatch on this boundary connection."
                       : undefined
-                }
-              >
-                {port.direction === "in" && (
-                  <Handle
-                    type="target"
-                    position={Position.Left}
-                    id={port.id}
-                    className={`${inHandleClass} ${ring ?? ""} ${isHandleFaded(port.id, "target") ? handleFadeClass : ""}`}
-                  />
-                )}
-                <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]">
-                  {port.direction === "in" ? "→ " : ""}
-                  {port.part}
-                  {port.direction === "out" ? " →" : ""}
+              }
+            >
+              {row.direction === "in" && (
+                <Handle
+                  type="target"
+                  position={Position.Left}
+                  id={row.id}
+                  className={`${inHandleClass} ${ring ?? ""} ${isHandleFaded(row.id, "target") ? handleFadeClass : ""}`}
+                />
+              )}
+              {iconUrl ? (
+                <img src={iconUrl} alt="" className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)] object-contain p-0.5" />
+              ) : (
+                <span className="h-4 w-4 shrink-0 rounded-sm bg-[var(--surface-sunken)]" aria-hidden />
+              )}
+              <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]">
+                {row.direction === "in" ? "→ " : ""}
+                {row.part}
+                {row.direction === "out" ? " →" : ""}
+              </span>
+              {row.rate && (
+                <span className="shrink-0 tabular-nums text-[var(--text-secondary)]">
+                  {formatRate(row.rate, numberFormats)}/min
                 </span>
-                {port.direction === "out" && (
-                  <Handle
-                    type="source"
-                    position={Position.Right}
-                    id={port.id}
-                    className={`${outHandleClass} ${ring ?? ""} ${isHandleFaded(port.id, "source") ? handleFadeClass : ""}`}
-                  />
-                )}
-              </div>
-            );
-          })
-        )}
+              )}
+              {row.direction === "out" && (
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={row.id}
+                  className={`${outHandleClass} ${ring ?? ""} ${isHandleFaded(row.id, "source") ? handleFadeClass : ""}`}
+                />
+              )}
+            </div>
+          );
+        })}
+        <div className="relative flex items-center gap-1.5 px-2 py-1 text-[11px] text-[var(--text-muted)]">
+          <Handle
+            type="target"
+            position={Position.Left}
+            id={`in:${WILDCARD_PART}`}
+            className={`${inHandleClass} ${isHandleFaded(`in:${WILDCARD_PART}`, "target") ? handleFadeClass : ""}`}
+          />
+          <span className="flex-1 italic">Drag a wire here to add an input or output</span>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id={`out:${WILDCARD_PART}`}
+            className={`${outHandleClass} ${isHandleFaded(`out:${WILDCARD_PART}`, "source") ? handleFadeClass : ""}`}
+          />
+        </div>
       </div>
 
       <div

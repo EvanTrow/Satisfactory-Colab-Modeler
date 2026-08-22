@@ -30,7 +30,7 @@
 // container the canvas is currently showing.
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
-import { getSettings, type SfmDocument } from "@scm/ydoc";
+import { getSettings, listEdges, listNodes, type SfmDocument } from "@scm/ydoc";
 import type { EdgeSolveResult, NodeSolveResult, SolveResult, SolverMode } from "@scm/solver";
 import { create } from "zustand";
 
@@ -39,8 +39,11 @@ import { expandBlueprintResults, type BlueprintDisplayInfo } from "./blueprintCo
 import { mergeComponentResults } from "./mergeResults";
 import type { HostToWorkerMessage, WorkerToHostMessage } from "./protocol";
 import { originalEdgeIdFromSinkEdgeId } from "./sinkPassthrough";
+import { computePassthroughEdgeAliases } from "./splurgerPassthrough";
 import { originalEdgeIdFromStorageEdgeId } from "./storagePassthrough";
 import { createSolveScheduler, type SolveHostState, type SolveStaleness } from "./solveScheduler";
+
+const EMPTY_ALIASES = new Map<string, string>();
 
 interface SolveStoreState extends SolveHostState {
   /**
@@ -54,8 +57,17 @@ interface SolveStoreState extends SolveHostState {
    * staleness `staleness: "stale-recomputing"` already signals elsewhere.
    */
   blueprints: readonly BlueprintDisplayInfo[];
+  /**
+   * Outpost/Blueprint I/O rework: original-edge-id -> synthetic-edge-id,
+   * for every Splurger AND outpost-input/outpost-output edge this rewrite
+   * could unambiguously alias (`splurgerPassthrough.ts`'s
+   * `computePassthroughEdgeAliases`) — updated synchronously alongside
+   * `blueprints`, same reasoning as that field's own doc comment.
+   */
+  passthroughAliases: ReadonlyMap<string, string>;
   setState: (state: SolveHostState) => void;
   setBlueprints: (blueprints: readonly BlueprintDisplayInfo[]) => void;
+  setPassthroughAliases: (aliases: ReadonlyMap<string, string>) => void;
 }
 
 function createSolveStore() {
@@ -64,8 +76,10 @@ function createSolveStore() {
     staleness: "fresh",
     fullProgress: null,
     blueprints: [],
+    passthroughAliases: EMPTY_ALIASES,
     setState: (state) => set(state),
     setBlueprints: (blueprints) => set({ blueprints }),
+    setPassthroughAliases: (passthroughAliases) => set({ passthroughAliases }),
   }));
 }
 
@@ -104,7 +118,10 @@ function indexNodes(result: SolveResult | null): ReadonlyMap<string, NodeSolveRe
   return new Map(result.nodes.map((n) => [n.nodeId, n] as const));
 }
 
-function indexEdges(result: SolveResult | null): ReadonlyMap<string, EdgeSolveResult> {
+function indexEdges(
+  result: SolveResult | null,
+  passthroughAliases: ReadonlyMap<string, string>,
+): ReadonlyMap<string, EdgeSolveResult> {
   if (!result || result.edges.length === 0) return EMPTY_EDGE_RESULTS;
   const map = new Map(result.edges.map((e) => [e.edgeId, e] as const));
   // A sink- or storage-rewritten edge's `EdgeSolveResult` is keyed by its
@@ -118,14 +135,20 @@ function indexEdges(result: SolveResult | null): ReadonlyMap<string, EdgeSolveRe
   // check) so a real, non-rewritten edge's own entry always wins if an id
   // were ever to collide, though neither `originalEdgeIdFrom*EdgeId` helper
   // ever recovers an id that was a valid standalone `SolverEdge` id to begin
-  // with (they always carried their own minted prefix). Splurger's own
-  // rewrite is deliberately NOT aliased here — it can genuinely MERGE two
-  // original edges into one synthetic edge with no single recoverable
-  // "original id" (see `splurgerPassthrough.ts`'s header), so there is
-  // nothing to alias.
+  // with (they always carried their own minted prefix).
   for (const e of result.edges) {
     const originalId = originalEdgeIdFromSinkEdgeId(e.edgeId) ?? originalEdgeIdFromStorageEdgeId(e.edgeId);
     if (originalId && !map.has(originalId)) map.set(originalId, e);
+  }
+  // Outpost/Blueprint I/O rework (and, incidentally, the same pre-existing
+  // gap for a plain Splurger): `passthroughAliases` only ever contains an
+  // UNAMBIGUOUS original-id -> synthetic-id mapping (see
+  // `computePassthroughEdgeAliases`'s header) — a genuinely multi-way edge
+  // is left out on purpose rather than guessing, same "unknown, not a
+  // guess" posture as everywhere else in this function.
+  for (const [originalId, syntheticId] of passthroughAliases) {
+    const synthetic = map.get(syntheticId);
+    if (synthetic && !map.has(originalId)) map.set(originalId, synthetic);
   }
   return map;
 }
@@ -216,6 +239,16 @@ export function useSolver(sfmDoc: SfmDocument, diagnostics?: UseSolverDiagnostic
       // `SolveStoreState.blueprints`'s own doc comment for why that's safe.
       const { snapshot, blueprints } = buildSolverSnapshotWithBlueprints(sfmDoc, mode);
       useStore.getState().setBlueprints(blueprints);
+      // Outpost/Blueprint I/O rework: computed independently of the
+      // snapshot build above (same underlying `computeSplurgerPassthroughEdges`
+      // call, just also asking for its `sourceEdgeIds`) — cheap, pure, and
+      // kept as its own step rather than threading a new field through
+      // `buildSolverSnapshot`'s existing return shape (which several other
+      // call sites/tests already destructure as a bare `SolverSnapshot`).
+      const passthroughNodes = listNodes(sfmDoc)
+        .filter((n) => n.kind === "splurger" || n.kind === "outpost-input" || n.kind === "outpost-output")
+        .map((n) => ({ id: n.id, priorityOrder: n.priorityOrder }));
+      useStore.getState().setPassthroughAliases(computePassthroughEdgeAliases(passthroughNodes, listEdges(sfmDoc)));
       scheduler.submit(snapshot, mode);
     };
 
@@ -245,12 +278,16 @@ export function useSolver(sfmDoc: SfmDocument, diagnostics?: UseSolverDiagnostic
   }, [sfmDoc, useStore]);
 
   const blueprints = useStore((s) => s.blueprints);
+  const passthroughAliases = useStore((s) => s.passthroughAliases);
   const expandedResult = useMemo(
     () => (result ? expandBlueprintResults(result, blueprints, mergeComponentResults) : result),
     [result, blueprints],
   );
   const nodeResultById = useMemo(() => indexNodes(expandedResult), [expandedResult]);
-  const edgeResultById = useMemo(() => indexEdges(expandedResult), [expandedResult]);
+  const edgeResultById = useMemo(
+    () => indexEdges(expandedResult, passthroughAliases),
+    [expandedResult, passthroughAliases],
+  );
   const fullProgress = useStore((s) => s.fullProgress);
 
   // Job 026: `result` itself is the EXPANDED result (blueprint compound

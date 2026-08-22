@@ -128,7 +128,16 @@ export type Container = z.infer<typeof ContainerSchema>;
  * ellipsis — more kinds are expected to be added by later jobs without
  * requiring a schema change here.
  */
-export const KNOWN_NODE_KINDS = ["recipe", "splurger", "storage", "sink", "depot", "outpost"] as const;
+export const KNOWN_NODE_KINDS = [
+  "recipe",
+  "splurger",
+  "storage",
+  "sink",
+  "depot",
+  "outpost",
+  "outpost-input",
+  "outpost-output",
+] as const;
 export type KnownNodeKind = (typeof KNOWN_NODE_KINDS)[number];
 export type NodeKind = KnownNodeKind | (string & {});
 

@@ -10,6 +10,7 @@ import { defaultGameData } from "@scm/gamedata";
 import {
   addEdge as addEdgeRecord,
   computeEdgeId,
+  getContainer,
   getEdge,
   getNode,
   listEdges,
@@ -18,6 +19,8 @@ import {
   type SfmDocument,
   type Waypoint,
 } from "@scm/ydoc";
+
+import { outpostInputNodeId, outpostOutputNodeId } from "../outposts/io";
 
 /**
  * Job 010's port `Handle` id contract: `${"in"|"out"}:${part name}`. See
@@ -233,9 +236,31 @@ export function resolveEdgeEndpoints(sfmDoc: SfmDocument, connection: Connection
     return null;
   }
 
+  // Outpost/Blueprint rework: dragging a connection straight onto the outer
+  // boundary card (`OutpostNode.tsx`/`BlueprintNode.tsx`) reports that
+  // card's own flow-node id, which IS the `Container` id (see
+  // `useYjsSync.ts`'s `containerToOutpostFlowNode`). Redirect it to the
+  // container's own locked pass-through node — the Outputs node when it's
+  // acting as `fromNode` (flow leaving the container), the Inputs node when
+  // it's `toNode` (flow entering it) — so the persisted edge always names a
+  // real `NodeRecord` on both ends, exactly like every other connection.
+  // Falls back to the unredirected id if that pass-through node doesn't
+  // exist yet (a legacy document whose one-time backfill hasn't landed) —
+  // defensive only; `getContainer` returning `undefined` for an ordinary
+  // node id (the overwhelmingly common case) makes this a no-op then.
+  resolved.fromNode = redirectContainerEndpoint(sfmDoc, resolved.fromNode, "from");
+  resolved.toNode = redirectContainerEndpoint(sfmDoc, resolved.toNode, "to");
+
   if (!isDepotConnectionAllowed(sfmDoc, resolved.toNode, part)) return null;
   if (!isStorageConnectionAllowed(sfmDoc, resolved.fromNode, resolved.toNode, part)) return null;
   return resolved;
+}
+
+function redirectContainerEndpoint(sfmDoc: SfmDocument, nodeId: string, role: "from" | "to"): string {
+  const container = getContainer(sfmDoc, nodeId);
+  if (!container) return nodeId;
+  const ioNodeId = role === "from" ? outpostOutputNodeId(container.id) : outpostInputNodeId(container.id);
+  return getNode(sfmDoc, ioNodeId) ? ioNodeId : nodeId;
 }
 
 /** Wired to `<ReactFlow isValidConnection={...} />` — accepts a `Connection` mid-drag or a full `Edge` (React Flow calls it with either). */

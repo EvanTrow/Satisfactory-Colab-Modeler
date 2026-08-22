@@ -63,7 +63,6 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 
-import { parseRational } from "@scm/rational";
 import {
   addWaypoint,
   getEdge,
@@ -85,7 +84,7 @@ import { getIconUrl } from "../../assets/icons";
 import { createThrottled, useEdgeDragPublisher, type AwarenessCursor } from "../../collab";
 import { useCanvasDoc } from "../CanvasDocContext";
 import { isDoubleClick, type ClickPoint } from "../doubleClick";
-import { formatRate } from "../formatRate";
+import { formatRate, resolveEdgeRate } from "../formatRate";
 import { useGroupSelection } from "../GroupSelectionContext";
 import { computeMismatchDetails } from "../nodes/computeMismatchDetails";
 import { parseWaypointKey, waypointKey } from "../selection";
@@ -210,7 +209,7 @@ export const ConnectionEdge = memo(function ConnectionEdge({
   // has solved a rate for this specific edge yet (None mode, a fresh edge
   // before the first solve lands, etc.), in which case every label falls
   // back to just the part name, same as before this rate was shown at all.
-  const { edgeResultById } = useSolverResult();
+  const { edgeResultById, nodeResultById } = useSolverResult();
 
   // Local optimistic drag state for a waypoint being repositioned — mirrors
   // `useYjsSync.ts`'s node-drag pattern (smooth local movement, single
@@ -439,12 +438,13 @@ export const ConnectionEdge = memo(function ConnectionEdge({
   // Every label on this edge — the bare one and every waypoint's — shows
   // the same content: the part's icon (like the reference Satisfactory
   // Modeler app) plus the bare rate number, or just the part name as text
-  // when no solve has produced a rate for this edge yet.
+  // when no rate at all is knowable yet (`resolveEdgeRate`'s null case —
+  // pre-first-solve, or a genuinely disconnected part with nothing on
+  // either end to read a rate from).
   const edgeResult = edgeResultById.get(id);
   const iconUrl = getIconUrl(record.part);
-  const labelText = edgeResult
-    ? formatRate(parseRational(edgeResult.rate), settings.numberFormats)
-    : record.part;
+  const resolvedRate = resolveEdgeRate(record, edgeResultById, nodeResultById);
+  const labelText = resolvedRate ? formatRate(resolvedRate, settings.numberFormats) : record.part;
 
   // Calculation-validation visuals: color the wire itself, not just the
   // nodes at either end — a user shouldn't have to trace a red/orange

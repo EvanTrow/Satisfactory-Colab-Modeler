@@ -14,7 +14,40 @@
 // the only caller, once per resync.
 import type { EdgeRecord, NodeRecord } from "@scm/ydoc";
 
-import { type ContainerParentMap, boundaryPortId, resolveNodeLocation } from "./portMapping";
+import { isOutpostIoKind } from "./io";
+import { type ContainerParentMap, outpostBoundaryHandleId, resolveNodeLocation } from "./portMapping";
+
+/**
+ * Outpost/Blueprint I/O rework: the handle id an endpoint should render
+ * with — `outpostBoundaryHandleId`'s real `${direction}:${part}` scheme
+ * whenever the endpoint IS one of the two locked pass-through nodes,
+ * REGARDLESS of whether this particular edge happens to be "direct" (both
+ * endpoints in the current view) or "boundary" (redirected to a child
+ * container's own boundary node).
+ *
+ * This distinction matters because a wire touching an Inputs/Outputs node
+ * can be "direct" too — e.g. the purely-internal edge from an internal
+ * recipe to the Outputs node, viewed from INSIDE the outpost, has BOTH
+ * endpoints in-view. For a "direct" edge between two ORDINARY nodes, the
+ * existing `edge.fromPort`/`.toPort` is already the right, stable handle id
+ * (a real recipe's own `${dir}:${part}` scheme, assigned once and never
+ * ambiguous). But for a "direct" edge whose endpoint IS the locked node, the
+ * STORED port string can permanently be the wildcard sentinel (`in:*`/
+ * `out:*`) from whichever "+" row it was originally dragged onto — per the
+ * "wildcards never get renamed after connecting" convention
+ * `StorageNode.tsx`/`SplurgerNode.tsx` already established — while the
+ * node's own RENDERED row for that part uses the real, freshly-computed
+ * `${dir}:${part}` id (`OutpostIoNode.tsx`, so a second same-part connection
+ * can land on the same named row instead of piling up on the wildcard one).
+ * Using the raw stored port for a "direct" edge here would target the
+ * WILDCARD handle instead of the correct named row's handle — confirmed
+ * live as "the connection lands on the wrong dot" once a part graduated
+ * from the wildcard row to its own named one.
+ */
+function endpointHandleId(node: NodeRecord, edge: EdgeRecord, direction: "in" | "out", isDirect: boolean, rawPort: string): string {
+  if (isDirect && !isOutpostIoKind(node.kind)) return rawPort;
+  return outpostBoundaryHandleId(node, edge, direction);
+}
 
 export interface ProjectedEdge {
   /** The real, underlying `EdgeRecord` — ground truth (endpoints, waypoints, part, labelPos) is untouched; only the *rendered* source/target below are projected. */
@@ -68,9 +101,9 @@ export function computeVisibleEdges(
     }
 
     const source = fromLoc.kind === "direct" ? fromNode.id : fromLoc.containerId;
-    const sourceHandle = fromLoc.kind === "direct" ? edge.fromPort : boundaryPortId(edge.id, "out");
+    const sourceHandle = endpointHandleId(fromNode, edge, "out", fromLoc.kind === "direct", edge.fromPort);
     const target = toLoc.kind === "direct" ? toNode.id : toLoc.containerId;
-    const targetHandle = toLoc.kind === "direct" ? edge.toPort : boundaryPortId(edge.id, "in");
+    const targetHandle = endpointHandleId(toNode, edge, "in", toLoc.kind === "direct", edge.toPort);
 
     visible.push({
       record: edge,

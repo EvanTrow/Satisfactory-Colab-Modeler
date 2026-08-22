@@ -3,6 +3,7 @@ import { solve } from "@scm/solver";
 import { describe, expect, it } from "vitest";
 
 import { buildSolverSnapshot } from "./buildSnapshot";
+import { sinkConsumerNodeId } from "./sinkPassthrough";
 import { encodePriorityOrder } from "./splurgerPassthrough";
 
 function makeRecipeNode(
@@ -451,6 +452,222 @@ describe("buildSolverSnapshot", () => {
       expect(result.valid).toBe(true);
       expect(result.nodes.find((n) => n.nodeId === producerA.id)!.machineCount).toBe("3");
       expect(result.nodes.find((n) => n.nodeId === producerB.id)!.machineCount).toBe("3");
+    });
+  });
+
+  describe("Outpost/Blueprint rework: outpost-input/outpost-output pass-through", () => {
+    function makeIoNode(sfmDoc: SfmDocument, containerId: string, kind: "outpost-input" | "outpost-output", id: string) {
+      return addNode(sfmDoc, {
+        id,
+        containerId,
+        kind,
+        recipe: null,
+        machine: null,
+        x: 0,
+        y: 0,
+        title: kind === "outpost-input" ? "Inputs" : "Outputs",
+        color: "#d97706",
+        limit: null,
+        limitMode: "machines",
+        clock: null,
+        autoRound: false,
+        shards: 0,
+        purity: null,
+        beltTier: null,
+        storageMode: null,
+        splurgerVariant: null,
+      });
+    }
+
+    it("never turns an outpost-input/outpost-output node itself into a SolverNode", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0, copiesLimit: null });
+      const inputs = makeIoNode(sfmDoc, outpost.id, "outpost-input", "io-in:" + outpost.id);
+
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      expect(snapshot.nodes.some((n) => n.id === inputs.id)).toBe(false);
+    });
+
+    it("rewrites a chain crossing through the Inputs and Outputs nodes into one direct recipe-to-recipe edge, exactly as if the outpost weren't there", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0, copiesLimit: null });
+
+      const externalProducer = makeRecipeNode(sfmDoc, root, { title: "External producer" });
+      const internalConsumer = makeRecipeNode(sfmDoc, outpost.id, { title: "Internal consumer", recipe: "Iron Plate", machine: "Constructor" });
+      const inputs = makeIoNode(sfmDoc, outpost.id, "outpost-input", "io-in:" + outpost.id);
+
+      const externalToInputs = addEdge(sfmDoc, {
+        containerId: root,
+        part: "Iron Ore",
+        fromNode: externalProducer.id,
+        fromPort: "out:Iron Ore",
+        toNode: inputs.id,
+        toPort: "in:*",
+        style: null,
+        labelPos: null,
+      });
+      const inputsToInternal = addEdge(sfmDoc, {
+        containerId: outpost.id,
+        part: "Iron Ore",
+        fromNode: inputs.id,
+        fromPort: "out:*",
+        toNode: internalConsumer.id,
+        toPort: "in:Iron Ore",
+        style: null,
+        labelPos: null,
+      });
+
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      expect(snapshot.nodes.map((n) => n.id).sort()).toEqual([externalProducer.id, internalConsumer.id].sort());
+      expect(snapshot.edges).toHaveLength(1);
+      expect(snapshot.edges[0]).toMatchObject({ fromNode: externalProducer.id, toNode: internalConsumer.id, part: "Iron Ore" });
+      // The original two edges into/out of the Inputs node never themselves survive — both endpoints must be recipe nodes.
+      expect(snapshot.edges.some((e) => e.id === externalToInputs.id || e.id === inputsToInternal.id)).toBe(false);
+    });
+
+    it("composes a chain through the Outputs node INTO an AWESOME Sink — the sink actually receives the producer's full rate, not just the ORIGINAL edge (fromNode isn't a recipe) or the outpost rewrite's synthetic edge (toNode isn't a recipe) individually", () => {
+      // Regression test for the exact bug reported live: "only 1ppm flows
+      // unless a limit is set" — the sink's own unresolved-fallback kicking
+      // in because neither independent rewrite alone produced an edge with
+      // BOTH endpoints representable.
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0, copiesLimit: null });
+
+      const producer = makeRecipeNode(sfmDoc, outpost.id, { title: "Producer", limit: "2", limitMode: "machines" });
+      const outputs = makeIoNode(sfmDoc, outpost.id, "outpost-output", "io-out:" + outpost.id);
+      const sink = addNode(sfmDoc, {
+        containerId: root,
+        kind: "sink",
+        recipe: null,
+        machine: "AWESOME Sink",
+        x: 0,
+        y: 0,
+        title: "AWESOME Sink",
+        color: "#000",
+        limit: null,
+        limitMode: "ppm",
+        clock: null,
+        autoRound: false,
+        shards: 0,
+        purity: null,
+        beltTier: null,
+        storageMode: null,
+        splurgerVariant: null,
+      });
+
+      addEdge(sfmDoc, { containerId: outpost.id, part: "Iron Ingot", fromNode: producer.id, fromPort: "out:Iron Ingot", toNode: outputs.id, toPort: "in:*", style: null, labelPos: null });
+      addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: outputs.id, fromPort: "out:*", toNode: sink.id, toPort: "in:*", style: null, labelPos: null });
+
+      // The decisive check: a real `SolverEdge` from the PRODUCER straight to
+      // the sink's own synthetic consumer node must exist. Under the old,
+      // unordered rewrite this was ALWAYS zero (neither independent rewrite
+      // alone had two representable endpoints) — a pinned producer's own
+      // `resolved` flag doesn't depend on this at all, so that alone
+      // wouldn't have caught the regression; this edge's existence is what
+      // actually distinguishes fixed from broken.
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      const consumerNodeId = sinkConsumerNodeId(sink.id, "Iron Ingot");
+      expect(snapshot.nodes.some((n) => n.id === consumerNodeId)).toBe(true);
+      expect(snapshot.edges).toEqual([
+        expect.objectContaining({ fromNode: producer.id, toNode: consumerNodeId, part: "Iron Ingot" }),
+      ]);
+
+      // And the sink's synthetic consumer must actually resolve to the
+      // producer's FULL rate — not the "no real edge, nothing to infer
+      // from" default that produced the reported "only 1ppm" symptom.
+      const result = solve(snapshot, "basic");
+      const consumerResult = result.nodes.find((n) => n.nodeId === consumerNodeId)!;
+      const producerResult = result.nodes.find((n) => n.nodeId === producer.id)!;
+      expect(consumerResult.resolved).toBe(true);
+      expect(consumerResult.partRates["Iron Ingot"]).toBe(`-${producerResult.partRates["Iron Ingot"]}`);
+    });
+
+    it("splitting an outpost output between a real recipe AND a Sink solves BOTH branches (not just one)", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0, copiesLimit: null });
+
+      const producer = makeRecipeNode(sfmDoc, outpost.id, { title: "Producer", limit: "1", limitMode: "machines" });
+      const outputs = makeIoNode(sfmDoc, outpost.id, "outpost-output", "io-out:" + outpost.id);
+      const craftingConsumer = makeRecipeNode(sfmDoc, root, { title: "Crafting consumer", recipe: "Iron Plate", machine: "Constructor" });
+      const sink = addNode(sfmDoc, {
+        containerId: root,
+        kind: "sink",
+        recipe: null,
+        machine: "AWESOME Sink",
+        x: 0,
+        y: 0,
+        title: "AWESOME Sink",
+        color: "#000",
+        limit: null,
+        limitMode: "ppm",
+        clock: null,
+        autoRound: false,
+        shards: 0,
+        purity: null,
+        beltTier: null,
+        storageMode: null,
+        splurgerVariant: null,
+      });
+
+      addEdge(sfmDoc, { containerId: outpost.id, part: "Iron Ingot", fromNode: producer.id, fromPort: "out:Iron Ingot", toNode: outputs.id, toPort: "in:*", style: null, labelPos: null });
+      addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: outputs.id, fromPort: "out:*", toNode: craftingConsumer.id, toPort: "in:Iron Ingot", style: null, labelPos: null });
+      addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: outputs.id, fromPort: "out:*", toNode: sink.id, toPort: "in:*", style: null, labelPos: null });
+
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      // Two real solver edges must exist — one per branch — not just one.
+      expect(snapshot.edges.filter((e) => e.part === "Iron Ingot")).toHaveLength(2);
+      expect(snapshot.edges.some((e) => e.toNode === craftingConsumer.id)).toBe(true);
+      const sinkConsumerEdge = snapshot.edges.find((e) => e.toNode !== craftingConsumer.id && e.part === "Iron Ingot");
+      expect(sinkConsumerEdge).toBeDefined();
+      expect(sinkConsumerEdge!.fromNode).toBe(producer.id);
+
+      const result = solve(snapshot, "basic");
+      const producerResult = result.nodes.find((n) => n.nodeId === producer.id)!;
+      expect(producerResult.resolved).toBe(true);
+      expect(producerResult.valid).toBe(true);
+    });
+
+    it("composes the same chain into a Storage Container", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0, copiesLimit: null });
+      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "Outpost", color: "#000", x: 0, y: 0, copiesLimit: null });
+
+      const producer = makeRecipeNode(sfmDoc, outpost.id, { title: "Producer", limit: "2", limitMode: "machines" });
+      const outputs = makeIoNode(sfmDoc, outpost.id, "outpost-output", "io-out:" + outpost.id);
+      const storage = addNode(sfmDoc, {
+        containerId: root,
+        kind: "storage",
+        recipe: null,
+        machine: null,
+        x: 0,
+        y: 0,
+        title: "Storage Container",
+        color: "#000",
+        limit: null,
+        limitMode: "machines",
+        clock: null,
+        autoRound: false,
+        shards: 0,
+        purity: null,
+        beltTier: null,
+        storageMode: "partiallyFull",
+        splurgerVariant: null,
+      });
+
+      addEdge(sfmDoc, { containerId: outpost.id, part: "Iron Ingot", fromNode: producer.id, fromPort: "out:Iron Ingot", toNode: outputs.id, toPort: "in:*", style: null, labelPos: null });
+      addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: outputs.id, fromPort: "out:*", toNode: storage.id, toPort: "in:*", style: null, labelPos: null });
+
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      expect(snapshot.edges.some((e) => e.part === "Iron Ingot" && e.fromNode === producer.id)).toBe(true);
     });
   });
 });

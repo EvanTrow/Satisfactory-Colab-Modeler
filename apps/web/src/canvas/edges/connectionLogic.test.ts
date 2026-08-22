@@ -1,6 +1,7 @@
 import { addContainer, addNode, addWaypoint, createDocument, getEdge, listEdges, moveNode, type SfmDocument } from "@scm/ydoc";
 import { describe, expect, it } from "vitest";
 
+import { ensureOutpostIoNodes, outpostInputNodeId, outpostOutputNodeId } from "../outposts/io";
 import {
   WILDCARD_PART,
   WILDCARD_PART_BOTTOM,
@@ -227,6 +228,96 @@ describe("resolveEdgeEndpoints", () => {
         targetHandle: `in:${WILDCARD_PART}`,
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveEdgeEndpoints — outpost/blueprint container redirect", () => {
+  function makeOutpostDoc() {
+    const sfmDoc = createDocument();
+    const root = addContainer(sfmDoc, {
+      kind: "root",
+      parentId: null,
+      title: "Root",
+      color: "#4b5563",
+      x: 0,
+      y: 0,
+      copiesLimit: null,
+    });
+    const outpost = addContainer(sfmDoc, {
+      kind: "outpost",
+      parentId: root.id,
+      title: "Outpost",
+      color: "#d97706",
+      x: 0,
+      y: 0,
+      copiesLimit: null,
+    });
+    ensureOutpostIoNodes(sfmDoc, outpost.id, "#d97706");
+    const external = addNode(sfmDoc, {
+      containerId: root.id,
+      kind: "recipe",
+      recipe: null,
+      machine: null,
+      x: 0,
+      y: 0,
+      title: "External",
+      color: "#4b5563",
+      limit: null,
+      limitMode: "machines",
+      clock: null,
+      autoRound: false,
+      shards: 0,
+      purity: null,
+      beltTier: null,
+      storageMode: null,
+      splurgerVariant: null,
+    });
+    return { sfmDoc, outpost, external };
+  }
+
+  it("redirects a connection dropped on the outer card's target handle to the container's Inputs node", () => {
+    const { sfmDoc, outpost, external } = makeOutpostDoc();
+    const resolved = resolveEdgeEndpoints(sfmDoc, {
+      source: external.id,
+      sourceHandle: "out:Iron Ore",
+      target: outpost.id,
+      targetHandle: `in:${WILDCARD_PART}`,
+    });
+    expect(resolved).toEqual({
+      fromNode: external.id,
+      fromPort: "out:Iron Ore",
+      toNode: outpostInputNodeId(outpost.id),
+      toPort: `in:${WILDCARD_PART}`,
+      part: "Iron Ore",
+    });
+  });
+
+  it("redirects a connection dragged FROM the outer card's source handle to the container's Outputs node", () => {
+    const { sfmDoc, outpost, external } = makeOutpostDoc();
+    const resolved = resolveEdgeEndpoints(sfmDoc, {
+      source: outpost.id,
+      sourceHandle: `out:${WILDCARD_PART}`,
+      target: external.id,
+      targetHandle: "in:Iron Ingot",
+    });
+    expect(resolved).toEqual({
+      fromNode: outpostOutputNodeId(outpost.id),
+      fromPort: `out:${WILDCARD_PART}`,
+      toNode: external.id,
+      toPort: "in:Iron Ingot",
+      part: "Iron Ingot",
+    });
+  });
+
+  it("leaves an ordinary node id alone (not a container id at all)", () => {
+    const { sfmDoc, external } = makeOutpostDoc();
+    const resolved = resolveEdgeEndpoints(sfmDoc, {
+      source: external.id,
+      sourceHandle: "out:Iron Ore",
+      target: external.id,
+      targetHandle: "in:Iron Ore",
+    });
+    expect(resolved?.toNode).toBe(external.id);
   });
 });
 

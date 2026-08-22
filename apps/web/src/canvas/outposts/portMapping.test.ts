@@ -6,6 +6,7 @@ import {
   buildContainerParentMap,
   computeOutpostPorts,
   isContainerWithinSubtree,
+  outpostBoundaryHandleId,
   resolveNodeLocation,
 } from "./portMapping";
 
@@ -244,5 +245,25 @@ describe("computeOutpostPorts", () => {
     const siblingPorts = computeOutpostPorts(sibling.id, [a, b], [edge], parentOf);
     expect(outpostPorts).toEqual([{ id: boundaryPortId(edge.id, "out"), direction: "out", part: "Water", edgeId: edge.id, remoteNodeId: b.id }]);
     expect(siblingPorts).toEqual([{ id: boundaryPortId(edge.id, "in"), direction: "in", part: "Water", edgeId: edge.id, remoteNodeId: a.id }]);
+  });
+
+  it("uses the real ${dir}:${part} handle id when the inside endpoint is the outpost's own locked pass-through node", () => {
+    const { sfmDoc, root, outpost } = makeFixture();
+    const outside = addNode(sfmDoc, baseNode(root.id, "Outside"));
+    const ioInput = addNode(sfmDoc, { ...baseNode(outpost.id, "Inputs"), kind: "outpost-input" });
+    const edge = connect(sfmDoc, root.id, outside.id, ioInput.id, "Iron Ore");
+    const parentOf = buildContainerParentMap([root, outpost]);
+
+    const ports = computeOutpostPorts(outpost.id, [outside, ioInput], [edge], parentOf);
+    expect(ports).toEqual([
+      { id: "in:Iron Ore", direction: "in", part: "Iron Ore", edgeId: edge.id, remoteNodeId: outside.id },
+    ]);
+  });
+
+  it("outpostBoundaryHandleId falls back to the legacy derived id for a non-IO inside node", () => {
+    const { sfmDoc, outpost } = makeFixture();
+    const node = addNode(sfmDoc, baseNode(outpost.id, "A"));
+    const edge = connect(sfmDoc, outpost.id, node.id, node.id, "Iron Ore");
+    expect(outpostBoundaryHandleId(node, edge, "out")).toBe(boundaryPortId(edge.id, "out"));
   });
 });

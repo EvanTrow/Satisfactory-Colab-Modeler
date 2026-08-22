@@ -74,6 +74,7 @@ import {
 } from "@xyflow/react";
 
 import type { RecipeNodeValidityState } from "./nodes/validityState";
+import { ensureOutpostIoNodes } from "./outposts/io";
 import { type DerivedOutpostPort, buildContainerParentMap, computeOutpostPorts } from "./outposts/portMapping";
 import { type ProjectedEdge, computeVisibleEdges } from "./outposts/visibleGraph";
 import { snapPointToGrid } from "./snapToGrid";
@@ -184,7 +185,15 @@ export interface CanvasEdgeData extends Record<string, unknown> {
 
 export type CanvasEdge = RFEdge<CanvasEdgeData>;
 
-const CUSTOM_NODE_KINDS = new Set(["recipe", "splurger", "sink", "depot", "storage"]);
+const CUSTOM_NODE_KINDS = new Set([
+  "recipe",
+  "splurger",
+  "sink",
+  "depot",
+  "storage",
+  "outpost-input",
+  "outpost-output",
+]);
 
 function nodeRecordToFlowNode(record: NodeRecord, selected = false): CanvasNode {
   return {
@@ -328,6 +337,25 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
   // sit relative to its own card.
   const measuredByIdRef = useRef<Map<string, { width?: number; height?: number }>>(new Map());
 
+  // Outpost/Blueprint rework: one-time backfill for documents saved before
+  // the two locked Inputs/Outputs pass-through nodes existed (`outposts/
+  // io.ts`). Runs once per `sfmDoc` identity (not per `containerId` — a
+  // whole-document pass, not tied to whichever container happens to be
+  // open), scanning every outpost/blueprint container regardless of
+  // whether it's currently visible. `ensureOutpostIoNodes` is idempotent
+  // (deterministic ids, checks before writing), so this is a safe no-op on
+  // every subsequent mount once a document's already been backfilled, and
+  // safe under two clients racing to backfill the same document at once.
+  useEffect(() => {
+    sfmDoc.doc.transact(() => {
+      for (const container of listContainers(sfmDoc)) {
+        if (container.kind === "outpost" || container.kind === "blueprint") {
+          ensureOutpostIoNodes(sfmDoc, container.id, container.color);
+        }
+      }
+    });
+  }, [sfmDoc]);
+
   useEffect(() => {
     const { setNodes, setEdges, setContainers } = useStore.getState();
 
@@ -359,12 +387,36 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
     // the node(s) that actually changed ever need re-measuring, so the
     // ResizeObserver dance stays proportional to what actually moved instead
     // of the whole canvas, every time.
-    const nodeCache = new Map<string, { record: NodeRecord; selected: boolean; flowNode: CanvasNode }>();
+    const nodeCache = new Map<
+      string,
+      { record: NodeRecord; selected: boolean; flowNode: CanvasNode; ioSignature: string | null }
+    >();
     const outpostCache = new Map<
       string,
       { container: Container; ports: DerivedOutpostPort[]; selected: boolean; flowNode: CanvasNode }
     >();
     const edgeCache = new Map<string, { projected: ProjectedEdge; selected: boolean; flowEdge: CanvasEdge }>();
+
+    // Outpost/Blueprint I/O rework: `outpost-input`/`outpost-output` nodes
+    // (`OutpostIoNode.tsx`) are the first `NodeRecord`-backed node kind whose
+    // rendered `<Handle>` SET is driven by something outside the record
+    // itself — which distinct parts currently touch it via `listEdges`, not
+    // by any of its own fields (unlike a recipe node, whose parts come from
+    // `record.recipe`/`.machine`, already covered by `sameContent` below).
+    // A brand-new named handle appearing this way is exactly what
+    // `!userNode.measured` is supposed to trigger rediscovery for (see this
+    // effect's own header comment on `ResizeObserver`/`handleBounds`) — so
+    // this node kind needs its OWN change signal alongside `sameContent`,
+    // both for cache invalidation and for deciding whether it's safe to
+    // carry `.measured` forward. Returns `null` for every other kind (opted
+    // out of this extra check entirely, zero behavior change for them).
+    function ioHandleSignature(node: NodeRecord, edges: readonly EdgeRecord[]): string | null {
+      if (node.kind !== "outpost-input" && node.kind !== "outpost-output") return null;
+      const parts = new Set(
+        edges.filter((edge) => edge.fromNode === node.id || edge.toNode === node.id).map((edge) => edge.part),
+      );
+      return [...parts].sort().join("|");
+    }
 
     // `nodeToPlain`/`edgeToPlain`/`containerToPlain` already produce plain
     // JSON-serializable objects (no functions/`Y.*` instances), so a
@@ -411,13 +463,24 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
         ...directNodes.map((node) => {
           const selected = previouslySelectedNodes.has(node.id);
           const cached = nodeCache.get(node.id);
-          if (cached && cached.selected === selected && sameContent(cached.record, node)) {
+          const ioSignature = ioHandleSignature(node, allEdges);
+          if (
+            cached &&
+            cached.selected === selected &&
+            sameContent(cached.record, node) &&
+            cached.ioSignature === ioSignature
+          ) {
             return cached.flowNode;
           }
           const flowNode = nodeRecordToFlowNode(node, selected);
           const measured = measuredByIdRef.current.get(node.id);
-          if (measured) flowNode.measured = measured;
-          nodeCache.set(node.id, { record: node, selected, flowNode });
+          // Outpost/Blueprint I/O rework: only carry `.measured` forward when
+          // this node's own handle-driving signal (`ioSignature`, `null` for
+          // every non-`outpost-input`/`-output` kind) hasn't changed — see
+          // this effect's `ioHandleSignature` doc comment for why a changed
+          // signature means a real, new `<Handle>` needs fresh discovery.
+          if (measured && cached?.ioSignature === ioSignature) flowNode.measured = measured;
+          nodeCache.set(node.id, { record: node, selected, flowNode, ioSignature });
           return flowNode;
         }),
         ...childContainers.map((container) => {
@@ -434,7 +497,19 @@ export function useYjsSync(sfmDoc: SfmDocument, containerId: string): UseYjsSync
           }
           const flowNode = containerToOutpostFlowNode(container, ports, selected);
           const measured = measuredByIdRef.current.get(container.id);
-          if (measured) flowNode.measured = measured;
+          // Outpost/Blueprint I/O rework: an outpost/blueprint's own
+          // `<Handle>` set is driven entirely by `ports` (one real handle per
+          // established `${dir}:${part}` id) — carrying `.measured` forward
+          // when the SET of handle ids changed (a new item just got wired,
+          // not just a rate/validity update on an existing one) would tell
+          // React Flow "nothing to remeasure," permanently freezing that new
+          // handle's bounds and making any edge that targets it render at
+          // whatever stale position an EARLIER handle happened to occupy —
+          // confirmed live as "the connection dot is in the wrong spot" once
+          // a wildcard-bootstrapped row got its real, named handle.
+          const previousHandleIds = cached ? [...new Set(cached.ports.map((p) => p.id))].sort().join("|") : null;
+          const nextHandleIds = [...new Set(ports.map((p) => p.id))].sort().join("|");
+          if (measured && previousHandleIds === nextHandleIds) flowNode.measured = measured;
           outpostCache.set(container.id, { container, ports, selected, flowNode });
           return flowNode;
         }),

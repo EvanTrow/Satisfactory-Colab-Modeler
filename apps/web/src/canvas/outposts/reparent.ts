@@ -15,13 +15,19 @@ import {
   type SfmDocument,
   getContainer,
   listContainers,
+  listEdges,
   listEdgesByContainer,
+  listNodes,
   listNodesByContainer,
   removeContainer,
+  removeEdge,
+  removeNode,
   reparentEdge,
   updateContainer,
   updateNode,
 } from "@scm/ydoc";
+
+import { buildContainerParentMap, isContainerWithinSubtree } from "./portMapping";
 
 /** Thin, transacted wrapper over `updateNode` for the "move a node into/out of an outpost" gesture — kept as its own named function (rather than callers reaching for `updateNode` directly) so this file is the one place both halves of "moving a node into/out of an outpost updates its containerId" (PLAN.md §3) live, alongside `deleteOutpost` below. */
 export function moveNodeToContainer(sfmDoc: SfmDocument, nodeId: string, containerId: string): void {
@@ -88,4 +94,50 @@ export function deleteOutpost(sfmDoc: SfmDocument, outpostId: string): DeleteOut
   });
 
   return { reparentedNodeIds, reparentedEdgeIds, reparentedContainerIds };
+}
+
+/**
+ * The "Delete Everything" half of the new delete-outpost dialog (see
+ * `NodeContextMenu.tsx`/`DeleteOutpostDialog.tsx`) — the destructive
+ * counterpart to `deleteOutpost` above. Removes `outpostId` itself, every
+ * container nested inside it at any depth, every node living directly in
+ * any of those containers (including its own locked `outpost-input`/
+ * `outpost-output` pass-through nodes), and every edge touching one of
+ * those nodes — **not** just edges whose own `containerId` happens to fall
+ * inside the subtree, since (per `portMapping.ts`'s header) an edge's
+ * `containerId` records where it was drawn, not whether it crosses a
+ * boundary; a boundary-crossing edge reaching OUT of the deleted subtree
+ * must be deleted too; leaving it would dangle a reference to a node that no
+ * longer exists.
+ *
+ * Throws under the same conditions `deleteOutpost` does (unknown id, or the
+ * root container).
+ */
+export function deleteOutpostWithContents(sfmDoc: SfmDocument, outpostId: string): void {
+  const outpost = getContainer(sfmDoc, outpostId);
+  if (!outpost) {
+    throw new Error(`deleteOutpostWithContents: no container with id "${outpostId}"`);
+  }
+  if (outpost.parentId === null) {
+    throw new Error("deleteOutpostWithContents: cannot delete the root container");
+  }
+
+  const allContainers = listContainers(sfmDoc);
+  const parentOf = buildContainerParentMap(allContainers);
+  const deletedContainerIds = new Set(
+    allContainers.filter((c) => isContainerWithinSubtree(c.id, outpostId, parentOf)).map((c) => c.id),
+  );
+  const deletedNodeIds = new Set(
+    listNodes(sfmDoc).filter((node) => deletedContainerIds.has(node.containerId)).map((node) => node.id),
+  );
+
+  sfmDoc.doc.transact(() => {
+    for (const edge of listEdges(sfmDoc)) {
+      if (deletedNodeIds.has(edge.fromNode) || deletedNodeIds.has(edge.toNode)) {
+        removeEdge(sfmDoc, edge.id);
+      }
+    }
+    for (const nodeId of deletedNodeIds) removeNode(sfmDoc, nodeId);
+    for (const containerId of deletedContainerIds) removeContainer(sfmDoc, containerId);
+  });
 }

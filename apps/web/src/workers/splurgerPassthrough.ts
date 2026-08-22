@@ -256,6 +256,17 @@ export interface PassthroughSolverEdge {
   readonly toNode: string;
   readonly toPort: string;
   readonly priorityTier?: PriorityTier;
+  /**
+   * The two original incident edge ids merged into this synthetic edge —
+   * added for the outpost I/O rework so `OutpostNode.tsx`/`OutpostIoNode.tsx`
+   * can recover a real `EdgeSolveResult` for one of THEIR OWN edges (which
+   * never reaches the solver directly, same pre-existing gap a Splurger's
+   * own incident edges have — see this file's header) by looking up
+   * `edgeResultById.get(synthetic.id)` after finding which synthetic edge a
+   * given original edge id was folded into. Purely additive — no existing
+   * caller reads this field.
+   */
+  readonly sourceEdgeIds: { readonly input: string; readonly output: string };
 }
 
 export interface SplurgerNodeLike {
@@ -313,6 +324,43 @@ function tierFromPort(port: string): PriorityTier | undefined {
  * is excluded and its owning node id recorded in `unsupportedNodeIds`
  * instead of guessing at a crossbar.
  */
+/**
+ * Outpost/Blueprint I/O rework: `useSolver.ts`'s `indexEdges` additionally
+ * keys `edgeResultById` by an ORIGINAL edge id whenever this rewrite folded
+ * it into exactly ONE synthetic edge — the passthrough-node analogue of
+ * `sinkPassthrough.ts`/`storagePassthrough.ts`'s own `originalEdgeIdFrom*`
+ * aliasing (see that module's header for why THEIR rewrite is always
+ * unambiguously one-original-in/one-synthetic-out and can just parse the
+ * minted id back apart). This rewrite genuinely can't do that in general —
+ * a splitter's single input edge (or a merger's single output edge)
+ * legitimately feeds MULTIPLE synthetic edges at once, each carrying its own
+ * independently water-filled rate, so there is no single correct rate to
+ * alias it to (this file's own header, "no single recoverable 'original
+ * id'"). This function alias-maps only the ids that AREN'T ambiguous —
+ * every part-group's one-side-only edge (a 1-to-1 passthrough, or the
+ * MANY side of a splitter/merger, where each individual edge still maps to
+ * exactly one synthetic edge) — leaving a genuinely multi-way edge
+ * unaliased, same "unknown, not a guess" posture `classifyEdgeValidity`
+ * already takes for a missing result.
+ */
+export function computePassthroughEdgeAliases(
+  nodes: readonly SplurgerNodeLike[],
+  edges: readonly SplurgerEdgeLike[],
+): ReadonlyMap<string, string> {
+  const { edges: synthetic } = computeSplurgerPassthroughEdges(nodes, edges);
+  const countByOriginal = new Map<string, number>();
+  for (const s of synthetic) {
+    countByOriginal.set(s.sourceEdgeIds.input, (countByOriginal.get(s.sourceEdgeIds.input) ?? 0) + 1);
+    countByOriginal.set(s.sourceEdgeIds.output, (countByOriginal.get(s.sourceEdgeIds.output) ?? 0) + 1);
+  }
+  const aliases = new Map<string, string>();
+  for (const s of synthetic) {
+    if (countByOriginal.get(s.sourceEdgeIds.input) === 1) aliases.set(s.sourceEdgeIds.input, s.id);
+    if (countByOriginal.get(s.sourceEdgeIds.output) === 1) aliases.set(s.sourceEdgeIds.output, s.id);
+  }
+  return aliases;
+}
+
 export function computeSplurgerPassthroughEdges(
   splurgers: readonly SplurgerNodeLike[],
   edges: readonly SplurgerEdgeLike[],
@@ -351,6 +399,7 @@ export function computeSplurgerPassthroughEdges(
             toNode: output.toNode,
             toPort: output.toPort,
             priorityTier: tierFromPort(output.fromPort) ?? tierForEdge(assignment, output.id),
+            sourceEdgeIds: { input: input.id, output: output.id },
           });
         }
       } else {
@@ -364,6 +413,7 @@ export function computeSplurgerPassthroughEdges(
             toNode: output.toNode,
             toPort: output.toPort,
             priorityTier: tierFromPort(input.toPort) ?? tierForEdge(assignment, input.id),
+            sourceEdgeIds: { input: input.id, output: output.id },
           });
         }
       }

@@ -53,6 +53,7 @@ import { useFocusTrap } from "../a11y";
 import { getBlueprintIconUrl, getIconUrl, getOutpostIconUrl } from "../assets/icons";
 import { useCanvasDoc } from "../canvas";
 import { connectPorts, WILDCARD_PART, WILDCARD_PART_TOP, type ConnectionLike } from "../canvas/edges";
+import { ensureOutpostIoNodes } from "../canvas/outposts";
 import { useSettings } from "../canvas/useSettings";
 import { useGameTerm } from "../i18n";
 import {
@@ -239,14 +240,21 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
   }
 
   function handleCreateOutpost() {
-    addContainer(sfmDoc, {
-      kind: "outpost",
-      parentId: containerId,
-      title: outpostTitle.trim() || t("canvas.defaultOutpostTitle"),
-      color: "#d97706",
-      x: flowPosition.x,
-      y: flowPosition.y,
-      copiesLimit: null,
+    const color = "#d97706";
+    sfmDoc.doc.transact(() => {
+      const container = addContainer(sfmDoc, {
+        kind: "outpost",
+        parentId: containerId,
+        title: outpostTitle.trim() || t("canvas.defaultOutpostTitle"),
+        color,
+        x: flowPosition.x,
+        y: flowPosition.y,
+        copiesLimit: null,
+      });
+      // Outpost/Blueprint rework: every outpost gets its two locked
+      // Inputs/Outputs pass-through nodes at creation time — see
+      // `canvas/outposts/io.ts`.
+      ensureOutpostIoNodes(sfmDoc, container.id, color);
     });
     onClose();
   }
@@ -261,14 +269,18 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
    * same as choosing "Outpost" would.
    */
   function handleCreateBlueprint() {
-    addContainer(sfmDoc, {
-      kind: "blueprint",
-      parentId: containerId,
-      title: blueprintTitle.trim() || t("canvas.defaultBlueprintTitle"),
-      color: "#0a6b62",
-      x: flowPosition.x,
-      y: flowPosition.y,
-      copiesLimit: null,
+    const color = "#0a6b62";
+    sfmDoc.doc.transact(() => {
+      const container = addContainer(sfmDoc, {
+        kind: "blueprint",
+        parentId: containerId,
+        title: blueprintTitle.trim() || t("canvas.defaultBlueprintTitle"),
+        color,
+        x: flowPosition.x,
+        y: flowPosition.y,
+        copiesLimit: null,
+      });
+      ensureOutpostIoNodes(sfmDoc, container.id, color);
     });
     onClose();
   }

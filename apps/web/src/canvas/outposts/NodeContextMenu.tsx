@@ -9,10 +9,12 @@
 // anywhere on a node that isn't a part row.
 import { useRef } from "react";
 
-import { type Container, type NodeRecord, type NumberFormats } from "@scm/ydoc";
+import { type Container, type NodeRecord, type NumberFormats, updateContainer } from "@scm/ydoc";
 
 import { useFocusTrap } from "../../a11y";
 import { RecipeNodeQuickSettings } from "../nodes";
+import { useCanvasDoc } from "../CanvasDocContext";
+import { useCommittedTextField } from "../nodes/useCommittedTextField";
 
 export interface NodeContextMenuState {
   nodeId: string;
@@ -25,6 +27,13 @@ export interface NodeContextMenuState {
    */
   containerKind: "outpost" | "blueprint" | null;
   /**
+   * The live `Container` record when `containerKind` is set — drives the
+   * rename field below. Re-derived every render from the current doc state
+   * (never the stale right-click-time snapshot), same discipline
+   * `CanvasView.tsx` already applies to `recipeRecord` below.
+   */
+  container?: Container;
+  /**
    * The right-clicked node's own record, when it's a `kind: "recipe"` node
    * (`data.record`) — drives the quick settings section below (name, clock
    * speed, auto-round, somersloops). `undefined` for a container boundary
@@ -32,6 +41,14 @@ export interface NodeContextMenuState {
    * its own card.
    */
   recipeRecord?: NodeRecord;
+  /**
+   * Outpost/Blueprint rework: `true` for a right-clicked node whose kind is
+   * one of `io.ts`'s `LOCKED_NODE_KINDS` (the two permanent Inputs/Outputs
+   * pass-through nodes) — hides the "Move to..." actions below, since these
+   * nodes are structurally tied to their own container and can't be moved
+   * or removed. `false`/`undefined` for every other real node.
+   */
+  locked?: boolean;
   /** Viewport/screen coordinates to anchor the menu at — same convention `RecipeChooser.tsx` (Job 009) uses. */
   screenPosition: { x: number; y: number };
 }
@@ -44,7 +61,8 @@ export interface NodeContextMenuProps {
   parentContainer: Container | null;
   onMoveToContainer: (nodeId: string, containerId: string) => void;
   onOpenOutpost: (containerId: string) => void;
-  onDeleteOutpost: (containerId: string) => void;
+  /** Opens the Cancel/Keep Contents/Delete Everything dialog — see `DeleteOutpostDialog.tsx`. Deletion itself no longer happens directly from this menu. */
+  onRequestDelete: (containerId: string, containerKind: "outpost" | "blueprint") => void;
   /** Job 026: flips `Container.kind` between `"outpost"` and `"blueprint"` — the blueprint creation/conversion UI this job's own scope asks for ("an outpost can be marked/converted to `kind: 'blueprint'`"). */
   onConvertContainerKind: (containerId: string, kind: "outpost" | "blueprint") => void;
   /** Only needed to render `state.recipeRecord`'s quick settings section — unused for a container boundary node. */
@@ -60,11 +78,20 @@ export function NodeContextMenu({
   parentContainer,
   onMoveToContainer,
   onOpenOutpost,
-  onDeleteOutpost,
+  onRequestDelete,
   onConvertContainerKind,
   numberFormats,
   onClose,
 }: NodeContextMenuProps) {
+  const { sfmDoc } = useCanvasDoc();
+
+  function commitContainerTitle(raw: string): boolean {
+    if (!state.container) return false;
+    updateContainer(sfmDoc, state.container.id, { title: raw.trim() });
+    return true;
+  }
+
+  const containerTitleField = useCommittedTextField(state.container?.title ?? "", commitContainerTitle);
   // Job 029: this menu's *trigger* (right-click a node) has no keyboard
   // equivalent in this app — a genuine, documented limitation (see
   // jobs/029's Handoff notes) rather than an oversight, since a context
@@ -106,6 +133,19 @@ export function NodeContextMenu({
       >
         {state.containerKind ? (
           <>
+            {state.container && (
+              <label className="flex items-center justify-between gap-2 px-2 py-1.5 text-sm">
+                <span className="text-[var(--text-secondary)]">Name</span>
+                <input
+                  type="text"
+                  placeholder={state.containerKind === "outpost" ? "Outpost" : "Blueprint"}
+                  className="w-32 rounded-md border border-[var(--border-default)] bg-[var(--surface-sunken)] px-2 py-1 text-[var(--text-primary)] placeholder:italic placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none"
+                  {...containerTitleField}
+                  onMouseDown={(event) => event.stopPropagation()}
+                />
+              </label>
+            )}
+            <div className="my-1 border-t border-[var(--border-subtle)]" />
             <button
               type="button"
               className={itemClass}
@@ -136,44 +176,51 @@ export function NodeContextMenu({
               type="button"
               className={`${itemClass} text-[var(--danger)] hover:bg-[var(--danger-soft)]`}
               onClick={() => {
-                onDeleteOutpost(state.nodeId);
+                onRequestDelete(state.nodeId, state.containerKind!);
                 onClose();
               }}
-              title={`Deletes the ${state.containerKind} container itself; everything inside it is kept, reparented to this container.`}
             >
-              Delete {state.containerKind} (keep contents)
+              Delete {state.containerKind}
             </button>
           </>
         ) : (
           <>
-            {parentContainer && (
-              <button
-                type="button"
-                className={itemClass}
-                onClick={() => {
-                  onMoveToContainer(state.nodeId, parentContainer.id);
-                  onClose();
-                }}
-              >
-                Move to parent ({parentContainer.title || "container"})
-              </button>
+            {state.locked ? (
+              <p className="px-2 py-1.5 text-xs text-[var(--text-muted)]">
+                This node is a permanent part of its outpost/blueprint and can't be moved or removed.
+              </p>
+            ) : (
+              <>
+                {parentContainer && (
+                  <button
+                    type="button"
+                    className={itemClass}
+                    onClick={() => {
+                      onMoveToContainer(state.nodeId, parentContainer.id);
+                      onClose();
+                    }}
+                  >
+                    Move to parent ({parentContainer.title || "container"})
+                  </button>
+                )}
+                {siblingOutposts.length === 0 && !parentContainer && (
+                  <p className="px-2 py-1.5 text-xs text-[var(--text-muted)]">No outposts here to move into.</p>
+                )}
+                {siblingOutposts.map((outpost) => (
+                  <button
+                    key={outpost.id}
+                    type="button"
+                    className={itemClass}
+                    onClick={() => {
+                      onMoveToContainer(state.nodeId, outpost.id);
+                      onClose();
+                    }}
+                  >
+                    Move into {outpost.title || "Outpost"}
+                  </button>
+                ))}
+              </>
             )}
-            {siblingOutposts.length === 0 && !parentContainer && (
-              <p className="px-2 py-1.5 text-xs text-[var(--text-muted)]">No outposts here to move into.</p>
-            )}
-            {siblingOutposts.map((outpost) => (
-              <button
-                key={outpost.id}
-                type="button"
-                className={itemClass}
-                onClick={() => {
-                  onMoveToContainer(state.nodeId, outpost.id);
-                  onClose();
-                }}
-              >
-                Move into {outpost.title || "Outpost"}
-              </button>
-            ))}
             {state.recipeRecord && (
               <>
                 <div className="my-1 border-t border-[var(--border-subtle)]" />

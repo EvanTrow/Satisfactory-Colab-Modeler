@@ -58,6 +58,22 @@ import { computeStorageBufferNodes } from "./storagePassthrough";
  * gamedata recipe) to stand in for what it consumes/produces, since none of
  * these three kinds has a fixed recipe ratio the way a Splurger's
  * passthrough rewrite can lean on. See those two modules' headers for why.
+ *
+ * Outpost/Blueprint I/O rework: the Splurger/outpost-input/outpost-output
+ * rewrite runs FIRST, against the raw edges, and its OUTPUT (not the raw
+ * edges) is what Sink/Storage/Depot's own rewrite sees. This ordering
+ * matters for a chain like "producer -> outpost Outputs node -> AWESOME
+ * Sink": the outpost rewrite alone turns this into "producer -> Sink", but
+ * a Sink isn't a `recipe` node, so that synthetic edge would still be
+ * dropped by the plain recipe-to-recipe filter; running Sink's OWN rewrite
+ * on this ALREADY-composed edge (instead of the original "Outputs node ->
+ * Sink" one, whose `fromNode` isn't a recipe node either) is what lets it
+ * correctly see `producer` as the real source and mint its usual synthetic
+ * consumer node from it. Without this ordering, a Splurger/outpost pass-
+ * through node feeding directly into a Sink/Storage/Depot silently vanished
+ * from the solve entirely (both sides' independent rewrites individually
+ * correct, but composing to nothing) — confirmed live as "only 1ppm flows
+ * unless a limit is set."
  */
 export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   const allNodes = listNodes(sfmDoc);
@@ -66,6 +82,14 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   const splurgerNodes = allNodes.filter((node) => node.kind === "splurger");
   const sinkNodes = allNodes.filter((node) => node.kind === "sink" || node.kind === "depot");
   const storageNodes = allNodes.filter((node) => node.kind === "storage");
+  // Outpost/Blueprint rework: the two locked pass-through nodes every
+  // outpost/blueprint container gets (`canvas/outposts/io.ts`) are erased
+  // into direct recipe-to-recipe edges the exact same way a Splurger is —
+  // `computeSplurgerPassthroughEdges` is already fully generic (nothing in
+  // it is actually Splurger-specific), so it's reused as-is rather than
+  // duplicating a near-identical module. See `canvas/outposts/io.ts`'s
+  // header for the full design.
+  const outpostIoNodes = allNodes.filter((node) => node.kind === "outpost-input" || node.kind === "outpost-output");
 
   const recipeSolverNodes: SolverNode[] = recipeNodes.map((node) => ({
     id: node.id,
@@ -86,14 +110,40 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
 
   const allEdges = listEdges(sfmDoc);
 
+  // Splurger + outpost-input/outpost-output pass-through rewrite (Job 024,
+  // Outpost/Blueprint I/O rework) — run FIRST, see this function's own
+  // header comment for why. Every edge incident to one of these nodes is
+  // erased from the pool entirely (whether it produced a synthetic
+  // replacement or was dangling/unsupported — see `splurgerPassthrough.ts`'s
+  // header) and, where a replacement exists, that takes its place instead.
+  const passthroughNodeIds = new Set([...splurgerNodes, ...outpostIoNodes].map((node) => node.id));
+  const splurgerPassthrough = computeSplurgerPassthroughEdges(splurgerNodes, allEdges);
+  const outpostIoPassthrough = computeSplurgerPassthroughEdges(outpostIoNodes, allEdges);
+  const effectiveEdges = [
+    ...allEdges
+      .filter((edge) => !passthroughNodeIds.has(edge.fromNode) && !passthroughNodeIds.has(edge.toNode))
+      .map((edge) => ({
+        id: edge.id,
+        part: edge.part,
+        fromNode: edge.fromNode,
+        fromPort: edge.fromPort,
+        toNode: edge.toNode,
+        toPort: edge.toPort,
+      })),
+    ...splurgerPassthrough.edges,
+    ...outpostIoPassthrough.edges,
+  ];
+
   // Sink/Depot (Job's AWESOME Sink/Dimensional Depot addition) and Storage
   // Container rewrites — see this function's own header comment above and
   // `sinkPassthrough.ts`/`storagePassthrough.ts`'s headers. Each contributes
   // its own synthetic `blueprintCopyBasis` compound nodes, which join
   // `representableNodeIds` alongside real recipe nodes so the edge filters
-  // below don't drop the very edges just rewritten to target them.
-  const sinkResult = computeSinkConsumerNodes(sinkNodes, allEdges);
-  const storageResult = computeStorageBufferNodes(storageNodes, allEdges);
+  // below don't drop the very edges just rewritten to target them. Fed
+  // `effectiveEdges` (already Splurger/outpost-io-composed), not the raw
+  // edges — see this function's header.
+  const sinkResult = computeSinkConsumerNodes(sinkNodes, effectiveEdges);
+  const storageResult = computeStorageBufferNodes(storageNodes, effectiveEdges);
   const representableNodeIds = new Set([
     ...recipeNodeIds,
     ...sinkResult.nodes.map((n) => n.id),
@@ -103,7 +153,14 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
     (edge) => representableNodeIds.has(edge.fromNode) && representableNodeIds.has(edge.toNode),
   );
 
-  const directEdges = allEdges
+  // A synthetic edge that still lands on a non-recipe, non-Sink/Storage
+  // node (a chain spanning more than one pass-through hop — e.g. a Splurger
+  // feeding directly into an outpost's Inputs node, or one outpost feeding
+  // another — see `splurgerPassthrough.ts`'s header on why that's not
+  // resolved here) is filtered out below, never passed through with a
+  // dangling reference. This also naturally covers the plain, non-rewritten
+  // recipe-to-recipe case (both `recipeNodeIds`), unchanged from before.
+  const directEdges = effectiveEdges
     .filter((edge) => recipeNodeIds.has(edge.fromNode) && recipeNodeIds.has(edge.toNode))
     .map((edge) => ({
       id: edge.id,
@@ -112,28 +169,11 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
       fromPort: edge.fromPort,
       toNode: edge.toNode,
       toPort: edge.toPort,
-    }));
-
-  // Splurger pass-through rewrite (Job 024). A synthetic edge that still
-  // lands on a non-recipe node (a chained Splurger — see
-  // `splurgerPassthrough.ts`'s header on why that's not resolved here) is
-  // filtered out by the same `recipeNodeIds` check `directEdges` uses above,
-  // never passed through with a dangling reference.
-  const passthrough = computeSplurgerPassthroughEdges(splurgerNodes, allEdges);
-  const splurgerEdges = passthrough.edges
-    .filter((edge) => recipeNodeIds.has(edge.fromNode) && recipeNodeIds.has(edge.toNode))
-    .map((edge) => ({
-      id: edge.id,
-      part: edge.part,
-      fromNode: edge.fromNode,
-      fromPort: edge.fromPort,
-      toNode: edge.toNode,
-      toPort: edge.toPort,
-      ...(edge.priorityTier ? { priorityTier: edge.priorityTier } : {}),
+      ...("priorityTier" in edge && edge.priorityTier ? { priorityTier: edge.priorityTier } : {}),
     }));
 
   const nodes: SolverNode[] = [...recipeSolverNodes, ...sinkResult.nodes, ...storageResult.nodes];
-  const edges: SolverEdge[] = [...directEdges, ...splurgerEdges, ...specialtyEdges];
+  const edges: SolverEdge[] = [...directEdges, ...specialtyEdges];
 
   return { nodes, edges };
 }

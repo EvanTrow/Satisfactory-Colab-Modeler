@@ -16,7 +16,7 @@ import type { Point, SfmDocument } from "@scm/ydoc";
 import type { EdgeChange, NodeChange } from "@xyflow/react";
 import type * as Y from "yjs";
 
-import { deleteOutpost } from "../outposts";
+import { LOCKED_NODE_KINDS, deleteOutpost } from "../outposts";
 import type { CanvasEdge, CanvasNode, UseYjsSyncResult } from "../useYjsSync";
 import { buildClipboard, deleteSelection, deserializeClipboard, pasteClipboard, pasteOffsetForCenter, serializeClipboard } from "./clipboard";
 
@@ -63,8 +63,19 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
   useEffect(() => {
     if (!enabled) return;
 
+    /**
+     * Outpost/Blueprint rework: excludes the two locked `outpost-input`/
+     * `outpost-output` pass-through nodes (`outposts/io.ts`'s
+     * `LOCKED_NODE_KINDS`) from every selection-driven action this hook
+     * performs (copy/cut/delete) — they're structurally tied to their own
+     * container and were never meant to be duplicated or removed via a
+     * generic selection gesture, matching `NodeContextMenu.tsx`'s own
+     * `locked` guard on the right-click menu.
+     */
     function selectedNodeIds(): string[] {
-      return nodes.filter((node) => node.selected).map((node) => node.id);
+      return nodes
+        .filter((node) => node.selected && !(node.data.record && LOCKED_NODE_KINDS.has(node.data.record.kind)))
+        .map((node) => node.id);
     }
     function selectedEdgeIds(): string[] {
       return edges.filter((edge) => edge.selected).map((edge) => edge.id);
@@ -81,7 +92,12 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
       return nodes.filter((node) => node.selected && node.data.container).map((node) => node.id);
     }
     function selectedRealNodeIds(): string[] {
-      return nodes.filter((node) => node.selected && !node.data.container).map((node) => node.id);
+      return nodes
+        .filter(
+          (node) =>
+            node.selected && !node.data.container && !(node.data.record && LOCKED_NODE_KINDS.has(node.data.record.kind)),
+        )
+        .map((node) => node.id);
     }
 
     function handleSelectAll() {

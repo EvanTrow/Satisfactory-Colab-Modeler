@@ -95,8 +95,11 @@ import { parsePortHandleId, storageNodePart, useConnectionHandlers } from "./edg
 import { edgeTypes, nodeTypes } from "./flowTypes";
 import { useAutoRound } from "./nodes";
 import {
+  DeleteOutpostDialog,
+  LOCKED_NODE_KINDS,
   NodeContextMenu,
   deleteOutpost,
+  deleteOutpostWithContents,
   moveNodeToContainer,
   type NodeContextMenuState,
 } from "./outposts";
@@ -1374,6 +1377,10 @@ function CanvasFlow({
   // real node, "open"/"delete (reparent, don't destroy)" for an outpost
   // boundary node. See `outposts/NodeContextMenu.tsx`.
   const [nodeMenu, setNodeMenu] = useState<NodeContextMenuState | null>(null);
+  // Outpost/Blueprint rework: pending "Delete Outpost" confirmation — the
+  // right-click menu item now opens this dialog instead of deleting
+  // immediately (`DeleteOutpostDialog.tsx`).
+  const [deleteRequest, setDeleteRequest] = useState<{ id: string; kind: "outpost" | "blueprint" } | null>(null);
   // Not React state on purpose — a click-time bookkeeping ref, not something whose change should trigger a render.
   const lastPaneClickRef = useRef<ClickPoint | null>(null);
 
@@ -1558,6 +1565,7 @@ function CanvasFlow({
           ? "blueprint"
           : "outpost"
         : null,
+      container: node.data.container ?? undefined,
       // Right-clicking a node whose kind has quick settings (a real
       // `"recipe"` node's clock/auto-round/somersloops, or just the Name
       // field every other real node kind still gets — see
@@ -1568,6 +1576,7 @@ function CanvasFlow({
         node.data.record && QUICK_SETTINGS_KINDS.has(node.data.record.kind)
           ? node.data.record
           : undefined,
+      locked: node.data.record ? LOCKED_NODE_KINDS.has(node.data.record.kind) : false,
       screenPosition: { x: event.clientX, y: event.clientY },
     });
   };
@@ -1591,8 +1600,16 @@ function CanvasFlow({
   const liveNodeMenuRecord = nodeMenu
     ? nodes.find((node) => node.id === nodeMenu.nodeId)?.data.record
     : undefined;
+  // Same "live, not the right-click-time snapshot" treatment for the
+  // rename field's `container` — otherwise it'd keep showing whatever the
+  // title was at the moment the menu opened even after a remote peer (or
+  // this client's own commit) changed it.
+  const liveNodeMenuContainer = nodeMenu
+    ? sync.containers.find((container) => container.id === nodeMenu.nodeId)
+    : undefined;
   const nodeMenuState = nodeMenu && {
     ...nodeMenu,
+    container: liveNodeMenuContainer,
     recipeRecord:
       liveNodeMenuRecord && QUICK_SETTINGS_KINDS.has(liveNodeMenuRecord.kind)
         ? liveNodeMenuRecord
@@ -1753,10 +1770,26 @@ function CanvasFlow({
             moveNodeToContainer(sfmDoc, nodeId, targetContainerId)
           }
           onOpenOutpost={(id) => navigateToContainer(id)}
-          onDeleteOutpost={(id) => deleteOutpost(sfmDoc, id)}
+          onRequestDelete={(id, kind) => setDeleteRequest({ id, kind })}
           onConvertContainerKind={(id, kind) => updateContainer(sfmDoc, id, { kind })}
           numberFormats={settings.numberFormats}
           onClose={() => setNodeMenu(null)}
+        />
+      )}
+      {deleteRequest && (
+        <DeleteOutpostDialog
+          open
+          containerKind={deleteRequest.kind}
+          containerTitle={sync.containers.find((container) => container.id === deleteRequest.id)?.title ?? ""}
+          onCancel={() => setDeleteRequest(null)}
+          onKeepContents={() => {
+            deleteOutpost(sfmDoc, deleteRequest.id);
+            setDeleteRequest(null);
+          }}
+          onDeleteEverything={() => {
+            deleteOutpostWithContents(sfmDoc, deleteRequest.id);
+            setDeleteRequest(null);
+          }}
         />
       )}
     </div>

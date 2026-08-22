@@ -159,6 +159,64 @@ describe("computeVisibleEdges", () => {
     expect(computeVisibleEdges(outpost.id, [a, b], [edge], parentOf)).toEqual([]);
   });
 
+  it("Outpost/Blueprint I/O rework: a DIRECT edge into the locked Outputs node uses the real ${dir}:${part} handle, not its raw stored (possibly wildcard) port", () => {
+    // The exact bug this regression test locks in: dragging a NEW connection
+    // onto the always-present "+" row bootstraps an edge whose OWN toPort
+    // stays the literal wildcard sentinel forever (`edges/connectionLogic.ts`'s
+    // "wildcards never get renamed" convention) — but the Outputs node's
+    // RENDERED row for that part uses the real, freshly-computed
+    // `${dir}:${part}` id (`OutpostIoNode.tsx`). Viewed from INSIDE the
+    // outpost, this edge (producer -> Outputs node) is "direct" (both
+    // endpoints in view) — using the raw `toPort` here would target the
+    // WRONG (wildcard) handle instead of the named row's real one.
+    const { sfmDoc, root, outpost } = makeFixture();
+    const producer = addNode(sfmDoc, baseNode(outpost.id, "Producer"));
+    const outputsNode = addNode(sfmDoc, { ...baseNode(outpost.id, "Outputs"), kind: "outpost-output" });
+    const edge = addEdge(sfmDoc, {
+      containerId: outpost.id,
+      part: "Heat Sink",
+      fromNode: producer.id,
+      fromPort: "out:Heat Sink",
+      toNode: outputsNode.id,
+      toPort: "in:*", // the raw stored port — permanently the wildcard sentinel.
+      style: null,
+      labelPos: null,
+    });
+    const parentOf = buildContainerParentMap([root, outpost]);
+
+    const visible = computeVisibleEdges(outpost.id, [producer, outputsNode], [edge], parentOf);
+    expect(visible).toEqual([
+      {
+        record: edge,
+        projected: false,
+        source: producer.id,
+        sourceHandle: "out:Heat Sink",
+        target: outputsNode.id,
+        targetHandle: "in:Heat Sink", // NOT "in:*" — the real, named handle the row actually renders.
+      },
+    ]);
+  });
+
+  it("Outpost/Blueprint I/O rework: a DIRECT edge OUT of the locked Inputs node uses the real handle too", () => {
+    const { sfmDoc, root, outpost } = makeFixture();
+    const inputsNode = addNode(sfmDoc, { ...baseNode(outpost.id, "Inputs"), kind: "outpost-input" });
+    const consumer = addNode(sfmDoc, baseNode(outpost.id, "Consumer"));
+    const edge = addEdge(sfmDoc, {
+      containerId: outpost.id,
+      part: "Iron Ore",
+      fromNode: inputsNode.id,
+      fromPort: "out:*",
+      toNode: consumer.id,
+      toPort: "in:Iron Ore",
+      style: null,
+      labelPos: null,
+    });
+    const parentOf = buildContainerParentMap([root, outpost]);
+
+    const visible = computeVisibleEdges(outpost.id, [inputsNode, consumer], [edge], parentOf);
+    expect(visible[0]).toMatchObject({ sourceHandle: "out:Iron Ore", targetHandle: "in:Iron Ore" });
+  });
+
   it("skips an edge with a dangling endpoint reference instead of throwing", () => {
     const { root } = makeFixture();
     const parentOf = buildContainerParentMap([root]);

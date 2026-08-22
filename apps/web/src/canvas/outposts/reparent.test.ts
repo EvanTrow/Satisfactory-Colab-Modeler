@@ -13,7 +13,7 @@ import {
 } from "@scm/ydoc";
 import { describe, expect, it } from "vitest";
 
-import { deleteOutpost, moveNodeToContainer } from "./reparent";
+import { deleteOutpost, deleteOutpostWithContents, moveNodeToContainer } from "./reparent";
 
 function baseNode(containerId: string, title: string) {
   return {
@@ -156,5 +156,68 @@ describe("deleteOutpost", () => {
   it("throws when asked to delete the root container", () => {
     const { sfmDoc, root } = makeFixture();
     expect(() => deleteOutpost(sfmDoc, root.id)).toThrow();
+  });
+});
+
+describe("deleteOutpostWithContents", () => {
+  it("removes the container, every node inside it (at any depth), and every edge touching one of those nodes", () => {
+    const { sfmDoc, root, outpost } = makeFixture();
+    const nested = addContainer(sfmDoc, {
+      kind: "outpost",
+      parentId: outpost.id,
+      title: "Nested",
+      color: "#4b5563",
+      x: 0,
+      y: 0,
+      copiesLimit: null,
+    });
+    const a = addNode(sfmDoc, baseNode(outpost.id, "A"));
+    const b = addNode(sfmDoc, baseNode(nested.id, "B"));
+    const outsider = addNode(sfmDoc, baseNode(root.id, "Outsider"));
+    const internalEdge = addEdge(sfmDoc, {
+      containerId: outpost.id,
+      part: "Iron Ore",
+      fromNode: a.id,
+      fromPort: "out:Iron Ore",
+      toNode: b.id,
+      toPort: "in:Iron Ore",
+      style: null,
+      labelPos: null,
+    });
+    // A boundary-crossing edge reaching OUT of the deleted subtree — must
+    // also be deleted (dangling reference otherwise), even though it's
+    // drawn from `root`'s own view (its `containerId` is `root.id`, NOT
+    // inside the deleted subtree — this is exactly the case the
+    // `containerId`-isn't-authoritative note in the implementation guards
+    // against).
+    const crossingEdge = addEdge(sfmDoc, {
+      containerId: root.id,
+      part: "Copper Ore",
+      fromNode: b.id,
+      fromPort: "out:Copper Ore",
+      toNode: outsider.id,
+      toPort: "in:Copper Ore",
+      style: null,
+      labelPos: null,
+    });
+
+    deleteOutpostWithContents(sfmDoc, outpost.id);
+
+    expect(getContainer(sfmDoc, outpost.id)).toBeUndefined();
+    expect(getContainer(sfmDoc, nested.id)).toBeUndefined();
+    expect(getNode(sfmDoc, a.id)).toBeUndefined();
+    expect(getNode(sfmDoc, b.id)).toBeUndefined();
+    expect(listEdges(sfmDoc).find((e) => e.id === internalEdge.id)).toBeUndefined();
+    expect(listEdges(sfmDoc).find((e) => e.id === crossingEdge.id)).toBeUndefined();
+
+    // Untouched: the sibling node outside the deleted subtree.
+    expect(getNode(sfmDoc, outsider.id)).toBeDefined();
+    expect(getContainer(sfmDoc, root.id)).toBeDefined();
+  });
+
+  it("throws for an unknown outpost id, and for the root container", () => {
+    const { sfmDoc, root } = makeFixture();
+    expect(() => deleteOutpostWithContents(sfmDoc, "c_missing")).toThrow();
+    expect(() => deleteOutpostWithContents(sfmDoc, root.id)).toThrow();
   });
 });

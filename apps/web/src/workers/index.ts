@@ -49,6 +49,7 @@ export { useSolver, type UseSolverDiagnostics, type UseSolverResult } from "./us
 // `canvas/nodes/SplurgerNode.tsx`.
 export {
   EMPTY_TIER_ASSIGNMENT,
+  computePassthroughEdgeAliases,
   computeSplurgerPassthroughEdges,
   computeSplurgerShape,
   decodePriorityOrder,

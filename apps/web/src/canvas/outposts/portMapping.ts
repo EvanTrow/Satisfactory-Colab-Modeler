@@ -112,6 +112,30 @@ export function boundaryPortId(edgeId: string, direction: "in" | "out"): string 
   return `boundary:${edgeId}:${direction}`;
 }
 
+/**
+ * Outpost/Blueprint rework: the handle id a boundary port should render
+ * with, from the container's own perspective. When the INSIDE endpoint is
+ * specifically the container's own locked pass-through node (`outposts/
+ * io.ts`'s `outpost-input`/`outpost-output` kind), the port is real and
+ * connectable — it uses the SAME `${direction}:${part}` scheme
+ * `edges/connectionLogic.ts`'s `parsePortHandleId` already parses for every
+ * other node (`RecipeNode.tsx`'s own `PartRow` convention), so a fresh drag
+ * can land on it directly and `edges/connectionLogic.ts`'s container
+ * redirect resolves it back to this same node. For every other
+ * boundary-crossing edge (the legacy "moved a node into the outpost"
+ * mechanism), the port stays exactly what it's always been: the derived,
+ * non-interactive `boundaryPortId`. `computeOutpostPorts` and
+ * `visibleGraph.ts`'s `computeVisibleEdges` both call this SAME function so
+ * a boundary node's rendered `<Handle>` and a projected edge's endpoint can
+ * never disagree on which id to use.
+ */
+export function outpostBoundaryHandleId(insideNode: NodeRecord, edge: EdgeRecord, direction: "in" | "out"): string {
+  if (insideNode.kind === "outpost-input" || insideNode.kind === "outpost-output") {
+    return `${direction}:${edge.part}`;
+  }
+  return boundaryPortId(edge.id, direction);
+}
+
 export interface DerivedOutpostPort {
   /** Stable handle id — see `boundaryPortId`. */
   id: string;
@@ -158,7 +182,7 @@ export function computeOutpostPorts(
 
     if (fromInside) {
       ports.push({
-        id: boundaryPortId(edge.id, "out"),
+        id: outpostBoundaryHandleId(fromNode, edge, "out"),
         direction: "out",
         part: edge.part,
         edgeId: edge.id,
@@ -166,7 +190,7 @@ export function computeOutpostPorts(
       });
     } else {
       ports.push({
-        id: boundaryPortId(edge.id, "in"),
+        id: outpostBoundaryHandleId(toNode, edge, "in"),
         direction: "in",
         part: edge.part,
         edgeId: edge.id,

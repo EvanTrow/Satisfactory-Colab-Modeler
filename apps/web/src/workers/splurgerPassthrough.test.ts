@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  computePassthroughEdgeAliases,
   computeSplurgerPassthroughEdges,
   computeSplurgerShape,
   decodePriorityOrder,
@@ -274,6 +275,59 @@ describe("computeSplurgerPassthroughEdges", () => {
     const result = computeSplurgerPassthroughEdges([{ id: "lonely", priorityOrder: [] }], []);
     expect(result.edges).toHaveLength(0);
     expect(result.unsupportedNodeIds.size).toBe(0);
+  });
+
+  it("carries the two original edge ids that were merged in sourceEdgeIds — outpost I/O rework's rate-lookup mechanism", () => {
+    const edges: SplurgerEdgeLike[] = [
+      edge({ id: "in1", fromNode: "producer", toNode: "s" }),
+      edge({ id: "out1", fromNode: "s", toNode: "consumer" }),
+    ];
+    const result = computeSplurgerPassthroughEdges([{ id: "s", priorityOrder: [] }], edges);
+    expect(result.edges[0]!.sourceEdgeIds).toEqual({ input: "in1", output: "out1" });
+  });
+});
+
+describe("computePassthroughEdgeAliases", () => {
+  it("aliases both sides of a plain 1-to-1 passthrough", () => {
+    const edges: SplurgerEdgeLike[] = [
+      edge({ id: "in1", fromNode: "producer", toNode: "s" }),
+      edge({ id: "out1", fromNode: "s", toNode: "consumer" }),
+    ];
+    const aliases = computePassthroughEdgeAliases([{ id: "s", priorityOrder: [] }], edges);
+    expect(aliases.get("in1")).toBe("sp:in1>out1");
+    expect(aliases.get("out1")).toBe("sp:in1>out1");
+  });
+
+  it("aliases every individual edge on the MANY side of a splitter (each maps to exactly one synthetic edge)", () => {
+    const edges: SplurgerEdgeLike[] = [
+      edge({ id: "in1", fromNode: "producer", toNode: "s" }),
+      edge({ id: "out1", fromNode: "s", toNode: "consumerA" }),
+      edge({ id: "out2", fromNode: "s", toNode: "consumerB" }),
+    ];
+    const aliases = computePassthroughEdgeAliases([{ id: "s", priorityOrder: [] }], edges);
+    expect(aliases.get("out1")).toBe("sp:in1>out1");
+    expect(aliases.get("out2")).toBe("sp:in1>out2");
+    // The ONE-side edge feeds two different synthetic edges — genuinely
+    // ambiguous which rate to show, so it's deliberately left unaliased.
+    expect(aliases.has("in1")).toBe(false);
+  });
+
+  it("aliases every individual edge on the MANY side of a merger, leaving the one-side edge unaliased", () => {
+    const edges: SplurgerEdgeLike[] = [
+      edge({ id: "in1", fromNode: "producerA", toNode: "s" }),
+      edge({ id: "in2", fromNode: "producerB", toNode: "s" }),
+      edge({ id: "out1", fromNode: "s", toNode: "consumer" }),
+    ];
+    const aliases = computePassthroughEdgeAliases([{ id: "s", priorityOrder: [] }], edges);
+    expect(aliases.get("in1")).toBe("sp:in1>out1");
+    expect(aliases.get("in2")).toBe("sp:in2>out1");
+    expect(aliases.has("out1")).toBe(false);
+  });
+
+  it("has no aliases for a dangling (one-sided) or empty node", () => {
+    const edges: SplurgerEdgeLike[] = [edge({ id: "in1", fromNode: "producer", toNode: "s" })];
+    expect(computePassthroughEdgeAliases([{ id: "s", priorityOrder: [] }], edges).size).toBe(0);
+    expect(computePassthroughEdgeAliases([{ id: "lonely", priorityOrder: [] }], []).size).toBe(0);
   });
 });
 
