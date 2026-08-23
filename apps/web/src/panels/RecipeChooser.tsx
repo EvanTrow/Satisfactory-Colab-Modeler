@@ -10,8 +10,7 @@
 //
 // Redesign pass (Steam-app-inspired "Add a machine" layout): the left rail
 // now carries the special, non-recipe node types (Outpost/
-// Splurger, plus a disabled "more buildings" placeholder for node kinds
-// this app doesn't build yet) as icon buttons, ABOVE the existing
+// Splurger) as icon buttons, ABOVE the existing
 // per-machine filter list — previously these lived as small text buttons in
 // the header. The search box now matches name/inputs/outputs together (each
 // independently toggleable — see `recipeChooser/filters.ts`'s
@@ -34,7 +33,7 @@
 // auto-connects the dragged-from port to the newly created node's matching
 // port (`matchingHandleId` for a recipe node, `WILDCARD_PART` for a
 // Splurger) the moment it's created.
-import { ArrowLeft, ArrowLeftRight, Boxes, FlaskConical, X } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, FlaskConical, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
@@ -503,9 +502,7 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
             {/*
               Left rail: the special, non-recipe node types (Steam-inspired
               "Add a building" sidebar) above the existing per-machine
-              filter list. "More buildings" stays disabled — Space Elevator
-              phases and the Any-Part wildcard (PLAN.md §2) still have no
-              node kind behind them.
+              filter list.
             */}
             <div className="flex w-52 shrink-0 flex-col overflow-y-auto border-r border-[var(--border-subtle)] p-2">
               <div className="grid grid-cols-2 gap-1.5">
@@ -564,13 +561,6 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
                   iconUrl={getIconUrl("Dimensional Depot Uploader")}
                   swatchClassName="bg-[var(--splurger-soft)]"
                   onClick={handleCreateDepot}
-                />
-                <SidebarButton
-                  label={t("canvas.otherBuildings")}
-                  title={t("canvas.comingSoon")}
-                  icon={<Boxes className="h-4 w-4 text-[var(--text-muted)]" aria-hidden />}
-                  swatchClassName="bg-[var(--surface-sunken)]"
-                  disabled
                 />
               </div>
             </div>
@@ -663,7 +653,7 @@ interface SidebarButtonProps {
   title: string;
   /** A real game-art icon (Outpost) — takes priority over `icon` when both would apply. */
   iconUrl?: string;
-  /** A lucide icon, for node kinds with no dedicated art asset (Splurger, and the two disabled placeholders). */
+  /** A lucide icon, for node kinds with no dedicated art asset (Splurger). */
   icon?: ReactNode;
   /**
    * A full, static Tailwind class string for the icon swatch's background —
@@ -678,7 +668,7 @@ interface SidebarButtonProps {
   onClick?: () => void;
 }
 
-/** One left-rail "add this instead of a recipe" button — Outpost/Splurger/Storage/other buildings. See this file's header comment for why Storage and "other buildings" are always `disabled`. */
+/** One left-rail "add this instead of a recipe" button — Outpost/Splurger/Storage/etc. */
 function SidebarButton({ label, title, iconUrl, icon, swatchClassName, disabled, onClick }: SidebarButtonProps) {
   return (
     <button
