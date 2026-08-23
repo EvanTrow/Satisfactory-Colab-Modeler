@@ -13,7 +13,9 @@
 import {
   type Container,
   type SfmDocument,
+  addEdge,
   getContainer,
+  getNode,
   listContainers,
   listEdges,
   listEdgesByContainer,
@@ -27,7 +29,9 @@ import {
   updateNode,
 } from "@scm/ydoc";
 
+import { computeSplurgerPassthroughEdges } from "../../workers/splurgerPassthrough";
 import { buildContainerParentMap, isContainerWithinSubtree } from "./portMapping";
+import { outpostInputNodeId, outpostOutputNodeId } from "./io";
 
 /** Thin, transacted wrapper over `updateNode` for the "move a node into/out of an outpost" gesture — kept as its own named function (rather than callers reaching for `updateNode` directly) so this file is the one place both halves of "moving a node into/out of an outpost updates its containerId" (PLAN.md §3) live, alongside `deleteOutpost` below. */
 export function moveNodeToContainer(sfmDoc: SfmDocument, nodeId: string, containerId: string): void {
@@ -44,6 +48,50 @@ export interface DeleteOutpostResult {
 }
 
 /**
+ * Collapses one of an outpost's own locked `outpost-input`/`outpost-output`
+ * pass-through nodes (`outposts/io.ts`) out of existence as part of
+ * `deleteOutpost` — these two nodes have no meaning outside their own
+ * container (they only exist to give the outer boundary card somewhere real
+ * to land a dragged connection), so "keep contents" must not simply
+ * reparent them like an ordinary node: `LOCKED_NODE_KINDS` (`io.ts`) blocks
+ * their deletion through every normal UI path, which would otherwise leave
+ * them stranded forever in the parent container once they're no longer
+ * inside an outpost.
+ *
+ * Reuses `workers/splurgerPassthrough.ts`'s generic "erase a pass-through
+ * node, wire whichever real node fed its one-sided port directly to every
+ * real node on its many-sided port" rewrite — the exact same shape an
+ * outpost's Inputs/Outputs node has (see that module's header) — but,
+ * unlike its solver-only use elsewhere, actually materializes the result as
+ * real `EdgeRecord`s so the connection survives the outpost's own removal
+ * instead of merely being simulated at solve time. A part-group with no
+ * correct rewrite (many-to-many on both sides) has no synthetic edge
+ * produced for it, same as the solver path — that connection is lost along
+ * with the node, the same way it would already be un-solvable while the
+ * outpost still existed.
+ */
+function collapseIoNode(sfmDoc: SfmDocument, ioNodeId: string, parentId: string): void {
+  const node = getNode(sfmDoc, ioNodeId);
+  if (!node) return;
+  const incident = listEdges(sfmDoc).filter((edge) => edge.fromNode === ioNodeId || edge.toNode === ioNodeId);
+  const { edges: synthetic } = computeSplurgerPassthroughEdges([node], incident);
+  for (const edge of synthetic) {
+    addEdge(sfmDoc, {
+      containerId: parentId,
+      part: edge.part,
+      fromNode: edge.fromNode,
+      fromPort: edge.fromPort,
+      toNode: edge.toNode,
+      toPort: edge.toPort,
+      style: null,
+      labelPos: null,
+    });
+  }
+  for (const edge of incident) removeEdge(sfmDoc, edge.id);
+  removeNode(sfmDoc, ioNodeId);
+}
+
+/**
  * Deletes outpost `outpostId`, reparenting everything that lived directly
  * inside it — nodes, edges, and any nested child containers — to the
  * outpost's own parent, then removes the (now-empty) container itself.
@@ -56,7 +104,15 @@ export interface DeleteOutpostResult {
  * derived port for collapse back into ordinary internal edges
  * automatically (see `portMapping.ts`'s header comment): once both
  * endpoints share the reparented `containerId` again, `computeOutpostPorts`
- * simply stops finding a crossing.
+ * simply stops finding a crossing. The outpost's own locked Inputs/Outputs
+ * nodes are the one exception — they're collapsed away by `collapseIoNode`
+ * instead of reparented, since they have no meaning (and no way to ever be
+ * deleted again) outside their own container.
+ *
+ * Reparented positions are shifted so the former contents land where the
+ * outpost's own boundary card sat in the parent view, not at their raw
+ * (outpost-local) coordinates — otherwise they'd frequently land stacked on
+ * top of whatever already exists near the parent's local origin.
  *
  * Throws if `outpostId` doesn't exist, or is the root container (which has
  * no parent to reparent into — deleting the root isn't a supported
@@ -71,25 +127,53 @@ export function deleteOutpost(sfmDoc: SfmDocument, outpostId: string): DeleteOut
     throw new Error("deleteOutpost: cannot delete the root container (it has no parent to reparent its contents into)");
   }
   const parentId = outpost.parentId;
+  const inputId = outpostInputNodeId(outpostId);
+  const outputId = outpostOutputNodeId(outpostId);
 
   const reparentedNodeIds: string[] = [];
   const reparentedEdgeIds: string[] = [];
   const reparentedContainerIds: string[] = [];
 
   sfmDoc.doc.transact(() => {
-    for (const node of listNodesByContainer(sfmDoc, outpostId)) {
-      updateNode(sfmDoc, node.id, { containerId: parentId });
+    const movableNodes = listNodesByContainer(sfmDoc, outpostId).filter(
+      (node) => node.id !== inputId && node.id !== outputId,
+    );
+    const nestedChildren: Container[] = listContainers(sfmDoc).filter((c) => c.parentId === outpostId);
+
+    // Anchor the reparented cluster's top-left corner at the outpost's own
+    // former position in the parent view, rather than leaving it at
+    // outpost-local coordinates that likely overlap unrelated parent content.
+    let minX = Infinity;
+    let minY = Infinity;
+    for (const node of movableNodes) {
+      minX = Math.min(minX, node.x);
+      minY = Math.min(minY, node.y);
+    }
+    for (const child of nestedChildren) {
+      minX = Math.min(minX, child.x);
+      minY = Math.min(minY, child.y);
+    }
+    const hasContent = movableNodes.length > 0 || nestedChildren.length > 0;
+    const dx = hasContent ? outpost.x - minX : 0;
+    const dy = hasContent ? outpost.y - minY : 0;
+
+    for (const node of movableNodes) {
+      updateNode(sfmDoc, node.id, { containerId: parentId, x: node.x + dx, y: node.y + dy });
       reparentedNodeIds.push(node.id);
     }
     for (const edge of listEdgesByContainer(sfmDoc, outpostId)) {
+      if (edge.fromNode === inputId || edge.toNode === inputId || edge.fromNode === outputId || edge.toNode === outputId) {
+        continue;
+      }
       reparentEdge(sfmDoc, edge.id, parentId);
       reparentedEdgeIds.push(edge.id);
     }
-    const nestedChildren: Container[] = listContainers(sfmDoc).filter((c) => c.parentId === outpostId);
     for (const child of nestedChildren) {
-      updateContainer(sfmDoc, child.id, { parentId });
+      updateContainer(sfmDoc, child.id, { parentId, x: child.x + dx, y: child.y + dy });
       reparentedContainerIds.push(child.id);
     }
+    collapseIoNode(sfmDoc, inputId, parentId);
+    collapseIoNode(sfmDoc, outputId, parentId);
     removeContainer(sfmDoc, outpostId);
   });
 

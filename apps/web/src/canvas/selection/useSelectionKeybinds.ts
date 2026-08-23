@@ -16,7 +16,7 @@ import type { Point, SfmDocument } from "@scm/ydoc";
 import type { EdgeChange, NodeChange } from "@xyflow/react";
 import type * as Y from "yjs";
 
-import { LOCKED_NODE_KINDS, deleteOutpost } from "../outposts";
+import { LOCKED_NODE_KINDS } from "../outposts";
 import type { CanvasEdge, CanvasNode, UseYjsSyncResult } from "../useYjsSync";
 import { buildClipboard, deleteSelection, deserializeClipboard, pasteClipboard, pasteOffsetForCenter, serializeClipboard } from "./clipboard";
 
@@ -37,6 +37,14 @@ export interface UseSelectionKeybindsOptions {
    * `null`/omitted falls back to `DEFAULT_PASTE_OFFSET`.
    */
   getPasteCenter?: () => Point | null;
+  /**
+   * Delete on a selected outpost boundary node no longer deletes it
+   * directly — it needs the same Keep Contents/Delete Everything choice the
+   * right-click "Delete outpost" menu item gets (`CanvasView.tsx`'s
+   * `DeleteOutpostDialog`), so this hook just reports the request instead of
+   * calling `deleteOutpost` itself.
+   */
+  onRequestOutpostDelete: (outpostId: string) => void;
 }
 
 /** True if `target` is a form control the browser's own text-editing keys (Backspace/Delete/Ctrl+C/etc.) should be left alone for — `RecipeNode.tsx`'s limit/clock fields being the concrete case that matters here: deleting text in one of those must never delete the node underneath it. */
@@ -58,7 +66,18 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * open, or a text field focused).
  */
 export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void {
-  const { sfmDoc, containerId, nodes, edges, onNodesChange, onEdgesChange, undoManager, enabled, getPasteCenter } = options;
+  const {
+    sfmDoc,
+    containerId,
+    nodes,
+    edges,
+    onNodesChange,
+    onEdgesChange,
+    undoManager,
+    enabled,
+    getPasteCenter,
+    onRequestOutpostDelete,
+  } = options;
 
   useEffect(() => {
     if (!enabled) return;
@@ -139,15 +158,16 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
     function handleDelete() {
       const edgeIds = selectedEdgeIds();
       deleteSelection(sfmDoc, selectedRealNodeIds(), edgeIds);
-      // Job 013: Delete on a selected outpost reparents its contents to
-      // this outpost's own parent (never destroys them) — same "delete key
-      // acts on whatever's selected" expectation as real nodes/edges above,
-      // just routed through `deleteOutpost` instead of `deleteSelection`
-      // (see `outposts/reparent.ts`). Each call is its own transaction/undo
-      // step, same as `NodeContextMenu`'s "Delete outpost" menu item uses.
-      for (const outpostId of selectedOutpostIds()) {
-        deleteOutpost(sfmDoc, outpostId);
-      }
+      // Job 013: Delete on a selected outpost needs the same "keep contents
+      // vs. delete everything" confirmation the right-click menu's "Delete
+      // outpost" item gets (`CanvasView.tsx`'s `DeleteOutpostDialog`) rather
+      // than silently reparenting its contents — so this just reports the
+      // request upward instead of calling `deleteOutpost` itself. Only the
+      // first selected outpost is reported: the dialog handles one container
+      // at a time, and selecting more than one outpost at once isn't a case
+      // the UI otherwise supports.
+      const [firstOutpostId] = selectedOutpostIds();
+      if (firstOutpostId) onRequestOutpostDelete(firstOutpostId);
     }
 
     function handleCutEvent(event: ClipboardEvent) {
@@ -240,5 +260,16 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
       document.removeEventListener("cut", handleCutEvent);
       document.removeEventListener("paste", handlePasteEvent);
     };
-  }, [sfmDoc, containerId, nodes, edges, onNodesChange, onEdgesChange, undoManager, enabled, getPasteCenter]);
+  }, [
+    sfmDoc,
+    containerId,
+    nodes,
+    edges,
+    onNodesChange,
+    onEdgesChange,
+    undoManager,
+    enabled,
+    getPasteCenter,
+    onRequestOutpostDelete,
+  ]);
 }

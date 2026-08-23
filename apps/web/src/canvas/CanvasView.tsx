@@ -1591,6 +1591,7 @@ function CanvasFlow({
     // history to revert).
     enabled: !readOnly && chooser === null && nodeMenu === null,
     getPasteCenter,
+    onRequestOutpostDelete: (id) => setDeleteRequest({ id, kind: "outpost" }),
   });
 
   function openChooserAt(

@@ -10,9 +10,11 @@ import {
   listEdges,
   listNodes,
   type SfmDocument,
+  updateContainer,
 } from "@scm/ydoc";
 import { describe, expect, it } from "vitest";
 
+import { ensureOutpostIoNodes, outpostInputNodeId, outpostOutputNodeId } from "./io";
 import { deleteOutpost, deleteOutpostWithContents, moveNodeToContainer } from "./reparent";
 
 function baseNode(containerId: string, title: string) {
@@ -153,6 +155,92 @@ describe("deleteOutpost", () => {
   it("throws when asked to delete the root container", () => {
     const { sfmDoc, root } = makeFixture();
     expect(() => deleteOutpost(sfmDoc, root.id)).toThrow();
+  });
+
+  it("collapses the locked Inputs/Outputs nodes into a direct edge instead of reparenting them", () => {
+    const { sfmDoc, root, outpost } = makeFixture();
+    ensureOutpostIoNodes(sfmDoc, outpost.id, "#4b5563");
+    const inputId = outpostInputNodeId(outpost.id);
+    const outputId = outpostOutputNodeId(outpost.id);
+    const producer = addNode(sfmDoc, baseNode(root.id, "Producer"));
+    const internal = addNode(sfmDoc, baseNode(outpost.id, "Internal"));
+    const consumer = addNode(sfmDoc, baseNode(root.id, "Consumer"));
+
+    // producer -> Inputs -> internal -> Outputs -> consumer
+    addEdge(sfmDoc, {
+      containerId: root.id,
+      part: "Iron Ore",
+      fromNode: producer.id,
+      fromPort: "out:Iron Ore",
+      toNode: inputId,
+      toPort: "in:Iron Ore",
+      style: null,
+      labelPos: null,
+    });
+    addEdge(sfmDoc, {
+      containerId: outpost.id,
+      part: "Iron Ore",
+      fromNode: inputId,
+      fromPort: "out:Iron Ore",
+      toNode: internal.id,
+      toPort: "in:Iron Ore",
+      style: null,
+      labelPos: null,
+    });
+    addEdge(sfmDoc, {
+      containerId: outpost.id,
+      part: "Iron Plate",
+      fromNode: internal.id,
+      fromPort: "out:Iron Plate",
+      toNode: outputId,
+      toPort: "in:Iron Plate",
+      style: null,
+      labelPos: null,
+    });
+    addEdge(sfmDoc, {
+      containerId: root.id,
+      part: "Iron Plate",
+      fromNode: outputId,
+      fromPort: "out:Iron Plate",
+      toNode: consumer.id,
+      toPort: "in:Iron Plate",
+      style: null,
+      labelPos: null,
+    });
+
+    deleteOutpost(sfmDoc, outpost.id);
+
+    // The locked pass-through nodes are gone entirely, not stranded in root.
+    expect(getNode(sfmDoc, inputId)).toBeUndefined();
+    expect(getNode(sfmDoc, outputId)).toBeUndefined();
+
+    // Their pass-through edges collapsed into direct producer/consumer edges.
+    const edges = listEdges(sfmDoc);
+    expect(edges.some((e) => e.fromNode === producer.id && e.toNode === internal.id && e.part === "Iron Ore")).toBe(
+      true,
+    );
+    expect(edges.some((e) => e.fromNode === internal.id && e.toNode === consumer.id && e.part === "Iron Plate")).toBe(
+      true,
+    );
+    expect(edges).toHaveLength(2);
+  });
+
+  it("shifts reparented nodes to where the outpost's own boundary card sat, so they don't land on top of existing content", () => {
+    const { sfmDoc, outpost } = makeFixture();
+    // Reposition the outpost's own boundary card to a distinct spot in root
+    // (`makeFixture` places it at (0,0), same as every node's default position
+    // — not a useful case for checking the shift actually happened).
+    updateContainer(sfmDoc, outpost.id, { x: 500, y: 300 });
+    const a = addNode(sfmDoc, { ...baseNode(outpost.id, "A"), x: 10, y: 20 });
+    const b = addNode(sfmDoc, { ...baseNode(outpost.id, "B"), x: 40, y: 20 });
+
+    deleteOutpost(sfmDoc, outpost.id);
+
+    // The pair's relative offset from each other is preserved (rigid-body
+    // shift), and their new top-left corner lands exactly at the outpost's
+    // former (500, 300) position rather than at their raw local (10, 20).
+    expect(getNode(sfmDoc, a.id)).toMatchObject({ x: 500, y: 300 });
+    expect(getNode(sfmDoc, b.id)).toMatchObject({ x: 530, y: 300 });
   });
 });
 
