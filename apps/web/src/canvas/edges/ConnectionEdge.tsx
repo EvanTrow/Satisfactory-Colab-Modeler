@@ -68,6 +68,7 @@ import {
   getEdge,
   getNode,
   getSettings,
+  listEdges,
   removeEdge,
   removeWaypoint,
   updateWaypoint,
@@ -452,7 +453,7 @@ export const ConnectionEdge = memo(function ConnectionEdge({
   // either end to read a rate from).
   const edgeResult = edgeResultById.get(id);
   const iconUrl = getIconUrl(record.part);
-  const resolvedRate = resolveEdgeRate(record, edgeResultById, nodeResultById);
+  const resolvedRate = resolveEdgeRate(record, edgeResultById, nodeResultById, listEdges(sfmDoc));
   const labelText = resolvedRate ? formatRate(resolvedRate, settings.numberFormats) : record.part;
 
   // Calculation-validation visuals: color the wire itself, not just the

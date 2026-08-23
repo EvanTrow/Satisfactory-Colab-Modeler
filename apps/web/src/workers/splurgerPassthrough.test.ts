@@ -285,6 +285,53 @@ describe("computeSplurgerPassthroughEdges", () => {
     const result = computeSplurgerPassthroughEdges([{ id: "s", priorityOrder: [] }], edges);
     expect(result.edges[0]!.sourceEdgeIds).toEqual({ input: "in1", output: "out1" });
   });
+
+  it("composes a chain of THREE pass-through nodes in a row into one direct edge, regardless of the order they're listed in", () => {
+    // Regression test for the live bug: a straight pass-through outpost
+    // (its own Inputs -> Outputs) feeding on into another pass-through node
+    // used to land a synthetic edge on the OTHER still-erased node's id,
+    // which got silently dropped one hop later — reproducing a flat 1ppm
+    // default at whatever real node was actually waiting at the far end.
+    const edges: SplurgerEdgeLike[] = [
+      edge({ id: "e1", fromNode: "producer", toNode: "p1" }),
+      edge({ id: "e2", fromNode: "p1", toNode: "p2" }),
+      edge({ id: "e3", fromNode: "p2", toNode: "p3" }),
+      edge({ id: "e4", fromNode: "p3", toNode: "consumer" }),
+    ];
+    const nodes = [
+      { id: "p1", priorityOrder: [] },
+      { id: "p2", priorityOrder: [] },
+      { id: "p3", priorityOrder: [] },
+    ];
+
+    for (const order of [nodes, [nodes[1]!, nodes[0]!, nodes[2]!], [...nodes].reverse()]) {
+      const result = computeSplurgerPassthroughEdges(order, edges);
+      expect(result.edges).toHaveLength(1);
+      expect(result.edges[0]).toMatchObject({
+        fromNode: "producer",
+        toNode: "consumer",
+        sourceEdgeIds: { input: "e1", output: "e4" },
+      });
+    }
+  });
+
+  it("composes a splitter chained into a further pass-through node on one branch", () => {
+    const edges: SplurgerEdgeLike[] = [
+      edge({ id: "in1", fromNode: "producer", toNode: "splitter" }),
+      edge({ id: "out1", fromNode: "splitter", toNode: "consumerA" }),
+      edge({ id: "out2", fromNode: "splitter", toNode: "p1" }),
+      edge({ id: "e3", fromNode: "p1", toNode: "consumerB" }),
+    ];
+    const nodes = [
+      { id: "splitter", priorityOrder: [] },
+      { id: "p1", priorityOrder: [] },
+    ];
+    const result = computeSplurgerPassthroughEdges(nodes, edges);
+    expect(result.edges).toHaveLength(2);
+    const byTarget = new Map(result.edges.map((e) => [e.toNode, e]));
+    expect(byTarget.get("consumerA")).toMatchObject({ fromNode: "producer", sourceEdgeIds: { input: "in1", output: "out1" } });
+    expect(byTarget.get("consumerB")).toMatchObject({ fromNode: "producer", sourceEdgeIds: { input: "in1", output: "e3" } });
+  });
 });
 
 describe("computePassthroughEdgeAliases", () => {

@@ -361,19 +361,69 @@ export function computePassthroughEdgeAliases(
   return aliases;
 }
 
+/** A pooled edge is either an original, untouched `SplurgerEdgeLike` or a `PassthroughSolverEdge` some earlier fold already produced — see `computeSplurgerPassthroughEdges`'s own header for why the pool mixes both. */
+type PooledEdge = SplurgerEdgeLike | PassthroughSolverEdge;
+
+function isSynthetic(e: PooledEdge): e is PassthroughSolverEdge {
+  return "sourceEdgeIds" in e;
+}
+
+/** The TRUE original edge id nearest `e`'s input side — `e.id` itself for a raw edge, or the already-traced-back id a prior fold recorded for a synthetic one. */
+function originalInputId(e: PooledEdge): string {
+  return isSynthetic(e) ? e.sourceEdgeIds.input : e.id;
+}
+
+/** The TRUE original edge id nearest `e`'s output side — see `originalInputId`. */
+function originalOutputId(e: PooledEdge): string {
+  return isSynthetic(e) ? e.sourceEdgeIds.output : e.id;
+}
+
+/**
+ * Rewrites every `splurgers` node's incident edges into direct
+ * recipe-to-recipe `PassthroughSolverEdge`s, grouped by `part` — see this
+ * function's own earlier doc comment above for the single-hop shape rules
+ * (passthrough/splitter/merger/unsupported).
+ *
+ * Multi-hop chains: `splurgers` is folded over SEQUENTIALLY against one
+ * shared, mutable working pool (starting as `edges`) rather than each node
+ * independently reading the same static input — after a node is processed,
+ * every edge that touched it is replaced in the pool by whatever synthetic
+ * edge(s) its own fold produced. This is what lets a chain of two or more
+ * pass-through nodes in a row (an outpost's own Inputs -> Outputs
+ * pass-through feeding straight into another outpost, a Splurger, or a
+ * Sink/Storage's own synthetic consumer) compose all the way through to a
+ * single real-producer -> real-consumer edge in one pass, instead of each
+ * node's rewrite independently landing on the OTHER erased node's still-
+ * unresolved id and getting silently dropped by `buildSnapshot.ts`'s "both
+ * endpoints must be representable" filter — confirmed live as a straight
+ * pass-through outpost, or an outpost feeding a Dimensional Depot two hops
+ * away, reporting a flat 1ppm (the unresolved-node default) instead of the
+ * real upstream rate. The composition is order-independent: whichever node
+ * in a chain is folded first just leaves its synthetic edge pointing at the
+ * next (still-erased) node's id, which the NEXT fold that touches that id —
+ * whenever its own turn comes, earlier or later in this same pass — picks up
+ * from the pool exactly like any other incident edge.
+ *
+ * `sourceEdgeIds` on the FINAL synthetic edge always traces back to the two
+ * true, original user-facing edge ids at the very ends of the chain
+ * (`originalInputId`/`originalOutputId` walk back through any
+ * already-synthetic edge consumed along the way) — never an intermediate
+ * synthetic id — so `computePassthroughEdgeAliases`'s ambiguity accounting
+ * keeps working unchanged for chains of any length.
+ */
 export function computeSplurgerPassthroughEdges(
   splurgers: readonly SplurgerNodeLike[],
   edges: readonly SplurgerEdgeLike[],
 ): SplurgerPassthroughResult {
-  const result: PassthroughSolverEdge[] = [];
   const unsupportedNodeIds = new Set<string>();
+  let pool: readonly PooledEdge[] = edges;
 
   for (const splurger of splurgers) {
-    const incident = edges.filter((e) => e.fromNode === splurger.id || e.toNode === splurger.id);
+    const incident = pool.filter((e) => e.fromNode === splurger.id || e.toNode === splurger.id);
     if (incident.length === 0) continue;
 
     const assignment = decodePriorityOrder(splurger.priorityOrder);
-    const byPart = new Map<string, { inputs: SplurgerEdgeLike[]; outputs: SplurgerEdgeLike[] }>();
+    const byPart = new Map<string, { inputs: PooledEdge[]; outputs: PooledEdge[] }>();
     for (const edge of incident) {
       const group = byPart.get(edge.part) ?? { inputs: [], outputs: [] };
       if (edge.toNode === splurger.id) group.inputs.push(edge);
@@ -381,6 +431,7 @@ export function computeSplurgerPassthroughEdges(
       byPart.set(edge.part, group);
     }
 
+    const additions: PassthroughSolverEdge[] = [];
     for (const [part, group] of byPart) {
       const { inputs, outputs } = group;
       if (inputs.length === 0 || outputs.length === 0) continue;
@@ -391,7 +442,7 @@ export function computeSplurgerPassthroughEdges(
       if (inputs.length === 1) {
         const input = inputs[0]!;
         for (const output of outputs) {
-          result.push({
+          additions.push({
             id: `sp:${input.id}>${output.id}`,
             part,
             fromNode: input.fromNode,
@@ -399,13 +450,13 @@ export function computeSplurgerPassthroughEdges(
             toNode: output.toNode,
             toPort: output.toPort,
             priorityTier: tierFromPort(output.fromPort) ?? tierForEdge(assignment, output.id),
-            sourceEdgeIds: { input: input.id, output: output.id },
+            sourceEdgeIds: { input: originalInputId(input), output: originalOutputId(output) },
           });
         }
       } else {
         const output = outputs[0]!;
         for (const input of inputs) {
-          result.push({
+          additions.push({
             id: `sp:${input.id}>${output.id}`,
             part,
             fromNode: input.fromNode,
@@ -413,12 +464,20 @@ export function computeSplurgerPassthroughEdges(
             toNode: output.toNode,
             toPort: output.toPort,
             priorityTier: tierFromPort(input.toPort) ?? tierForEdge(assignment, input.id),
-            sourceEdgeIds: { input: input.id, output: output.id },
+            sourceEdgeIds: { input: originalInputId(input), output: originalOutputId(output) },
           });
         }
       }
     }
+
+    // Fold this node away: drop every edge that touched it (whether or not
+    // a replacement was produced — a dangling or unsupported part-group's
+    // edges are dropped with nothing to replace them, same as before this
+    // pass) and splice in whatever this fold minted, so the NEXT node
+    // processed sees it as an ordinary incident edge.
+    const replaced = new Set(incident);
+    pool = [...pool.filter((e) => !replaced.has(e)), ...additions];
   }
 
-  return { edges: result, unsupportedNodeIds };
+  return { edges: pool.filter(isSynthetic), unsupportedNodeIds };
 }

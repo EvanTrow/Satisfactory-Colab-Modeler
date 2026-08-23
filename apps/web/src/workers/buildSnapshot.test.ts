@@ -668,5 +668,61 @@ describe("buildSolverSnapshot", () => {
       const snapshot = buildSolverSnapshot(sfmDoc);
       expect(snapshot.edges.some((e) => e.part === "Iron Ingot" && e.fromNode === producer.id)).toBe(true);
     });
+
+    it("composes a chain crossing an outpost's OWN Inputs->Outputs pass-through AND on into a Dimensional Depot two hops away — the depot receives the producer's full rate, not the flat 1-machine default", () => {
+      // Regression test: "just passing items through an outpost without
+      // doing anything with it" reported live as the Depot showing 1ppm
+      // instead of the real upstream rate. The single-hop ordering fix
+      // above (the previous test in this describe block) composes ONE
+      // pass-through hop; this chain has TWO (the outpost's own Inputs node,
+      // then its own Outputs node) before ever reaching the Depot, which
+      // needed `computeSplurgerPassthroughEdges` to fold sequentially
+      // instead of each node rewriting independently against the same raw
+      // edges (see that function's own header).
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
+      const outpost = addContainer(sfmDoc, { kind: "outpost", parentId: root, title: "New Outpost", color: "#000", x: 0, y: 0 });
+
+      const producer = makeRecipeNode(sfmDoc, root, { title: "Producer", limit: "2", limitMode: "machines" });
+      const inputs = makeIoNode(sfmDoc, outpost.id, "outpost-input", "io-in:" + outpost.id);
+      const outputs = makeIoNode(sfmDoc, outpost.id, "outpost-output", "io-out:" + outpost.id);
+      const depot = addNode(sfmDoc, {
+        containerId: root,
+        kind: "depot",
+        recipe: null,
+        machine: "Dimensional Depot Uploader",
+        x: 0,
+        y: 0,
+        title: "Dimensional Depot",
+        color: "#000",
+        limit: null,
+        limitMode: "ppm",
+        clock: null,
+        autoRound: false,
+        shards: 0,
+        purity: null,
+        beltTier: null,
+        storageMode: null,
+        splurgerVariant: null,
+      });
+
+      addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: producer.id, fromPort: "out:Iron Ingot", toNode: inputs.id, toPort: "in:*", style: null, labelPos: null });
+      addEdge(sfmDoc, { containerId: outpost.id, part: "Iron Ingot", fromNode: inputs.id, fromPort: "out:*", toNode: outputs.id, toPort: "in:*", style: null, labelPos: null });
+      addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: outputs.id, fromPort: "out:*", toNode: depot.id, toPort: "in:*", style: null, labelPos: null });
+
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      const consumerNodeId = sinkConsumerNodeId(depot.id, "Iron Ingot");
+      expect(snapshot.nodes.some((n) => n.id === consumerNodeId)).toBe(true);
+      expect(snapshot.edges).toEqual([
+        expect.objectContaining({ fromNode: producer.id, toNode: consumerNodeId, part: "Iron Ingot" }),
+      ]);
+
+      const result = solve(snapshot, "basic");
+      const consumerResult = result.nodes.find((n) => n.nodeId === consumerNodeId)!;
+      const producerResult = result.nodes.find((n) => n.nodeId === producer.id)!;
+      expect(consumerResult.resolved).toBe(true);
+      expect(consumerResult.partRates["Iron Ingot"]).toBe(`-${producerResult.partRates["Iron Ingot"]}`);
+    });
   });
 });

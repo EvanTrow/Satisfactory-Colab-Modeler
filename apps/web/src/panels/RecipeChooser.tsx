@@ -108,7 +108,7 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
   const { t } = useTranslation("app");
   const { t: tRaw } = useTranslation();
   const gameTerm = useGameTerm();
-  const { sfmDoc, containerId } = useCanvasDoc();
+  const { sfmDoc, containerId, navigateToContainer } = useCanvasDoc();
   const gameData = defaultGameData;
   // Project-wide progression gate (`Settings.recipeTierFilter`/
   // `recipePhaseFilter`, set via `SettingsMenu.tsx`) — defaults to "none"
@@ -232,8 +232,21 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
     onClose();
   }
 
+  /**
+   * Unlike every other `create*` handler above, a fresh outpost has nothing
+   * inside it yet to receive the dragged-from wire — so instead of leaving a
+   * newly-made empty box on the canvas, a pending connection also drills
+   * straight into it afterward (`navigateToContainer`), landing the user
+   * right where they'd need to go next to wire the internal side. The
+   * boundary card's own id IS the container id (`OutpostNode.tsx`), and
+   * `connectPorts`/`resolveEdgeEndpoints` already redirects a connection
+   * aimed at a container id to its locked Inputs/Outputs pass-through node
+   * (`connectionLogic.ts`'s `redirectContainerEndpoint`) — same wildcard
+   * handle convention as `handleCreateStorage` above.
+   */
   function handleCreateOutpost() {
     const color = "#d97706";
+    let containerIdForNav: string | null = null;
     sfmDoc.doc.transact(() => {
       const container = addContainer(sfmDoc, {
         kind: "outpost",
@@ -247,8 +260,14 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
       // Inputs/Outputs pass-through nodes at creation time — see
       // `canvas/outposts/io.ts`.
       ensureOutpostIoNodes(sfmDoc, container.id, color);
+      if (pendingConnection) {
+        const handleId = pendingConnection.direction === "out" ? `in:${WILDCARD_PART}` : `out:${WILDCARD_PART}`;
+        autoConnectPending(container.id, handleId);
+      }
+      containerIdForNav = container.id;
     });
     onClose();
+    if (pendingConnection && containerIdForNav) navigateToContainer(containerIdForNav);
   }
 
   /**

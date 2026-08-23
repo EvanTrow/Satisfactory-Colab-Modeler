@@ -72,6 +72,19 @@ import { computeStorageBufferNodes } from "./storagePassthrough";
  * from the solve entirely (both sides' independent rewrites individually
  * correct, but composing to nothing) — confirmed live as "only 1ppm flows
  * unless a limit is set."
+ *
+ * That ordering alone only composes ONE pass-through hop, though — a chain
+ * of two or more (an outpost's own Inputs -> Outputs pass-through, one
+ * outpost feeding another, a Splurger feeding an outpost's Inputs node, ...)
+ * still landed a synthetic edge on the OTHER still-erased node's id, which
+ * this filter then dropped the same way, reproducing the exact same "flat
+ * 1ppm" symptom one hop further out. `splurgerPassthrough.ts`'s
+ * `computeSplurgerPassthroughEdges` now folds its whole node list
+ * sequentially against one shared pool instead of each node reading the
+ * same static input independently (see that function's own header) — which
+ * is also why every Splurger and outpost I/O node is passed to ONE combined
+ * call below (`passthroughNodes`), not two separate ones: a chain mixing
+ * both kinds needs every node in it visible to the same fold.
  */
 export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   const allNodes = listNodes(sfmDoc);
@@ -88,6 +101,15 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   // duplicating a near-identical module. See `canvas/outposts/io.ts`'s
   // header for the full design.
   const outpostIoNodes = allNodes.filter((node) => node.kind === "outpost-input" || node.kind === "outpost-output");
+  // Splurgers and outpost I/O nodes are folded away in ONE combined call
+  // (below), not two separate ones — `computeSplurgerPassthroughEdges` now
+  // composes chains of pass-through nodes sequentially against a shared
+  // pool (see its own header), which only works across the FULL set of
+  // erasable nodes at once: a chain mixing both kinds (e.g. a Splurger
+  // feeding directly into an outpost's Inputs node, or the reverse) needs
+  // every node in the chain visible to the same fold, not split across two
+  // independent calls that can't see each other's synthetic edges.
+  const passthroughNodes = [...splurgerNodes, ...outpostIoNodes];
 
   const recipeSolverNodes: SolverNode[] = recipeNodes.map((node) => ({
     id: node.id,
@@ -114,9 +136,8 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   // erased from the pool entirely (whether it produced a synthetic
   // replacement or was dangling/unsupported — see `splurgerPassthrough.ts`'s
   // header) and, where a replacement exists, that takes its place instead.
-  const passthroughNodeIds = new Set([...splurgerNodes, ...outpostIoNodes].map((node) => node.id));
-  const splurgerPassthrough = computeSplurgerPassthroughEdges(splurgerNodes, allEdges);
-  const outpostIoPassthrough = computeSplurgerPassthroughEdges(outpostIoNodes, allEdges);
+  const passthroughNodeIds = new Set(passthroughNodes.map((node) => node.id));
+  const passthrough = computeSplurgerPassthroughEdges(passthroughNodes, allEdges);
   const effectiveEdges = [
     ...allEdges
       .filter((edge) => !passthroughNodeIds.has(edge.fromNode) && !passthroughNodeIds.has(edge.toNode))
@@ -128,8 +149,7 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
         toNode: edge.toNode,
         toPort: edge.toPort,
       })),
-    ...splurgerPassthrough.edges,
-    ...outpostIoPassthrough.edges,
+    ...passthrough.edges,
   ];
 
   // Sink/Depot (Job's AWESOME Sink/Dimensional Depot addition) and Storage
@@ -152,12 +172,14 @@ export function buildSolverSnapshot(sfmDoc: SfmDocument): SolverSnapshot {
   );
 
   // A synthetic edge that still lands on a non-recipe, non-Sink/Storage
-  // node (a chain spanning more than one pass-through hop — e.g. a Splurger
-  // feeding directly into an outpost's Inputs node, or one outpost feeding
-  // another — see `splurgerPassthrough.ts`'s header on why that's not
-  // resolved here) is filtered out below, never passed through with a
-  // dangling reference. This also naturally covers the plain, non-rewritten
-  // recipe-to-recipe case (both `recipeNodeIds`), unchanged from before.
+  // node — now only a genuinely unsupported shape (a multi-in-AND-multi-out
+  // part-group somewhere in the chain, `splurgerPassthrough.ts`'s own
+  // `unsupportedNodeIds`) or a dangling one (nothing wired on the far side
+  // at all), since an ordinary multi-hop chain is already composed all the
+  // way through by `computeSplurgerPassthroughEdges` above — is filtered out
+  // below, never passed through with a dangling reference. This also
+  // naturally covers the plain, non-rewritten recipe-to-recipe case (both
+  // `recipeNodeIds`), unchanged from before.
   const directEdges = effectiveEdges
     .filter((edge) => recipeNodeIds.has(edge.fromNode) && recipeNodeIds.has(edge.toNode))
     .map((edge) => ({
