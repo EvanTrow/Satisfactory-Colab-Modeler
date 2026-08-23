@@ -73,6 +73,13 @@ function extractPublicShortIdFromPath(pathname: string): string | null {
   return match ? decodeURIComponent(match[1]!) : null;
 }
 
+// Guest-mode counterpart of `extractProjectShortIdFromPath` above, for
+// `enterGuestCanvas`'s `/g/:id` URLs — same outpost sub-path tolerance.
+function extractGuestIdFromPath(pathname: string): string | null {
+  const match = /^\/g\/([^/]+)(?:\/o\/[^/]+)?\/?$/.exec(pathname);
+  return match ? decodeURIComponent(match[1]!) : null;
+}
+
 // Minimal shape of GET /auth/me's response body (apps/api/src/auth/routes.ts).
 interface CurrentUser {
   id: string;
@@ -165,6 +172,18 @@ function App() {
   // transient re-render of this same mount never re-triggers it.
   const guestImportAttemptedRef = useRef(false);
   const { requestConfirm, dialogProps: confirmDialogProps } = useConfirmDialog();
+  // Every `ProjectSummary`/`GuestProjectSummary` this tab has shown in
+  // "canvas"/"guestCanvas" this session, keyed by the id its URL carries
+  // (`shortId`/`id`) — populated by the effect below. Lets the `popstate`
+  // handler restore the exact view when the browser's forward button lands
+  // back on a `/p/:shortId/edit` or `/g/:id` URL after "Back to projects"
+  // pushed `"/"`: without this cache, that handler only knew how to pop OUT
+  // of canvas/settings to the project list, never back INTO one, so forward
+  // navigation from "projects" was a permanent dead end. A plain `Map` (not
+  // a single "last seen" slot) so switching between several projects in one
+  // session doesn't clobber an earlier one still reachable via forward/back.
+  const canvasProjectCacheRef = useRef<Map<string, ProjectSummary>>(new Map());
+  const guestProjectCacheRef = useRef<Map<string, GuestProjectSummary>>(new Map());
   // Job 014: mounted once here (not just inside `CanvasView.tsx`) precisely
   // because "app-level, not canvas-only" is the whole point — see
   // `theme/useTheme.ts`'s header comment. Both mounts share the same
@@ -348,7 +367,6 @@ function App() {
     function onPopState() {
       const path = window.location.pathname;
       setView((current) => {
-        if (current.name === "projects" || current.name === "guestProjects") return current;
         if (
           current.name === "canvas" &&
           (path === `/p/${current.project.shortId}/edit` || path.startsWith(`/p/${current.project.shortId}/edit/o/`))
@@ -361,12 +379,42 @@ function App() {
         ) {
           return current;
         }
+
+        // Forward navigation (or a multi-step back/forward hop) landing back
+        // on a canvas/settings URL this tab already visited this session —
+        // restore it from the cache above instead of falling through to the
+        // "leaving canvas/settings" branch below, which would otherwise treat
+        // every such landing as staying on/returning to the project list and
+        // make the browser's forward button a dead end (see the cache refs'
+        // own comment).
+        if (path === "/settings") return { name: "settings" };
+        const forwardShortId = extractProjectShortIdFromPath(path);
+        if (forwardShortId) {
+          const cached = canvasProjectCacheRef.current.get(forwardShortId);
+          if (cached) return { name: "canvas", project: cached };
+        }
+        const forwardGuestId = extractGuestIdFromPath(path);
+        if (forwardGuestId) {
+          const cached = guestProjectCacheRef.current.get(forwardGuestId);
+          if (cached) return { name: "guestCanvas", project: cached };
+        }
+
+        if (current.name === "projects" || current.name === "guestProjects") return current;
         return guestMode ? { name: "guestProjects" } : { name: "projects" };
       });
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, [guestMode]);
+
+  // Populates the caches above every time `view` shows a canvas/guestCanvas
+  // — including the deep-link resolution effect and `handleInviteRedeemed`
+  // below, not just `enterCanvas`/`enterGuestCanvas`, since any of them can
+  // be the first time this tab has seen that project.
+  useEffect(() => {
+    if (view.name === "canvas") canvasProjectCacheRef.current.set(view.project.shortId, view.project);
+    if (view.name === "guestCanvas") guestProjectCacheRef.current.set(view.project.id, view.project);
+  }, [view]);
 
   useEffect(() => {
     let cancelled = false;
