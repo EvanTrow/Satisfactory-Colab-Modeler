@@ -189,15 +189,13 @@ export function useMarqueeSelection(
       const sourceCenter = centers.get(edge.source);
       const targetCenter = centers.get(edge.target);
       if (!sourceCenter || !targetCenter) continue; // endpoint node not in this container's current node list — shouldn't happen, defensive only
-      // Job 013: a boundary-projected edge's `data.record.waypoints` belong
-      // to a *different* container's coordinate space (see
-      // `useYjsSync.ts`'s `CanvasEdgeData.projected` doc comment) — skip
-      // them for marquee hit-testing too, same reasoning `BoundaryEdge.tsx`
-      // uses for rendering, so a stale/foreign waypoint coordinate can't
-      // produce a spurious hit against this view's own marquee rect. This
-      // also means a projected edge's waypoints are never individually
-      // selectable, only ever moved as a whole via its two endpoint nodes.
-      const waypoints = edge.data?.projected ? [] : (edge.data?.record?.waypoints ?? []);
+      // A boundary-projected edge's `data.record.waypoints` are stored in
+      // exactly this view's coordinate space too — an edge only ever
+      // renders (projected or not) in the single view where both its
+      // endpoints resolve together (`outposts/visibleGraph.ts`), so there's
+      // no other container whose frame they could instead belong to. Same
+      // waypoints, same marquee hit-testing as any other edge.
+      const waypoints = edge.data?.record?.waypoints ?? [];
       if (setSelectedWaypoints) {
         waypoints.forEach((waypoint, index) => {
           if (pointInRect(waypoint, flowRect)) hitWaypointKeys.add(waypointKey(edge.id, index));

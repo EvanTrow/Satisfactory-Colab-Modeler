@@ -127,21 +127,20 @@ export type CanvasNode = RFNode<CanvasNodeData>;
  * *rendered* top-level `source`/`target`/`sourceHandle`/`targetHandle`
  * below may differ from this record's own `fromNode`/`toNode`/`fromPort`/
  * `toPort`; see `outposts/visibleGraph.ts`). `ConnectionEdge.tsx` (Job 011)
- * and `outposts/BoundaryEdge.tsx` (Job 013) both read `data.record` rather
- * than re-fetching from the doc on every render.
+ * reads `data.record` rather than re-fetching from the doc on every render.
  */
 export interface CanvasEdgeData extends Record<string, unknown> {
   record: EdgeRecord;
   /**
    * True when this edge's rendered endpoints were redirected to an
    * outpost's boundary node (Job 013) — i.e. this isn't the edge's own
-   * literal `fromNode`/`toNode`. `BoundaryEdge.tsx` is used instead of
-   * `ConnectionEdge.tsx` whenever this is true (`useYjsSync.ts` picks the
-   * edge `type` accordingly), specifically so the interactive waypoint
-   * gestures (which assume `record.waypoints` are meaningful in *this*
-   * container's coordinate space) never run against a boundary projection —
-   * the stored waypoints belong to whichever container the edge was
-   * originally drawn in, which is generally not this one.
+   * literal `fromNode`/`toNode`. `ConnectionEdge.tsx` reads this purely for
+   * its boundary-crossing visual treatment (dashed amber stroke, tooltip
+   * wording) — every gesture (drag/add/remove a waypoint, delete the
+   * connection) works the same regardless, since an edge (boundary or not)
+   * only ever renders in the single view where both its endpoints resolve
+   * together (`outposts/visibleGraph.ts`), so `record.waypoints` are always
+   * meaningful in *that* view's coordinate space.
    */
   projected?: boolean;
   /**
@@ -235,7 +234,7 @@ function containerToOutpostFlowNode(container: Container, ports: DerivedOutpostP
   };
 }
 
-/** Converts a `ProjectedEdge` (`outposts/visibleGraph.ts`) into the flow edge shape — `type: "boundary"` for a projected (boundary-crossing) edge, `type: "part"` (Job 011's `ConnectionEdge`) for a normal direct one, exactly as before Job 013. */
+/** Converts a `ProjectedEdge` (`outposts/visibleGraph.ts`) into the flow edge shape — `type: "boundary"` for a projected (boundary-crossing) edge vs. `type: "part"` for a normal direct one, purely so `ConnectionEdge.tsx` (both map to it, `flowTypes.ts`) knows which visual treatment to use; `data.projected` carries the same distinction through to that component. */
 function projectedEdgeToFlowEdge(projected: ProjectedEdge, selected = false): CanvasEdge {
   return {
     id: projected.record.id,

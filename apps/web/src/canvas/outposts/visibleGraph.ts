@@ -52,7 +52,7 @@ function endpointHandleId(node: NodeRecord, edge: EdgeRecord, direction: "in" | 
 export interface ProjectedEdge {
   /** The real, underlying `EdgeRecord` — ground truth (endpoints, waypoints, part, labelPos) is untouched; only the *rendered* source/target below are projected. */
   record: EdgeRecord;
-  /** True when either endpoint of this edge had to be redirected to a container's boundary node — i.e. this is a derived/synthetic projection, not the edge's own literal endpoints. Callers use this to pick a non-interactive rendering (no waypoint dragging — the stored waypoints live in a different container's coordinate space and aren't meaningful here). */
+  /** True when either endpoint of this edge had to be redirected to a container's boundary node — i.e. this is a derived/synthetic projection, not the edge's own literal endpoints. `ConnectionEdge.tsx` reads this purely for its boundary-crossing visual treatment (dashed amber stroke, tooltip wording) — every edge, projected or not, only ever renders in the single view where both endpoints resolve together, so the stored waypoints stay meaningful in that view's coordinate space either way, and every gesture (drag/add/remove a waypoint, delete the connection) works the same. */
   projected: boolean;
   /** Node id (real) or container id (boundary) to render this edge's source at. */
   source: string;

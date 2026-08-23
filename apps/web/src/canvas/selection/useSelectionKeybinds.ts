@@ -134,13 +134,11 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
      * nothing's selected, so a plain-text copy elsewhere on the page — e.g.
      * a label the user actually highlighted — still works normally.
      *
-     * Job 013: `buildClipboard` only ever matches ids present in
-     * `listNodes` (real ydoc nodes) — an outpost boundary node's id simply
-     * won't match anything there, so a selection that includes an outpost
-     * silently copies only the real nodes in it. Copying/pasting an outpost
-     * itself (with its contents) isn't built here — see
-     * jobs/013-outposts.md's Handoff notes for why that's left out of
-     * this job's own clipboard scope.
+     * An outpost boundary node's id in `selectedNodeIds()` is a
+     * `Container.id`, not a `NodeRecord.id` — `buildClipboard` recognizes
+     * that case itself and pulls in the whole outpost subtree (nested
+     * outposts, their locked I/O nodes, everything scoped inside), so this
+     * just forwards whatever's selected without needing to special-case it.
      */
     function writeSelectionToClipboard(event: ClipboardEvent): boolean {
       const payload = buildClipboard(sfmDoc, selectedNodeIds());
@@ -193,7 +191,7 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
       // the old one.
       const previousNodeIds = selectedNodeIds();
       const previousEdgeIds = selectedEdgeIds();
-      const offset = pasteOffsetForCenter(clipboard.nodes, getPasteCenter ? getPasteCenter() : null);
+      const offset = pasteOffsetForCenter(clipboard, getPasteCenter ? getPasteCenter() : null);
       const result = pasteClipboard(sfmDoc, containerId, clipboard, offset);
       // `onNodesChange`/`onEdgesChange` (see `useYjsSync.ts`) resolve
       // against the *live* Zustand store at call time, not against this
@@ -206,9 +204,16 @@ export function useSelectionKeybinds(options: UseSelectionKeybindsOptions): void
       // listing the ids that need to *change* (not a full current-array
       // map, like `handleSelectAll` above uses) avoids depending on that
       // freshness at all.
+      //
+      // A pasted outpost's boundary is rendered as a flow node whose id is
+      // its container id (`useYjsSync.ts`'s `containerToOutpostFlowNode`),
+      // so `result.containerIds` is selected the same way `result.nodeIds`
+      // is — there's no separate "select a container" concept downstream.
       const nodeChanges: NodeChange<CanvasNode>[] = [
         ...previousNodeIds.map((id) => ({ id, type: "select", selected: false }) as NodeChange<CanvasNode>),
-        ...result.nodeIds.map((id) => ({ id, type: "select", selected: true }) as NodeChange<CanvasNode>),
+        ...[...result.nodeIds, ...result.containerIds].map(
+          (id) => ({ id, type: "select", selected: true }) as NodeChange<CanvasNode>,
+        ),
       ];
       const edgeChanges: EdgeChange<CanvasEdge>[] = [
         ...previousEdgeIds.map((id) => ({ id, type: "select", selected: false }) as EdgeChange<CanvasEdge>),

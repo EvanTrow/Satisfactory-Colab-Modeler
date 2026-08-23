@@ -6,7 +6,7 @@
 // `SampleFactoryPreview.tsx` (its own, separate `<ReactFlow>` instance) can
 // import the exact same node/edge renderers instead of redefining them.
 import { RecipeNode, SinkNode, SplurgerNode, StorageNode } from "./nodes";
-import { OutpostIoNode, OutpostNode, BoundaryEdge } from "./outposts";
+import { OutpostIoNode, OutpostNode } from "./outposts";
 import { ConnectionEdge } from "./edges";
 
 /** `"recipe"` matches the `type` string `useYjsSync.ts`'s `nodeRecordToFlowNode` assigns to every `kind: "recipe"` node; `"outpost"` matches `containerToOutpostFlowNode`'s synthetic boundary nodes. */
@@ -21,5 +21,15 @@ export const nodeTypes = {
   "outpost-output": OutpostIoNode,
 };
 
-/** `"part"` matches what `useYjsSync.ts` assigns to a normal direct edge; `"boundary"` matches a boundary-crossing projected edge (`outposts/BoundaryEdge.tsx`). */
-export const edgeTypes = { part: ConnectionEdge, boundary: BoundaryEdge };
+/**
+ * `"part"` matches what `useYjsSync.ts` assigns to a normal direct edge;
+ * `"boundary"` matches a boundary-crossing projected edge (an edge redirected
+ * to an outpost's boundary node, `outposts/visibleGraph.ts`). Both render
+ * through the same `ConnectionEdge` — a boundary edge only ever renders in
+ * the one view where it's visible at all, so its waypoints are just as
+ * meaningful there as any other edge's; `ConnectionEdge` reads
+ * `data.projected` itself to pick the boundary-crossing visual treatment
+ * (dashed amber stroke, tooltip wording) without needing a separate
+ * component.
+ */
+export const edgeTypes = { part: ConnectionEdge, boundary: ConnectionEdge };

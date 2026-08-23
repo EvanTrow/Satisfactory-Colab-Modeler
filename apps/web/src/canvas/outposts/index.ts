@@ -33,6 +33,5 @@ export {
 } from "./io";
 export { OutpostNode } from "./OutpostNode";
 export { OutpostIoNode } from "./OutpostIoNode";
-export { BoundaryEdge } from "./BoundaryEdge";
 export { NodeContextMenu, type NodeContextMenuProps, type NodeContextMenuState } from "./NodeContextMenu";
 export { DeleteOutpostDialog, type DeleteOutpostDialogProps } from "./DeleteOutpostDialog";

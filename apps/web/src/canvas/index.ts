@@ -48,7 +48,6 @@ export {
   deleteOutpost,
   moveNodeToContainer,
   OutpostNode,
-  BoundaryEdge,
   NodeContextMenu,
   type ContainerParentMap,
   type DerivedOutpostPort,

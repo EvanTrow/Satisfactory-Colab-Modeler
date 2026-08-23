@@ -46,6 +46,20 @@ export interface EdgeResolution {
 const SEVERITY_RANK: Record<IssueSeverity, number> = { invalid: 0, mismatched: 1, unresolved: 2 };
 
 /**
+ * The severity/label/key ordering `computeIssueList` sorts its own output
+ * by — pulled out so a caller merging in issues from a NON-solver source
+ * (`computeOutpostIoIssues.ts`'s document-level dangling/unsupported-port
+ * checks, which never produce a `NodeSolveResult`/`EdgeSolveResult` at all)
+ * can re-sort the combined list the exact same way instead of duplicating
+ * this comparator.
+ */
+export function sortIssueEntries(entries: readonly IssueEntry[]): IssueEntry[] {
+  return [...entries].sort(
+    (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.label.localeCompare(b.label) || a.key.localeCompare(b.key),
+  );
+}
+
+/**
  * `resolveNode`/`resolveEdge` return `undefined` for a solver-internal id
  * with no real on-canvas counterpart the caller could map it to — that
  * issue is silently dropped (nothing meaningful to show or navigate to),
@@ -97,7 +111,5 @@ export function computeIssueList(
     });
   }
 
-  return entries.sort(
-    (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.label.localeCompare(b.label) || a.key.localeCompare(b.key),
-  );
+  return sortIssueEntries(entries);
 }

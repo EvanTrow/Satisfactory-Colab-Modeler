@@ -29,7 +29,8 @@ import type { ThemeMode } from "../theme";
 import type { CanvasNode } from "../canvas/useYjsSync";
 import { originalEdgeIdFromSinkEdgeId, sinkConsumerNodeId } from "../workers/sinkPassthrough";
 import { originalEdgeIdFromStorageEdgeId, storageConsumerNodeId, storageProducerNodeId } from "../workers/storagePassthrough";
-import { computeIssueList, type EdgeResolution, type IssueEntry, type NodeResolution } from "./summary/computeIssueList";
+import { computeIssueList, sortIssueEntries, type EdgeResolution, type IssueEntry, type NodeResolution } from "./summary/computeIssueList";
+import { computeOutpostIoIssues } from "./summary/computeOutpostIoIssues";
 import {
   nodeIdsForScope,
   summarizeScope,
@@ -599,7 +600,13 @@ export function SummaryPanel({
   const stale = staleness === "stale-recomputing";
 
   const { resolveNode, resolveEdge } = buildIssueResolvers(allNodesUnfiltered, allEdges, gameTerm);
-  const issues = computeIssueList(result?.nodes ?? [], result?.edges ?? [], resolveNode, resolveEdge);
+  const solverIssues = computeIssueList(result?.nodes ?? [], result?.edges ?? [], resolveNode, resolveEdge);
+  // Outpost Inputs/Outputs nodes never reach the solver at all (same as a
+  // Splurger — `computeOutpostIoIssues.ts`'s own header), so their
+  // dangling/unsupported-port warnings are computed separately, directly
+  // over document state, and merged in here.
+  const outpostIoIssues = computeOutpostIoIssues(allNodesUnfiltered, allEdges, (node) => nodeDisplayName(node, gameTerm));
+  const issues = sortIssueEntries([...solverIssues, ...outpostIoIssues]);
   const navigableNodeIds = new Set(nodes.map((n) => n.id));
 
   // Job 027: keep the popped-out window's own `<html>` in sync with the

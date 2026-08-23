@@ -70,6 +70,39 @@ export function computeIoDanglingParts(
   );
 }
 
+/**
+ * Which parts are wired as multiple-sources-AND-multiple-destinations at
+ * once — the one shape `workers/splurgerPassthrough.ts`'s
+ * `computeSplurgerPassthroughEdges` has no correct rewrite for (see that
+ * file's header) and excludes from the solve entirely. Computed strictly
+ * PER PART, matching that module's own per-part grouping exactly: a node
+ * with two internal edges and two external edges for two DIFFERENT parts is
+ * two independent 1-to-1 passthroughs (fully supported), not a crossbar —
+ * only a single part with multiple edges on BOTH sides is the unsupported
+ * shape. `OutpostIoNode.tsx` uses this instead of a raw total-edge-count
+ * comparison, which would false-positive on exactly that two-different-parts
+ * case.
+ */
+export function computeIoUnsupportedParts(
+  edges: readonly EdgeRecord[],
+  ioNodeId: string,
+  internalDirection: "in" | "out",
+): ReadonlySet<string> {
+  const internalCounts = new Map<string, number>();
+  const externalCounts = new Map<string, number>();
+  for (const edge of edges) {
+    if (edge.fromNode !== ioNodeId && edge.toNode !== ioNodeId) continue;
+    const isInternal = internalDirection === "in" ? edge.toNode === ioNodeId : edge.fromNode === ioNodeId;
+    const counts = isInternal ? internalCounts : externalCounts;
+    counts.set(edge.part, (counts.get(edge.part) ?? 0) + 1);
+  }
+  const unsupported = new Set<string>();
+  for (const [part, count] of internalCounts) {
+    if (count > 1 && (externalCounts.get(part) ?? 0) > 1) unsupported.add(part);
+  }
+  return unsupported;
+}
+
 export interface IoPortRow {
   readonly part: string;
   readonly edgeIds: readonly string[];

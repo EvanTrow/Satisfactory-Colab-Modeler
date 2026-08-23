@@ -489,8 +489,7 @@ export function CanvasViewReady({
       const parsed = parseWaypointKey(key);
       if (!parsed) continue;
       const edge = sync.edges.find((candidate) => candidate.id === parsed.edgeId);
-      const waypointCount =
-        edge && !edge.data?.projected ? (edge.data?.record?.waypoints.length ?? 0) : 0;
+      const waypointCount = edge?.data?.record?.waypoints.length ?? 0;
       if (parsed.index < waypointCount) next.add(key);
     }
     if (next.size !== selectedWaypoints.size) setSelectedWaypoints(next);

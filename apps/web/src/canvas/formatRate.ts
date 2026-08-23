@@ -1,6 +1,6 @@
 // Shared by `nodes/RecipeNode.tsx` (per-part rate rows) and
-// `edges/ConnectionEdge.tsx`/`outposts/BoundaryEdge.tsx` (the wire label) —
-// both display the same kind of value (a non-negative per-minute rate)
+// `edges/ConnectionEdge.tsx` (the wire label, including a boundary-crossing
+// one) — both display the same kind of value (a non-negative per-minute rate)
 // against the same live `Settings.numberFormats` setting.
 import { abs, formatRational, parseRational, type Rational } from "@scm/rational";
 import type { EdgeSolveResult, NodeSolveResult } from "@scm/solver";

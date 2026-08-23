@@ -1,8 +1,9 @@
 // The ONE place a single `EdgeSolveResult` gets turned into a validity tier
 // — extracted out of `../nodes/computeValidity.ts`'s per-edge loop so every
 // OTHER consumer that wants to color/ring something by a specific edge's
-// own validity (the edge's own path in `ConnectionEdge.tsx`/`BoundaryEdge.tsx`,
-// an Outpost boundary port keyed by `DerivedOutpostPort.edgeId`, a
+// own validity (the edge's own path in `ConnectionEdge.tsx`, including its
+// boundary-crossing rendering, an Outpost boundary port keyed by
+// `DerivedOutpostPort.edgeId`, a
 // Sink/Storage per-part row) shares the exact same rule instead of
 // re-implementing the "is this a rate mismatch or something worse" check.
 // `computeValidity.ts` itself now calls this too — no behavior change there,

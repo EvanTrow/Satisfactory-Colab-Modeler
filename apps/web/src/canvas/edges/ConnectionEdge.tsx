@@ -261,6 +261,15 @@ export const ConnectionEdge = memo(function ConnectionEdge({
   // need their own explicit guard rather than inheriting one from
   // `<ReactFlow>`.
   const readOnly = Boolean(data?.readOnly);
+  // True when this edge's rendered endpoints were redirected to an
+  // outpost's boundary node (`outposts/visibleGraph.ts`'s `ProjectedEdge`).
+  // Purely a visual/tooltip distinction now — every gesture below (drag a
+  // waypoint, double-click to add one, double-right-click to remove a
+  // waypoint or the whole connection) works identically regardless, since a
+  // boundary edge only ever renders in the single view where it's visible
+  // at all, so `record.waypoints` are just as meaningful in this view's
+  // coordinate space as any other edge's.
+  const isBoundary = Boolean(data?.projected);
   const record = data?.record;
   // Live (per-frame, pre-commit) positions of this edge's two endpoint
   // nodes — called unconditionally (hooks can't follow the `!record` early
@@ -474,6 +483,25 @@ export const ConnectionEdge = memo(function ConnectionEdge({
             detail: mismatchDetail ?? t("node.mismatchDetailFallback"),
           })
         : undefined;
+
+  /** Prefixed onto a label's default gesture-hint tooltip only for a boundary crossing, so it still reads as "this leaves/enters an outpost" even though every gesture works exactly like any other connection now. */
+  const boundaryTitlePrefix = isBoundary ? "Boundary connection — crosses an outpost's edge. " : "";
+
+  /**
+   * Label border/text color class, in the same validity-wins-then-selected
+   * precedence as the wire's own `stroke` above: a validity color is applied
+   * via inline `style` instead (so it can't be fought by a class), `true`
+   * means this label counts as "selected" for accent-border purposes (either
+   * the whole edge, or — for a waypoint label — that specific waypoint's own
+   * marquee selection), and a boundary crossing with neither gets its own
+   * muted amber tint so it still reads as "this leaves/enters an outpost".
+   */
+  function labelAccentClass(isSelectedLike: boolean | undefined): string {
+    if (validityStroke) return "";
+    if (isSelectedLike) return "border-[var(--accent)] text-[var(--accent)]";
+    if (isBoundary) return "border-[var(--outpost-border)] text-[var(--outpost)]";
+    return "";
+  }
 
   /**
    * Inserts a new waypoint immediately after `index`, at the midpoint
@@ -791,9 +819,15 @@ export const ConnectionEdge = memo(function ConnectionEdge({
           // `RecipeNode.tsx`'s own border cascade already established
           // (`highlightBorderClass(...) ?? ... ?? (selected ? accent : ...)`):
           // a broken/mismatched wire needs to stay visible even while
-          // selected, not get masked by the accent color.
-          stroke: validityStroke ?? (selected ? "var(--accent)" : "var(--text-muted)"),
+          // selected, not get masked by the accent color. A boundary
+          // crossing keeps its own amber tint (matching the outpost card's
+          // own accent color) below both of those, so it stays visually
+          // distinct as "this leaves/enters an outpost" without losing
+          // either signal.
+          stroke:
+            validityStroke ?? (selected ? "var(--accent)" : isBoundary ? "var(--outpost)" : "var(--text-muted)"),
           strokeWidth: validityStroke ? 2.5 : selected ? 2 : 1.5,
+          ...(isBoundary ? { strokeDasharray: "5 4", opacity: 0.85 } : {}),
           ...style,
         }}
         interactionWidth={16}
@@ -801,7 +835,7 @@ export const ConnectionEdge = memo(function ConnectionEdge({
       <EdgeLabelRenderer>
         {storedWaypoints.length === 0 && (
           <div
-            className={`${labelClass} ${!validityStroke && selected ? "border-[var(--accent)] text-[var(--accent)]" : ""}`}
+            className={`${labelClass} ${labelAccentClass(selected)}`}
             style={{
               transform: `translate(-50%, -50%) translate(${displayLabelPoint.x}px, ${displayLabelPoint.y}px)`,
               pointerEvents: "all",
@@ -817,7 +851,7 @@ export const ConnectionEdge = memo(function ConnectionEdge({
             title={
               readOnly
                 ? validityTitle
-                : (validityTitle ?? "Drag to create a waypoint. Double-right-click: delete connection.")
+                : (validityTitle ?? `${boundaryTitlePrefix}Drag to create a waypoint. Double-right-click: delete connection.`)
             }
           >
             {iconUrl && <img src={iconUrl} alt="" className={labelIconClass} draggable={false} />}
@@ -834,7 +868,7 @@ export const ConnectionEdge = memo(function ConnectionEdge({
             // edge's own React Flow selection flag) gets the identical
             // accent-border treatment — a waypoint has no other visual
             // "this is part of the current selection" signal of its own.
-            className={`${labelClass} ${!validityStroke && (selected || selectedWaypoints.has(waypointKey(id, index))) ? "border-[var(--accent)] text-[var(--accent)]" : ""}`}
+            className={`${labelClass} ${labelAccentClass(selected || selectedWaypoints.has(waypointKey(id, index)))}`}
             style={{
               transform: `translate(-50%, -50%) translate(${point.x}px, ${point.y}px)`,
               pointerEvents: "all",
@@ -852,7 +886,7 @@ export const ConnectionEdge = memo(function ConnectionEdge({
               readOnly
                 ? validityTitle
                 : (validityTitle ??
-                  "Drag to move. Double-click: insert a waypoint after this one. Double-right-click: remove this waypoint.")
+                  `${boundaryTitlePrefix}Drag to move. Double-click: insert a waypoint after this one. Double-right-click: remove this waypoint.`)
             }
           >
             {iconUrl && <img src={iconUrl} alt="" className={labelIconClass} draggable={false} />}

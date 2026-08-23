@@ -32,7 +32,13 @@ import { formatRate } from "../formatRate";
 import { useSolverResult } from "../SolverResultContext";
 import { useSettings } from "../useSettings";
 import type { CanvasNode } from "../useYjsSync";
-import { OUTPOST_OUTPUT_KIND, computeIoDanglingParts, computeIoNodePorts, computeIoPartRate } from "./io";
+import {
+  OUTPOST_OUTPUT_KIND,
+  computeIoDanglingParts,
+  computeIoNodePorts,
+  computeIoPartRate,
+  computeIoUnsupportedParts,
+} from "./io";
 
 const handleClass = "!h-3.5 !w-3.5 !border-2 !border-[var(--surface-card)] !bg-[var(--outpost)]";
 const handleFadeClass = "opacity-20 pointer-events-none transition-opacity";
@@ -67,13 +73,10 @@ export const OutpostIoNode = memo(function OutpostIoNode({ id, data, selected }:
     .filter((edge) => (internalDirection === "in" ? edge.toNode === id : edge.fromNode === id))
     .map((edge) => ({ edge, direction: internalDirection }))
     .sort((a, b) => a.edge.id.localeCompare(b.edge.id));
-  const externalRowCount = allEdges.filter((edge) =>
-    internalDirection === "in" ? edge.fromNode === id : edge.toNode === id,
-  ).length;
 
   const ports = computeIoNodePorts(allEdges, id);
   const danglingParts = [...computeIoDanglingParts(allEdges, id, internalDirection)];
-  const unsupported = internalRows.length > 1 && externalRowCount > 1;
+  const unsupportedParts = computeIoUnsupportedParts(allEdges, id, internalDirection);
 
   function validityForEdge(edgeId: string) {
     return classifyEdgeValidity(edgeResultById.get(edgeId));
@@ -114,9 +117,10 @@ export const OutpostIoNode = memo(function OutpostIoNode({ id, data, selected }:
         </div>
       </div>
 
-      {unsupported && (
+      {unsupportedParts.size > 0 && (
         <p className="mx-2 mt-1.5 rounded-md bg-[var(--danger-soft)] px-2 py-1 text-[10px] text-[var(--danger)]">
-          Multiple sources and multiple destinations for the same item isn't supported here.
+          {[...unsupportedParts].join(", ")}: multiple sources and multiple destinations for the same item isn't
+          supported here.
         </p>
       )}
       {danglingParts.length > 0 && (
@@ -144,15 +148,18 @@ export const OutpostIoNode = memo(function OutpostIoNode({ id, data, selected }:
           const iconUrl = getIconUrl(part);
           const rate = computeIoPartRate(allEdges, id, part, edgeResultById, nodeResultById);
           const dangling = danglingParts.includes(part);
+          const unsupported = unsupportedParts.has(part);
           const neighbors = rows.map((row) => neighborTitle(row)).join(", ");
           return (
             <div
               key={handleId}
-              className={`relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)] ${dangling ? "bg-[var(--danger-soft)]" : ""}`}
+              className={`relative flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[var(--surface-hover)] ${dangling || unsupported ? "bg-[var(--danger-soft)]" : ""}`}
               title={
-                dangling
-                  ? `${part} wired on only one side — connect the other side to route it through.`
-                  : neighbors || undefined
+                unsupported
+                  ? `${part}: multiple sources and multiple destinations for the same item isn't supported here.`
+                  : dangling
+                    ? `${part} wired on only one side — connect the other side to route it through.`
+                    : neighbors || undefined
               }
             >
               {internalDirection === "in" && (

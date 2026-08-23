@@ -11,11 +11,14 @@ import {
   addEdge,
   addNode,
   createDocument,
+  getNode,
+  listContainers,
   listEdges,
   listNodes,
 } from "@scm/ydoc";
 import { describe, expect, it } from "vitest";
 
+import { OUTPOST_INPUT_KIND, OUTPOST_OUTPUT_KIND, ensureOutpostIoNodes, outpostInputNodeId, outpostOutputNodeId } from "../outposts/io";
 import {
   DEFAULT_PASTE_OFFSET,
   buildClipboard,
@@ -260,11 +263,11 @@ describe("clipboardCentroid / pasteOffsetForCenter", () => {
     const a = addNode(sfmDoc, baseNode(root.id, { x: 0, y: 0 }));
     const clipboard = buildClipboard(sfmDoc, [a.id])!;
 
-    expect(pasteOffsetForCenter(clipboard.nodes, null)).toEqual(DEFAULT_PASTE_OFFSET);
+    expect(pasteOffsetForCenter(clipboard, null)).toEqual(DEFAULT_PASTE_OFFSET);
   });
 
   it("falls back to DEFAULT_PASTE_OFFSET for an empty clipboard even with a known center", () => {
-    expect(pasteOffsetForCenter([], { x: 500, y: 500 })).toEqual(DEFAULT_PASTE_OFFSET);
+    expect(pasteOffsetForCenter({ nodes: [], containers: [] }, { x: 500, y: 500 })).toEqual(DEFAULT_PASTE_OFFSET);
   });
 
   it("computes the offset that moves the copied group's centroid onto the given center", () => {
@@ -273,12 +276,135 @@ describe("clipboardCentroid / pasteOffsetForCenter", () => {
     const b = addNode(sfmDoc, baseNode(root.id, { x: 100, y: 50 }));
     const clipboard = buildClipboard(sfmDoc, [a.id, b.id])!;
 
-    const offset = pasteOffsetForCenter(clipboard.nodes, { x: 1000, y: 2000 });
+    const offset = pasteOffsetForCenter(clipboard, { x: 1000, y: 2000 });
     expect(offset).toEqual({ dx: 950, dy: 1975 }); // 1000-50, 2000-25
 
     const result = pasteClipboard(sfmDoc, root.id, clipboard, offset);
     const pastedNodes = result.nodeIds.map((id) => listNodes(sfmDoc).find((n) => n.id === id)!);
     expect(clipboardCentroid(pastedNodes)).toEqual({ x: 1000, y: 2000 });
+  });
+});
+
+describe("outposts", () => {
+  it("buildClipboard selecting only the outpost boundary id pulls in its locked I/O nodes and inner contents", () => {
+    const { sfmDoc, root } = setUp();
+    const outpost = addContainer(sfmDoc, {
+      kind: "outpost",
+      parentId: root.id,
+      title: "Outpost",
+      color: "#d97706",
+      x: 500,
+      y: 500,
+    });
+    ensureOutpostIoNodes(sfmDoc, outpost.id, outpost.color);
+    const inner = addNode(sfmDoc, baseNode(outpost.id, { x: 0, y: 0 }));
+    addEdge(
+      sfmDoc,
+      baseEdge(outpost.id, { fromNode: outpostInputNodeId(outpost.id), toNode: inner.id }),
+    );
+
+    // Only the outpost's own boundary id is "selected" — none of its
+    // contents are individually selected, matching what a marquee/click
+    // selection of the collapsed outpost card looks like.
+    const clipboard = buildClipboard(sfmDoc, [outpost.id]);
+
+    expect(clipboard).not.toBeNull();
+    expect(clipboard!.containers).toEqual([outpost]);
+    expect(clipboard!.nodes.map((n) => n.id).sort()).toEqual(
+      [outpostInputNodeId(outpost.id), outpostOutputNodeId(outpost.id), inner.id].sort(),
+    );
+    expect(clipboard!.edges).toHaveLength(1);
+  });
+
+  it("pasteClipboard duplicates an outpost with a fresh container id, re-derived locked I/O ids, and remapped inner nodes/edges", () => {
+    const { sfmDoc, root } = setUp();
+    const outpost = addContainer(sfmDoc, {
+      kind: "outpost",
+      parentId: root.id,
+      title: "Outpost",
+      color: "#d97706",
+      x: 500,
+      y: 500,
+    });
+    ensureOutpostIoNodes(sfmDoc, outpost.id, outpost.color);
+    const inner = addNode(sfmDoc, baseNode(outpost.id, { x: 10, y: 10 }));
+    addEdge(sfmDoc, baseEdge(outpost.id, { fromNode: outpostInputNodeId(outpost.id), toNode: inner.id }));
+
+    const clipboard = buildClipboard(sfmDoc, [outpost.id])!;
+    const result = pasteClipboard(sfmDoc, root.id, clipboard, { dx: 40, dy: 40 });
+
+    expect(result.containerIds).toHaveLength(1);
+    const newOutpostId = result.containerIds[0]!;
+    expect(newOutpostId).not.toBe(outpost.id);
+
+    const newContainer = listContainers(sfmDoc).find((c) => c.id === newOutpostId)!;
+    expect(newContainer.parentId).toBe(root.id);
+    // Top-level container: shifted by the paste offset, same as a plain node would be.
+    expect(newContainer).toMatchObject({ x: 540, y: 540, kind: "outpost", title: "Outpost" });
+
+    // The pasted outpost's locked I/O nodes have deterministic ids derived
+    // from ITS OWN new container id — not a random id, and not reused from
+    // the original outpost (which would corrupt both on any future write).
+    const newInputId = outpostInputNodeId(newOutpostId);
+    const newOutputId = outpostOutputNodeId(newOutpostId);
+    expect(result.nodeIds).toContain(newInputId);
+    expect(result.nodeIds).toContain(newOutputId);
+    expect(newInputId).not.toBe(outpostInputNodeId(outpost.id));
+
+    const pastedNodes = listNodes(sfmDoc).filter((n) => n.containerId === newOutpostId);
+    expect(pastedNodes.map((n) => n.kind).sort()).toEqual([OUTPOST_INPUT_KIND, OUTPOST_OUTPUT_KIND, "recipe"].sort());
+    const pastedInner = pastedNodes.find((n) => n.kind === "recipe")!;
+    // Inner node keeps its original position relative to its (also copied,
+    // identically un-shifted) container — it does NOT also get the
+    // top-level paste offset added on top.
+    expect(pastedInner).toMatchObject({ x: 10, y: 10 });
+
+    const pastedEdge = listEdges(sfmDoc).find((e) => e.containerId === newOutpostId)!;
+    expect(pastedEdge).toBeDefined();
+    expect(pastedEdge.fromNode).toBe(newInputId);
+    expect(pastedEdge.toNode).toBe(pastedInner.id);
+
+    // Original outpost and its contents are completely untouched — no
+    // shared references between the two copies.
+    expect(listContainers(sfmDoc)).toHaveLength(3); // root + original outpost + pasted copy
+    expect(getNode(sfmDoc, outpostInputNodeId(outpost.id))).toBeDefined();
+    expect(listNodes(sfmDoc).filter((n) => n.containerId === outpost.id)).toHaveLength(3);
+  });
+
+  it("pasteClipboard duplicates a nested outpost-in-outpost, parenting the copied child under the copied parent", () => {
+    const { sfmDoc, root } = setUp();
+    const outer = addContainer(sfmDoc, {
+      kind: "outpost",
+      parentId: root.id,
+      title: "Outer",
+      color: "#d97706",
+      x: 0,
+      y: 0,
+    });
+    const inner = addContainer(sfmDoc, {
+      kind: "outpost",
+      parentId: outer.id,
+      title: "Inner",
+      color: "#d97706",
+      x: 20,
+      y: 20,
+    });
+
+    const clipboard = buildClipboard(sfmDoc, [outer.id])!;
+    expect(clipboard.containers.map((c) => c.id)).toEqual([outer.id, inner.id]);
+
+    const result = pasteClipboard(sfmDoc, root.id, clipboard, { dx: 100, dy: 100 });
+    expect(result.containerIds).toHaveLength(2);
+    const [newOuterId, newInnerId] = result.containerIds;
+
+    const newOuter = listContainers(sfmDoc).find((c) => c.id === newOuterId)!;
+    const newInner = listContainers(sfmDoc).find((c) => c.id === newInnerId)!;
+    expect(newOuter.parentId).toBe(root.id);
+    expect(newInner.parentId).toBe(newOuterId);
+    // Outer (top-level) shifts by the offset; inner (nested) keeps its
+    // original position relative to its own copied parent.
+    expect(newOuter).toMatchObject({ x: 100, y: 100 });
+    expect(newInner).toMatchObject({ x: 20, y: 20 });
   });
 });
 
