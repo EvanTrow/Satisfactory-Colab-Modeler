@@ -58,6 +58,7 @@ import {
   useUpdateNodeInternals,
   type FinalConnectionState,
   type NodeChange,
+  type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -82,6 +83,7 @@ import { RecipeChooser, type PendingConnectionInfo } from "../panels";
 import { SUMMARY_SIDEBAR_WIDTH_PX, SummaryPanel } from "../panels";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { CanvasDocContext, useCanvasDoc, type CanvasDocContextValue } from "./CanvasDocContext";
+import { buildContainerPath, parseContainerIdFromPath } from "./containerUrl";
 import { GenerateFactoryDialog } from "./generator";
 import {
   GroupSelectionContext,
@@ -119,6 +121,7 @@ import {
 } from "./selection";
 import { snapPointToGrid } from "./snapToGrid";
 import { ThemeToggle, useTheme, type ThemeMode } from "../theme";
+import { useCanvasViewports, type UseCanvasViewportsResult } from "./useCanvasViewports";
 import { useMinimapVisible } from "./useMinimapVisible";
 import { useSettings } from "./useSettings";
 import { useSolver } from "../workers";
@@ -377,17 +380,84 @@ export function CanvasViewReady({
   const { theme, toggleTheme } = useTheme();
   const settings = useSettings(sfmDoc);
 
-  // Job 013: "which container is currently being viewed" — starts at root,
-  // changes only via `navigateToContainer` (drill-in from an outpost node's
-  // double-click/"Open" affordance, or a breadcrumb click to jump back up
-  // any number of levels at once). This is genuine React state (not a
-  // fixed value threaded straight into the context, the way it was before
-  // this job) specifically so switching it re-renders every descendant
-  // that reads `containerId` off the context — most importantly
-  // `useYjsSync`, which re-derives "what's visible" for the new container
-  // (see that hook's own header comment).
-  const [containerId, setContainerId] = useState(rootContainerId);
-  const navigateToContainer = useCallback((id: string) => setContainerId(id), []);
+  // Outpost routing: this mode's base URL, with no `/o/:id` suffix — the
+  // root container's own URL, and the prefix every non-root container's URL
+  // extends (`containerUrl.ts`). `projectShortId` only exists in
+  // `mode="cloud"` (its own prop doc comment); the other two modes' base
+  // path uses `projectId`, which is repurposed to carry the guest id /
+  // public short id in those modes respectively (`GuestCanvasView.tsx`'s and
+  // `PublicCanvasView.tsx`'s own `projectId` prop comments). Plain `const`,
+  // not `useMemo` — every input is a prop that's fixed for this component's
+  // whole mount (`App.tsx` remounts a fresh `CanvasView`/`GuestCanvasView`
+  // via `key={project.id}` for a different project), so there's nothing to
+  // memoize against.
+  const basePath =
+    mode === "cloud" ? `/p/${projectShortId}/edit` : mode === "guest" ? `/g/${projectId}` : `/pub/${projectId}`;
+
+  // Job 013: "which container is currently being viewed" — changes only via
+  // `navigateToContainer` (drill-in from an outpost node's double-click/
+  // "Open" affordance, or a breadcrumb click to jump back up any number of
+  // levels at once) or a `popstate` event (the back/forward-button effect
+  // below). This is genuine React state (not a fixed value threaded
+  // straight into the context, the way it was before Job 013) specifically
+  // so switching it re-renders every descendant that reads `containerId`
+  // off the context — most importantly `useYjsSync`, which re-derives
+  // "what's visible" for the new container (see that hook's own header
+  // comment).
+  //
+  // Outpost routing: initialized from the URL, not always `rootContainerId`
+  // — a hard refresh (or a shared/bookmarked link) on an `/o/:id` URL lands
+  // back on that same outpost instead of silently resetting to root.
+  // `getContainer` guards against a stale URL (the outpost was since
+  // deleted, or the link is just wrong) falling through to a container that
+  // no longer exists — `useYjsSync` would render an empty, breadcrumb-less
+  // canvas for that rather than erroring, so this is worth checking once
+  // up front rather than leaving it to silently misbehave.
+  const [containerId, setContainerId] = useState<string>(() => {
+    const fromUrl = parseContainerIdFromPath(basePath, window.location.pathname, rootContainerId);
+    if (fromUrl && fromUrl !== rootContainerId && !getContainer(sfmDoc, fromUrl)) return rootContainerId;
+    return fromUrl ?? rootContainerId;
+  });
+
+  // User-initiated navigation: updates the local view AND pushes a new
+  // history entry, so the browser (or a mouse back/forward button, which
+  // fires the identical `popstate` event) can undo exactly this one click.
+  // Guarded against a no-op call (already viewing `id`) so e.g. clicking the
+  // current breadcrumb crumb doesn't push a duplicate entry. The `pushState`
+  // deliberately lives in the callback body, NOT inside a `setContainerId`
+  // updater function — React (in Strict Mode) calls an updater function
+  // TWICE to check it's pure, which would double-push a history entry for
+  // every single navigation (confirmed the hard way: `window.history.length`
+  // jumped by 2 per click with an earlier version of this that did it that
+  // way).
+  const navigateToContainer = useCallback(
+    (id: string) => {
+      if (id === containerId) return;
+      window.history.pushState({}, "", buildContainerPath(basePath, id, rootContainerId));
+      setContainerId(id);
+    },
+    [containerId, basePath, rootContainerId],
+  );
+
+  // The other half of the pair above: a `popstate` event (back/forward,
+  // either the browser's own buttons or a mouse back/forward button — both
+  // fire the same event, there's no way to tell them apart and no need to)
+  // syncs `containerId` from the URL it lands on WITHOUT pushing a new
+  // entry (that would fight the browser's own history stack). `App.tsx` has
+  // its own, separate `popstate` listener (registered once, at the app
+  // root) that decides whether to keep this whole `CanvasView` mounted at
+  // all when the URL falls outside `basePath` entirely — this listener only
+  // ever has to worry about the "still somewhere under `basePath`" case.
+  useEffect(() => {
+    function onPopState() {
+      const fromUrl = parseContainerIdFromPath(basePath, window.location.pathname, rootContainerId);
+      if (fromUrl === null) return;
+      const valid = fromUrl === rootContainerId || getContainer(sfmDoc, fromUrl);
+      setContainerId(valid ? fromUrl : rootContainerId);
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [basePath, rootContainerId, sfmDoc]);
 
   // Moved up from just before this component's `return` (still the ONLY
   // call site) so the group-selection machinery below — and `docContext`
@@ -499,6 +569,12 @@ export function CanvasViewReady({
   // and not a per-document CRDT `Settings` field), matching
   // `theme/useTheme.ts`'s own account-level-preference pattern.
   const { showMinimap, toggleMinimap } = useMinimapVisible();
+
+  // Per-canvas pan/zoom memory (see `useCanvasViewports.ts`'s header
+  // comment) — scoped by the project's real id where there is one, or
+  // `rootContainerId` in guest mode, so switching between the root canvas
+  // and any outpost restores each one's own last position.
+  const canvasViewports = useCanvasViewports(projectId ?? rootContainerId);
 
   // Mirrors `SummaryPanel`'s own internal pinned-sidebar state (that
   // component owns the actual on/off toggle — see its own `pinned` state
@@ -782,6 +858,7 @@ export function CanvasViewReady({
                   summaryPinned={summaryPinned}
                   pendingFitNodeIds={pendingFitNodeIds}
                   onFitted={() => setPendingFitNodeIds(null)}
+                  canvasViewports={canvasViewports}
                 />
               </ReactFlowProvider>
             </div>
@@ -857,6 +934,8 @@ interface CanvasFlowProps {
   pendingFitNodeIds: string[] | null;
   /** Called once the pending fit-view has actually run, so `CanvasViewReady` can clear `pendingFitNodeIds`. */
   onFitted: () => void;
+  /** Per-canvas pan/zoom memory — see `useCanvasViewports.ts`'s header comment and the restore/save effect below. */
+  canvasViewports: UseCanvasViewportsResult;
 }
 
 /** Pending Recipe Chooser state: both coordinate systems captured at the moment of the triggering click. */
@@ -891,6 +970,7 @@ function CanvasFlow({
   summaryPinned,
   pendingFitNodeIds,
   onFitted,
+  canvasViewports,
 }: CanvasFlowProps) {
   const { t } = useTranslation("app");
   const { nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop } = sync;
@@ -927,7 +1007,73 @@ function CanvasFlow({
     waypointGroupDragDelta,
     setWaypointGroupDragDelta,
   } = useGroupSelection();
-  const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
+  const { screenToFlowPosition, zoomIn, zoomOut, fitView, setViewport: setRfViewport } =
+    useReactFlow();
+
+  // Per-canvas pan/zoom restore, on both initial mount and every subsequent
+  // `containerId` navigation (drill-in or breadcrumb jump — see
+  // `CanvasView.tsx`'s `navigateToContainer` comment): a saved viewport
+  // (`useCanvasViewports.ts`) is restored immediately since it needs no
+  // knowledge of this container's actual nodes, but a genuinely new-to-this-
+  // browser container (no saved viewport — most notably a freshly-created
+  // outpost, whose only two nodes are its I/O pass-throughs, see `io.ts`)
+  // falls back to `fitView()` instead. That fallback has to wait for `nodes`
+  // to actually reflect `containerId` — `useYjsSync.ts`'s Yjs-observer effect
+  // lives in the PARENT (`CanvasViewReady`), so by React's child-before-
+  // parent effect ordering, THIS effect fires first, while `nodes` is still
+  // whatever the PREVIOUS container's array was. `pendingFit` below captures
+  // that stale array at the moment of navigation so the second effect can
+  // tell "still stale" (`nodes === pendingFit.staleNodes`) apart from
+  // "resynced for the new container" (any different array, including a new
+  // empty one) — the exact same race `pendingFitNodeIds` below already
+  // handles for generate-factory, just without specific ids to wait for.
+  const hasNavigatedRef = useRef(false);
+  const pendingFitRef = useRef<{ containerId: string; staleNodes: typeof nodes; instant: boolean } | null>(
+    null,
+  );
+  useEffect(() => {
+    // Captured BEFORE this effect flips the ref below — otherwise the
+    // fitView-fallback effect (which reads `instant` off this same payload,
+    // not the ref directly, since it can fire in the same commit right
+    // after this one already set it) would always see "not the first mount"
+    // even on the actual first mount.
+    const instant = !hasNavigatedRef.current;
+    const stored = canvasViewports.getStoredViewport(containerId);
+    if (stored) {
+      pendingFitRef.current = null;
+      void setRfViewport(stored, { duration: instant ? 0 : 200 });
+    } else {
+      pendingFitRef.current = { containerId, staleNodes: nodes, instant };
+    }
+    hasNavigatedRef.current = true;
+    // `nodes` deliberately excluded — this effect should only re-run when
+    // `containerId` itself changes, not on every node edit; the fitView
+    // fallback's own node-tracking happens in the separate effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containerId, canvasViewports, setRfViewport]);
+  useEffect(() => {
+    const pending = pendingFitRef.current;
+    if (!pending || pending.containerId !== containerId) return;
+    if (nodes === pending.staleNodes) return;
+    pendingFitRef.current = null;
+    if (nodes.length === 0) return;
+    void fitView({ padding: 0.2, duration: pending.instant ? 0 : 300 });
+  }, [nodes, containerId, fitView]);
+
+  // The other half of the pair above: persists the viewport every time a
+  // user-initiated pan/zoom gesture settles, so the NEXT navigation away
+  // from (or reload of) this container has something to restore. `event` is
+  // `null` for a programmatic move (per `@xyflow/react`'s own `OnMoveEnd`
+  // doc comment) — that covers both effects just above, so this doesn't
+  // immediately re-save the exact value they just restored/fit to as if it
+  // were a fresh user position (harmless either way, just redundant).
+  const handleMoveEnd = useCallback(
+    (event: MouseEvent | TouchEvent | null, viewport: Viewport) => {
+      if (event === null) return;
+      canvasViewports.saveViewport(containerId, viewport);
+    },
+    [containerId, canvasViewports],
+  );
 
   // Job (generate-factory fit-view): once a generate's own nodes have all
   // landed in `sync.nodes` (Yjs's `observeDeep` → Zustand hand-off is
@@ -1651,8 +1797,8 @@ function CanvasFlow({
         onPaneClick={handlePaneClick}
         onPaneContextMenu={handlePaneContextMenu}
         onNodeContextMenu={handleNodeContextMenu}
+        onMoveEnd={handleMoveEnd}
         zoomOnDoubleClick={false}
-        fitView
         proOptions={{ hideAttribution: true }}
         colorMode={theme}
         nodesDraggable={editingEnabled}

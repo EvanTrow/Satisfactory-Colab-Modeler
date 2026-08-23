@@ -47,8 +47,14 @@ function extractInviteTokenFromPath(pathname: string): string | null {
   return match ? decodeURIComponent(match[1]!) : null;
 }
 
+// The trailing `(?:\/o\/[^/]+)?` tolerates an outpost sub-path
+// (`canvas/containerUrl.ts`'s `/o/:containerId` suffix) without capturing
+// it — this function only ever resolves the PROJECT for a deep link/hard
+// refresh; which container within it to open is `CanvasViewReady`'s own
+// concern, read straight off the same `window.location.pathname` once it
+// mounts.
 function extractProjectShortIdFromPath(pathname: string): string | null {
-  const match = /^\/p\/([^/]+)\/edit\/?$/.exec(pathname);
+  const match = /^\/p\/([^/]+)\/edit(?:\/o\/[^/]+)?\/?$/.exec(pathname);
   return match ? decodeURIComponent(match[1]!) : null;
 }
 
@@ -61,8 +67,9 @@ function extractProjectShortIdFromPath(pathname: string): string | null {
  * conflating them would make an anonymous visitor's URL look like (and
  * half-behave like) a member's own edit link.
  */
+// Same outpost sub-path tolerance as `extractProjectShortIdFromPath` above.
 function extractPublicShortIdFromPath(pathname: string): string | null {
-  const match = /^\/pub\/([^/]+)\/?$/.exec(pathname);
+  const match = /^\/pub\/([^/]+)(?:\/o\/[^/]+)?\/?$/.exec(pathname);
   return match ? decodeURIComponent(match[1]!) : null;
 }
 
@@ -322,21 +329,44 @@ function App() {
   }, [guestMode]);
 
   // Browser back button while the canvas or settings is open: pop out to
-  // the project list instead of leaving the SPA (there's nowhere else for
-  // this History entry to go, since neither `enterCanvas` nor
-  // `openSettings` ever pushes more than one level). Guest-mode work: pops
-  // out to the guest project list instead when this browser is in guest
-  // mode, mirroring every other list-view fallback in this file.
+  // the project list instead of leaving the SPA — UNLESS the URL landed on
+  // is still somewhere under this same canvas (an outpost-navigation
+  // `popstate`, `canvas/containerUrl.ts`'s `/o/:containerId` suffix pushed
+  // by `CanvasViewReady`'s own `navigateToContainer`), in which case `view`
+  // is left alone and `CanvasViewReady`'s OWN `popstate` listener (a
+  // separate `addEventListener` call, registered later/deeper in the tree)
+  // handles syncing `containerId` from the same event. `settings` has no
+  // sub-paths of its own, so any `popstate` while it's open still always
+  // pops all the way out, same as before this outpost-routing work.
+  // Guest-mode work: pops out to the guest project list instead when this
+  // browser is in guest mode, mirroring every other list-view fallback in
+  // this file — `guestMode` is a real dependency here (not the stale-closure
+  // `[]` this effect used to run with) precisely because that fallback has
+  // to reflect the CURRENT guest-mode flag, not whatever it was when this
+  // listener was first attached.
   useEffect(() => {
     function onPopState() {
+      const path = window.location.pathname;
       setView((current) => {
         if (current.name === "projects" || current.name === "guestProjects") return current;
+        if (
+          current.name === "canvas" &&
+          (path === `/p/${current.project.shortId}/edit` || path.startsWith(`/p/${current.project.shortId}/edit/o/`))
+        ) {
+          return current;
+        }
+        if (
+          current.name === "guestCanvas" &&
+          (path === `/g/${current.project.id}` || path.startsWith(`/g/${current.project.id}/o/`))
+        ) {
+          return current;
+        }
         return guestMode ? { name: "guestProjects" } : { name: "projects" };
       });
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, []);
+  }, [guestMode]);
 
   useEffect(() => {
     let cancelled = false;
