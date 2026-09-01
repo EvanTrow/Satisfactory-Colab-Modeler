@@ -39,7 +39,8 @@ function baseNode(containerId: string, overrides: Partial<NewNodeInput> = {}): N
     purity: null,
     beltTier: null,
     storageMode: null,
-    splurgerVariant: null,
+    splitterVariant: null,
+    mergerVariant: null,
     ...overrides,
   };
 }

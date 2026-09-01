@@ -2,7 +2,7 @@ import { defaultGameData, type Recipe } from "@scm/gamedata";
 import { isNegative } from "@scm/rational";
 import { describe, expect, it } from "vitest";
 
-import { WILDCARD_PART, WILDCARD_PART_BOTTOM, WILDCARD_PART_TOP } from "../../canvas/edges/connectionLogic";
+import { WILDCARD_PART, wildcardSlot } from "../../canvas/edges/connectionLogic";
 import {
   EMPTY_RECIPE_FILTERS,
   NO_PROGRESSION_FILTER,
@@ -304,9 +304,9 @@ describe("initialFiltersForPendingPart", () => {
     expect(initialFiltersForPendingPart("in", WILDCARD_PART)).toEqual(EMPTY_RECIPE_FILTERS);
   });
 
-  it("dragging from a tiered Priority Splitter/Merger/Splurger port (*top/*bottom) is unfiltered too", () => {
-    expect(initialFiltersForPendingPart("out", WILDCARD_PART_TOP)).toEqual(EMPTY_RECIPE_FILTERS);
-    expect(initialFiltersForPendingPart("in", WILDCARD_PART_BOTTOM)).toEqual(EMPTY_RECIPE_FILTERS);
+  it("dragging from a Splitter/Merger's positional slot port (*slot0/*slot1) is unfiltered too", () => {
+    expect(initialFiltersForPendingPart("out", wildcardSlot(0))).toEqual(EMPTY_RECIPE_FILTERS);
+    expect(initialFiltersForPendingPart("in", wildcardSlot(1))).toEqual(EMPTY_RECIPE_FILTERS);
   });
 
   it("dragging from an INPUT searches recipes' OUTPUTS for that part", () => {
@@ -469,10 +469,10 @@ describe("matchingHandleId", () => {
       expect(matchingHandleId(recipe, { direction: "out", part: WILDCARD_PART })).toBe("in:Screw");
     });
 
-    it("treats a tiered Priority Splitter/Merger/Splurger port (*top/*bottom) as a wildcard too", () => {
+    it("treats a Splitter/Merger's positional slot port (*slot0/*slot1) as a wildcard too", () => {
       const recipe = gameData.recipesByName.get("Iron Ingot")!;
-      expect(matchingHandleId(recipe, { direction: "out", part: WILDCARD_PART_TOP })).toBe("in:Iron Ore");
-      expect(matchingHandleId(recipe, { direction: "out", part: WILDCARD_PART_BOTTOM })).toBe("in:Iron Ore");
+      expect(matchingHandleId(recipe, { direction: "out", part: wildcardSlot(0) })).toBe("in:Iron Ore");
+      expect(matchingHandleId(recipe, { direction: "out", part: wildcardSlot(1) })).toBe("in:Iron Ore");
     });
 
     it("returns null when the recipe has no part at all in the wanted direction", () => {

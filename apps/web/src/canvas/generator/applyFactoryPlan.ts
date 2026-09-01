@@ -150,7 +150,8 @@ export function applyFactoryPlan(
         purity: null,
         beltTier: null,
         storageMode: null,
-        splurgerVariant: null,
+        splitterVariant: null,
+        mergerVariant: null,
       });
       createdNodeIds.push(sinkNode.id);
 
@@ -179,7 +180,8 @@ export function applyFactoryPlan(
           purity: disposal.conversion.purity,
           beltTier: null,
           storageMode: null,
-          splurgerVariant: null,
+          splitterVariant: null,
+          mergerVariant: null,
         });
         createdNodeIds.push(conversionNode.id);
 
@@ -292,7 +294,8 @@ export function applyFactoryPlan(
         purity: null,
         beltTier: null,
         storageMode: null,
-        splurgerVariant: null,
+        splitterVariant: null,
+        mergerVariant: null,
       });
       createdNodeIds.push(depotNode.id);
       addEdge(sfmDoc, {
@@ -336,6 +339,7 @@ function addGeneratedRecipeNode(
     purity: planned.purity,
     beltTier: null,
     storageMode: null,
-    splurgerVariant: null,
+    splitterVariant: null,
+    mergerVariant: null,
   });
 }

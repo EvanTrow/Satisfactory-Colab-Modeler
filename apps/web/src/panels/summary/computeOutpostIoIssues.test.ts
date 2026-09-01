@@ -21,7 +21,8 @@ function node(overrides: Partial<NodeRecord> & Pick<NodeRecord, "id" | "kind">):
     purity: null,
     beltTier: null,
     storageMode: null,
-    splurgerVariant: null,
+    splitterVariant: null,
+    mergerVariant: null,
     priorityOrder: [],
     ...overrides,
   };

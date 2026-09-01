@@ -5,7 +5,7 @@
 // Extracted out of `CanvasView.tsx` so the landing page's read-only
 // `SampleFactoryPreview.tsx` (its own, separate `<ReactFlow>` instance) can
 // import the exact same node/edge renderers instead of redefining them.
-import { RecipeNode, SinkNode, SplurgerNode, StorageNode } from "./nodes";
+import { MergerNode, RecipeNode, SinkNode, SplitterNode, StorageNode } from "./nodes";
 import { OutpostIoNode, OutpostNode } from "./outposts";
 import { ConnectionEdge } from "./edges";
 
@@ -13,7 +13,8 @@ import { ConnectionEdge } from "./edges";
 export const nodeTypes = {
   recipe: RecipeNode,
   outpost: OutpostNode,
-  splurger: SplurgerNode,
+  splitter: SplitterNode,
+  merger: MergerNode,
   sink: SinkNode,
   depot: SinkNode,
   storage: StorageNode,

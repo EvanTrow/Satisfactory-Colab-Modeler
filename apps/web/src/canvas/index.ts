@@ -59,7 +59,8 @@ export {
 } from "./outposts";
 export {
   RecipeNode,
-  SplurgerNode,
+  SplitterNode,
+  MergerNode,
   defaultLimitMode,
   computeNodeValidityState,
   computeAutoRoundClock,

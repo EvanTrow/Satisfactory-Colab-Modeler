@@ -18,6 +18,8 @@ import { add, parseRational, type Rational } from "@scm/rational";
 import type { EdgeSolveResult, NodeSolveResult } from "@scm/solver";
 import { addNode, getNode, type EdgeRecord, type SfmDocument } from "@scm/ydoc";
 
+import type { PassthroughEdgeLike, PassthroughNode } from "../../workers/passthroughRouting";
+
 export const OUTPOST_INPUT_KIND = "outpost-input";
 export const OUTPOST_OUTPUT_KIND = "outpost-output";
 
@@ -34,6 +36,25 @@ export function outpostOutputNodeId(containerId: string): string {
 
 export function isOutpostIoKind(kind: string): boolean {
   return kind === OUTPOST_INPUT_KIND || kind === OUTPOST_OUTPUT_KIND;
+}
+
+/**
+ * `workers/passthroughRouting.ts`'s `PassthroughNode` for one outpost I/O
+ * node — no priority concept at all (an outpost boundary has no per-port
+ * configuration), so every routed edge just gets rank 0; the only real
+ * decision is the standard "many-to-many on the same part has no correct
+ * rewrite" guard every passthrough node shares.
+ */
+export function outpostIoPassthroughNode(nodeId: string): PassthroughNode {
+  return {
+    id: nodeId,
+    resolveRanks(_part: string, inputs: readonly PassthroughEdgeLike[], outputs: readonly PassthroughEdgeLike[]) {
+      if (inputs.length > 1 && outputs.length > 1) return "unsupported";
+      const inputRanks = new Map(inputs.map((e) => [e.id, 0]));
+      const outputRanks = new Map(outputs.map((e) => [e.id, 0]));
+      return { inputRanks, outputRanks };
+    },
+  };
 }
 
 /**
@@ -219,7 +240,8 @@ export function ensureOutpostIoNodes(sfmDoc: SfmDocument, containerId: string, c
         purity: null,
         beltTier: null,
         storageMode: null,
-        splurgerVariant: null,
+        splitterVariant: null,
+        mergerVariant: null,
       });
     }
     const outputId = outpostOutputNodeId(containerId);
@@ -242,7 +264,8 @@ export function ensureOutpostIoNodes(sfmDoc: SfmDocument, containerId: string, c
         purity: null,
         beltTier: null,
         storageMode: null,
-        splurgerVariant: null,
+        splitterVariant: null,
+        mergerVariant: null,
       });
     }
   });

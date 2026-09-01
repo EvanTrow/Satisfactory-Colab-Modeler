@@ -8,20 +8,21 @@
 //     evenly as possible, but yield to a sibling's own hard capacity (a
 //     resolved neighbor's fixed rate) when it can't absorb/supply an equal
 //     share — the remainder redistributes among the siblings that still can.
-//   - TWO-TIER PRIORITY: an edge tagged `priorityTier: "bottom"`
-//     (`snapshot.ts`) only receives whatever's left over once every "top"
-//     sibling has taken its full share — "top drains first, bottom takes
-//     overflow." When an edge has no EXPLICIT tag, its tier is INFERRED
-//     (`inferredTier` below): an edge whose other endpoint has a `limit` set
-//     (a fixed, finite demand/supply) defaults to "top"; one whose other
-//     endpoint has no limit (open-ended — e.g. an "unlimited" AWESOME
-//     Sink/Dimensional Depot) defaults to "bottom". This makes an explicitly
-//     limited node's demand get satisfied first from any shared source,
-//     ahead of unlimited siblings, without the user having to place a
-//     dedicated Priority Splitter/Merger — see `inferredTier`'s own doc
-//     comment.
+//   - N-ARY PRIORITY: an edge tagged `priorityTier: <rank>` (`snapshot.ts`)
+//     only receives whatever's left over once every lower-numbered-rank
+//     sibling has taken its full share — rank 0 drains first, rank 1 takes
+//     whatever rank 0 left over, and so on. When an edge has no EXPLICIT
+//     tag, its rank is INFERRED (`inferredTier` below): an edge whose other
+//     endpoint has a `limit` set (a fixed, finite demand/supply) defaults to
+//     rank 0; one whose other endpoint has no limit (open-ended — e.g. an
+//     "unlimited" AWESOME Sink/Dimensional Depot) defaults to rank 1. This
+//     makes an explicitly limited node's demand get satisfied first from any
+//     shared source, ahead of unlimited siblings, without the user having to
+//     place a dedicated Priority Splitter/Merger — see `inferredTier`'s own
+//     doc comment. A Priority Merger's High/Medium/Low inputs use explicit
+//     ranks 0/1/2.
 // Both are the SAME algorithm — max-min-fair water-filling, lexicographic
-// across the two tiers — implemented once in `waterFill.ts` and applied
+// across however many ranks are present — implemented once in `waterFill.ts` and applied
 // once per (node, part, direction) sibling GROUP per propagation pass. See
 // `waterFill.ts`'s own header for the exact LP this solves and why a
 // closed-form algorithm is used instead of a generic simplex tableau.
@@ -220,7 +221,7 @@ function checkCancelled(signal: CancellationSignal | undefined): void {
 }
 
 /**
- * `edge`'s effective priority tier for a group where `otherNode` is the
+ * `edge`'s effective priority rank for a group where `otherNode` is the
  * OTHER endpoint (the target for an outgoing/splitter group, the source for
  * an incoming/merger group) — `edge.priorityTier` if the user explicitly set
  * one, else INFERRED from whether `otherNode` has an explicit `limit` set.
@@ -233,21 +234,23 @@ function checkCancelled(signal: CancellationSignal | undefined): void {
  * yet) is in the same pool: fairness alone gives the limited sibling an
  * equal share even when its own cap sits ABOVE that share, instead of
  * routing it its full, already-known demand first. Defaulting a limited
- * neighbor to `"top"` and an unlimited one to `"bottom"` makes every
+ * neighbor to rank `0` and an unlimited one to rank `1` makes every
  * explicitly-limited node drain/fill first — "nodes with a machine limit set
  * always get priority, even if that leaves nothing for unlimited siblings" —
- * with NO change for a group where every sibling is limited (all `"top"`,
+ * with NO change for a group where every sibling is limited (all rank `0`,
  * still fair-shared among themselves) or every sibling is unlimited (all
- * `"bottom"`, i.e. still just one pool, identical to the old undifferentiated
- * default).
+ * rank `1`, i.e. still just one pool, identical to the old undifferentiated
+ * default). A user-configured Priority Merger's ranks 0/1/2 (High/Medium/Low)
+ * pass straight through via `edge.priorityTier` without ever reaching this
+ * inference at all.
  */
 function inferredTier(
   edge: SolverEdge,
   otherNode: string,
   profiles: ReadonlyMap<string, NodeProfile>,
 ): PriorityTier {
-  if (edge.priorityTier) return edge.priorityTier;
-  return profiles.get(otherNode)?.node.limit != null ? "top" : "bottom";
+  if (edge.priorityTier !== undefined) return edge.priorityTier;
+  return profiles.get(otherNode)?.node.limit != null ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -636,14 +639,12 @@ function solveFullInner(snapshot: SolverSnapshot, gameData: GameData, options: F
   // fix's own investigation notes).
   const forcedTierEdgeIds = new Set<string>();
   for (const group of groups) {
-    let hasTop = false;
-    let hasBottom = false;
+    const ranksPresent = new Set<PriorityTier>();
     for (const edge of group.edges) {
       const otherNode = group.direction === "outgoing" ? edge.toNode : edge.fromNode;
-      if (inferredTier(edge, otherNode, profiles) === "top") hasTop = true;
-      else hasBottom = true;
+      ranksPresent.add(inferredTier(edge, otherNode, profiles));
     }
-    if (hasTop && hasBottom) {
+    if (ranksPresent.size > 1) {
       for (const edge of group.edges) forcedTierEdgeIds.add(edge.id);
     }
   }

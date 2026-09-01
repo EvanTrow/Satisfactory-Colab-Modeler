@@ -34,10 +34,12 @@ import { getSettings, listEdges, listNodes, type SfmDocument } from "@scm/ydoc";
 import type { EdgeSolveResult, NodeSolveResult, SolveResult, SolverMode } from "@scm/solver";
 import { create } from "zustand";
 
+import { outpostIoPassthroughNode } from "../canvas/outposts/io";
 import { buildSolverSnapshot } from "./buildSnapshot";
 import type { HostToWorkerMessage, WorkerToHostMessage } from "./protocol";
+import { computePassthroughEdgeAliases, type PassthroughNode } from "./passthroughRouting";
 import { originalEdgeIdFromSinkEdgeId } from "./sinkPassthrough";
-import { computePassthroughEdgeAliases } from "./splurgerPassthrough";
+import { mergerPassthroughNode, splitterPassthroughNode } from "./splitMergePassthrough";
 import { originalEdgeIdFromStorageEdgeId } from "./storagePassthrough";
 import { createSolveScheduler, type SolveHostState, type SolveStaleness } from "./solveScheduler";
 
@@ -46,8 +48,8 @@ const EMPTY_ALIASES = new Map<string, string>();
 interface SolveStoreState extends SolveHostState {
   /**
    * Outpost I/O rework: original-edge-id -> synthetic-edge-id, for every
-   * Splurger AND outpost-input/outpost-output edge this rewrite could
-   * unambiguously alias (`splurgerPassthrough.ts`'s
+   * Splitter/Merger AND outpost-input/outpost-output edge this rewrite could
+   * unambiguously alias (`passthroughRouting.ts`'s
    * `computePassthroughEdgeAliases`) — updated synchronously, ahead of the
    * scheduler's own async debounce/worker round trip for `result`.
    */
@@ -125,7 +127,7 @@ function indexEdges(
     if (originalId && !map.has(originalId)) map.set(originalId, e);
   }
   // Outpost I/O rework (and, incidentally, the same pre-existing
-  // gap for a plain Splurger): `passthroughAliases` only ever contains an
+  // gap for a plain Splitter/Merger): `passthroughAliases` only ever contains an
   // UNAMBIGUOUS original-id -> synthetic-id mapping (see
   // `computePassthroughEdgeAliases`'s header) — a genuinely multi-way edge
   // is left out on purpose rather than guessing, same "unknown, not a
@@ -213,15 +215,20 @@ export function useSolver(sfmDoc: SfmDocument, diagnostics?: UseSolverDiagnostic
           ? settingsMode
           : "none";
       const snapshot = buildSolverSnapshot(sfmDoc);
-      // Outpost I/O rework: computed independently of the
-      // snapshot build above (same underlying `computeSplurgerPassthroughEdges`
-      // call, just also asking for its `sourceEdgeIds`) — cheap, pure, and
-      // kept as its own step rather than threading a new field through
-      // `buildSolverSnapshot`'s existing return shape (which several other
-      // call sites/tests already destructure as a bare `SolverSnapshot`).
-      const passthroughNodes = listNodes(sfmDoc)
-        .filter((n) => n.kind === "splurger" || n.kind === "outpost-input" || n.kind === "outpost-output")
-        .map((n) => ({ id: n.id, priorityOrder: n.priorityOrder }));
+      // Outpost I/O rework: computed independently of the snapshot build
+      // above (same underlying `computePassthroughEdges` call, just also
+      // asking for its `sourceEdgeIds`) — cheap, pure, and kept as its own
+      // step rather than threading a new field through `buildSolverSnapshot`'s
+      // existing return shape (which several other call sites/tests already
+      // destructure as a bare `SolverSnapshot`).
+      const allNodes = listNodes(sfmDoc);
+      const passthroughNodes: PassthroughNode[] = [
+        ...allNodes.filter((n) => n.kind === "splitter").map(splitterPassthroughNode),
+        ...allNodes.filter((n) => n.kind === "merger").map(mergerPassthroughNode),
+        ...allNodes
+          .filter((n) => n.kind === "outpost-input" || n.kind === "outpost-output")
+          .map((n) => outpostIoPassthroughNode(n.id)),
+      ];
       useStore.getState().setPassthroughAliases(computePassthroughEdgeAliases(passthroughNodes, listEdges(sfmDoc)));
       scheduler.submit(snapshot, mode);
     };

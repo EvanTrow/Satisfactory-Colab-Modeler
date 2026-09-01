@@ -21,6 +21,7 @@ import {
 } from "@scm/ydoc";
 
 import { outpostInputNodeId, outpostOutputNodeId } from "../outposts/io";
+import { decodeSplitterConfig, parseWildcardSlot, splitterSlotConfig } from "../nodes/splitMergeConfig";
 
 /**
  * Job 010's port `Handle` id contract: `${"in"|"out"}:${part name}`. See
@@ -65,50 +66,46 @@ export interface ResolvedEndpoints {
 }
 
 /**
- * Job 024: the part name a Splurger's generic handles (`in:*`/`out:*` — see
- * `canvas/nodes/SplurgerNode.tsx`) use. A Splurger has no recipe, so it has
- * no fixed part list to build real `${dir}:${part}` handles from ahead of
- * time the way `RecipeNode.tsx`'s `PartRow` does — its handles accept ANY
- * part, and the connection's real part name comes from whichever real
- * recipe port is on the other end. See `reconcilePart`/`isWildcardPart`
- * below for exactly how this interacts with the existing exact-part-match
- * rule.
+ * The part name a routing node's single-side generic handle uses — a
+ * Splitter's `in:*` input, a Merger's `out:*` output, and an outpost I/O
+ * node's own single handle. None of these have a fixed recipe to build real
+ * `${dir}:${part}` handles from ahead of time the way `RecipeNode.tsx`'s
+ * `PartRow` does — they accept ANY part, and the connection's real part name
+ * comes from whichever real recipe port is on the other end. See
+ * `reconcilePart`/`isWildcardPart` below for exactly how this interacts with
+ * the existing exact-part-match rule.
  */
 export const WILDCARD_PART = "*";
 
 /**
- * Later Splurger redesign: when a node's `splurgerPortCaps` side is 2 (a
- * Priority Splitter/Merger/Splurger's tiered side), that side renders TWO
- * real, independently-draggable `Handle`s instead of one — the reference
- * Satisfactory Modeler's own "drag straight to the priority port, or straight
- * to the overflow port" interaction, replacing an earlier pass that kept one
- * shared handle plus a manual "flip tier" button. Each of these two handles
- * needs its own unique id (React Flow requires unique ids among handles of
- * the same type on one node — plain `in:*`/`out:*` duplicated wouldn't work),
- * so each is its own wildcard SENTINEL — still a wildcard for part-matching
- * purposes (see `isWildcardPart`), but distinguishable from its sibling.
- * `SplurgerNode.tsx` derives which physical handle an edge is anchored to
- * (and therefore its tier) straight from `EdgeRecord.fromPort`/`.toPort`
- * itself — see `workers/splurgerPassthrough.ts`'s `tierFromPort`.
+ * A Splitter's 3 output handles / a Merger's 3 input handles each need their
+ * own unique id (React Flow requires unique ids among handles of the same
+ * type on one node — plain `in:*`/`out:*` duplicated wouldn't work), so each
+ * is its own wildcard SENTINEL — still a wildcard for part-matching purposes
+ * (see `isWildcardPart`), but distinguishable by POSITION from its siblings.
+ * `SplitterNode.tsx`/`MergerNode.tsx` and the solver-side routing
+ * (`workers/splitMergePassthrough.ts`) both derive which slot an edge is
+ * anchored to straight from `EdgeRecord.fromPort`/`.toPort` itself — no
+ * separate bookkeeping needed. Re-exported here (defined in
+ * `canvas/nodes/splitMergeConfig.ts`, a dependency-free module shared by this
+ * file and the solver routing) so every other caller of this module's port
+ * helpers has one single import path.
  */
-export const WILDCARD_PART_TOP = "*top";
-export const WILDCARD_PART_BOTTOM = "*bottom";
+export { wildcardSlot, parseWildcardSlot, type SlotIndex } from "../nodes/splitMergeConfig";
 
-/** True for `WILDCARD_PART` itself or either tiered sentinel — anything that defers to the OTHER side's real part name rather than naming one of its own. */
+/** True for `WILDCARD_PART` itself or a positional slot sentinel — anything that defers to the OTHER side's real part name rather than naming one of its own. */
 export function isWildcardPart(part: string): boolean {
   return part.startsWith(WILDCARD_PART);
 }
 
 /**
- * Job 024: reconciles two ports' part names for a connection, with one new
- * case beyond Job 011's original exact-match rule — a wildcard side (see
- * `isWildcardPart`) defers to the other side's real part name. Two wildcard
- * sides (a direct Splurger-to-Splurger wire, with neither end anchored to a
- * real part) has no real part to assign and is rejected — `EdgeRecord.part`
- * is a required, non-nullable string, so there is no "unknown part" value to
- * fall back to; this also matches this job's documented decision that
- * chained/adjacent Splurgers aren't a supported shape (see
- * `workers/splurgerPassthrough.ts`'s header).
+ * Reconciles two ports' part names for a connection: an exact match, or a
+ * wildcard side (see `isWildcardPart` — a Splitter/Merger/outpost I/O node's
+ * generic handles) deferring to the other side's real part name. Two
+ * wildcard sides (e.g. a direct Splitter-to-Merger wire with neither end
+ * anchored to a real recipe part) has no real part to assign and is
+ * rejected — `EdgeRecord.part` is a required, non-nullable string, so there
+ * is no "unknown part" value to fall back to.
  */
 function reconcilePart(a: string, b: string): string | null {
   const aWild = isWildcardPart(a);
@@ -157,6 +154,31 @@ function isStorageConnectionAllowed(sfmDoc: SfmDocument, fromNode: string, toNod
     );
     if (hasOtherPart) return false;
   }
+  return true;
+}
+
+/**
+ * A Smart/Programmable Splitter's output slots (`kind: "splitter"`,
+ * `splitterVariant` `"smart"`/`"programmable"`) each carry a routing rule
+ * (`canvas/nodes/splitMergeConfig.ts`'s `SplitterSlotConfig`) that restricts
+ * which item can be wired there: `"none"` never accepts a connection,
+ * `"item"` only accepts one of its configured part names, and every other
+ * rule (`"any"`/`"undefined"`/`"overflow"`) accepts anything — those rules
+ * only affect solve-time priority (`workers/splitMergePassthrough.ts`), not
+ * which item can be wired. A Conveyor Splitter (`"basic"` variant, or any
+ * other node kind) has no rules at all — always allowed. Merger inputs are
+ * never gated by item (a Priority Merger's priority is per-slot, not
+ * per-item), so there's no equivalent check for `toNode`.
+ */
+function isSplitterOutputConnectionAllowed(sfmDoc: SfmDocument, fromNode: string, fromPort: string, part: string): boolean {
+  const node = getNode(sfmDoc, fromNode);
+  if (!node || node.kind !== "splitter") return true;
+  if (node.splitterVariant !== "smart" && node.splitterVariant !== "programmable") return true;
+  const slot = parseWildcardSlot(parsePortHandleId(fromPort)?.part ?? "");
+  if (slot === null) return true;
+  const slotConfig = splitterSlotConfig(decodeSplitterConfig(node.priorityOrder), slot);
+  if (slotConfig.rule === "none") return false;
+  if (slotConfig.rule === "item") return slotConfig.items.includes(part);
   return true;
 }
 
@@ -253,6 +275,7 @@ export function resolveEdgeEndpoints(sfmDoc: SfmDocument, connection: Connection
 
   if (!isDepotConnectionAllowed(sfmDoc, resolved.toNode, part)) return null;
   if (!isStorageConnectionAllowed(sfmDoc, resolved.fromNode, resolved.toNode, part)) return null;
+  if (!isSplitterOutputConnectionAllowed(sfmDoc, resolved.fromNode, resolved.fromPort, part)) return null;
   return resolved;
 }
 

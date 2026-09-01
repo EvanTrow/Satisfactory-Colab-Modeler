@@ -42,7 +42,16 @@ function describeProgress(info: FullProgressInfo, t: TFunction<"app">): string {
     total: info.totalCount,
   });
   if (!info.waterFill) return base;
-  const tierLabel = t(info.waterFill.tier === "top" ? "status.solve.waterFillTierTop" : "status.solve.waterFillTierBottom");
+  // `tier` is a rank (0 = highest priority); ranks 0/1 keep the familiar
+  // "top"/"bottom" wording (the common 2-tier case), any further rank (e.g.
+  // a Priority Merger's Low, rank 2) falls back to a generic "priority rank
+  // N" label.
+  const tierLabel =
+    info.waterFill.tier === 0
+      ? t("status.solve.waterFillTierTop")
+      : info.waterFill.tier === 1
+        ? t("status.solve.waterFillTierBottom")
+        : t("status.solve.waterFillTierRank", { rank: info.waterFill.tier });
   return t("status.solve.progressWithWaterFill", {
     base,
     tier: tierLabel,

@@ -35,7 +35,8 @@ function baseNode(containerId: string, title: string) {
     purity: null,
     beltTier: null,
     storageMode: null,
-    splurgerVariant: null,
+    splitterVariant: null,
+    mergerVariant: null,
   };
 }
 

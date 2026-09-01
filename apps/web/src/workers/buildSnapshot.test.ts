@@ -1,10 +1,10 @@
-import { addContainer, addEdge, addNode, createDocument, setPriorityOrder, type SfmDocument } from "@scm/ydoc";
+import { addContainer, addEdge, addNode, createDocument, type SfmDocument } from "@scm/ydoc";
 import { solve } from "@scm/solver";
 import { describe, expect, it } from "vitest";
 
+import { encodeSplitterConfig, wildcardSlot } from "../canvas/nodes/splitMergeConfig";
 import { buildSolverSnapshot } from "./buildSnapshot";
 import { sinkConsumerNodeId } from "./sinkPassthrough";
-import { encodePriorityOrder } from "./splurgerPassthrough";
 
 function makeRecipeNode(
   sfmDoc: SfmDocument,
@@ -28,7 +28,8 @@ function makeRecipeNode(
     purity: null,
     beltTier: null,
     storageMode: null,
-    splurgerVariant: null,
+    splitterVariant: null,
+    mergerVariant: null,
     ...overrides,
   });
 }
@@ -57,7 +58,8 @@ describe("buildSolverSnapshot", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
-      splurgerVariant: null,
+      splitterVariant: null,
+    mergerVariant: null,
     });
 
     const snapshot = buildSolverSnapshot(sfmDoc);
@@ -127,7 +129,8 @@ describe("buildSolverSnapshot", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
-      splurgerVariant: null,
+      splitterVariant: null,
+    mergerVariant: null,
     });
 
     addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: a.id, fromPort: "out", toNode: b.id, toPort: "in", style: null, labelPos: null });
@@ -166,16 +169,20 @@ describe("buildSolverSnapshot", () => {
     expect(snapshot.edges).toHaveLength(1);
   });
 
-  describe("Job 024: Splurger pass-through", () => {
-    function makeSplurger(sfmDoc: SfmDocument, containerId: string) {
+  describe("Splitter/Merger pass-through", () => {
+    function makeSplitter(
+      sfmDoc: SfmDocument,
+      containerId: string,
+      overrides: Partial<Parameters<typeof addNode>[1]> = {},
+    ) {
       return addNode(sfmDoc, {
         containerId,
-        kind: "splurger",
+        kind: "splitter",
         recipe: null,
         machine: null,
         x: 0,
         y: 0,
-        title: "Splurger",
+        title: "Splitter",
         color: "#000",
         limit: null,
         limitMode: "machines",
@@ -185,20 +192,54 @@ describe("buildSolverSnapshot", () => {
         purity: null,
         beltTier: null,
         storageMode: null,
-        splurgerVariant: null,
+        splitterVariant: "basic",
+        mergerVariant: null,
+        priorityOrder: [],
+        ...overrides,
       });
     }
 
-    it("never turns a Splurger itself into a SolverNode", () => {
+    function makeMerger(
+      sfmDoc: SfmDocument,
+      containerId: string,
+      overrides: Partial<Parameters<typeof addNode>[1]> = {},
+    ) {
+      return addNode(sfmDoc, {
+        containerId,
+        kind: "merger",
+        recipe: null,
+        machine: null,
+        x: 0,
+        y: 0,
+        title: "Merger",
+        color: "#000",
+        limit: null,
+        limitMode: "machines",
+        clock: null,
+        autoRound: false,
+        shards: 0,
+        purity: null,
+        beltTier: null,
+        storageMode: null,
+        splitterVariant: null,
+        mergerVariant: "basic",
+        priorityOrder: [],
+        ...overrides,
+      });
+    }
+
+    it("never turns a Splitter or Merger itself into a SolverNode", () => {
       const sfmDoc = createDocument();
       const root = "root";
       addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
-      const splurger = makeSplurger(sfmDoc, root);
+      const splitter = makeSplitter(sfmDoc, root);
+      const merger = makeMerger(sfmDoc, root);
       const snapshot = buildSolverSnapshot(sfmDoc);
-      expect(snapshot.nodes.some((n) => n.id === splurger.id)).toBe(false);
+      expect(snapshot.nodes.some((n) => n.id === splitter.id)).toBe(false);
+      expect(snapshot.nodes.some((n) => n.id === merger.id)).toBe(false);
     });
 
-    it("rewrites a 1-input/N-output Splurger into direct recipe-to-recipe edges carrying the assigned tier", () => {
+    it("rewrites a Smart Splitter's 1-input/2-output wiring into direct recipe-to-recipe edges, Overflow ranked below Any", () => {
       const sfmDoc = createDocument();
       const root = "root";
       addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
@@ -206,14 +247,19 @@ describe("buildSolverSnapshot", () => {
       const producer = makeRecipeNode(sfmDoc, root, { title: "Producer" });
       const consumerA = makeRecipeNode(sfmDoc, root, { title: "ConsumerA" });
       const consumerB = makeRecipeNode(sfmDoc, root, { title: "ConsumerB" });
-      const splurger = makeSplurger(sfmDoc, root);
+      // Slot 0 defaults to "any" (rank 0); slot 1 explicitly configured as
+      // "overflow" (rank 1).
+      const splitter = makeSplitter(sfmDoc, root, {
+        splitterVariant: "smart",
+        priorityOrder: encodeSplitterConfig(new Map([[1, { rule: "overflow", items: [] }]])),
+      });
 
       const inEdge = addEdge(sfmDoc, {
         containerId: root,
         part: "Iron Ingot",
         fromNode: producer.id,
         fromPort: "out:Iron Ingot",
-        toNode: splurger.id,
+        toNode: splitter.id,
         toPort: "in:*",
         style: null,
         labelPos: null,
@@ -221,8 +267,8 @@ describe("buildSolverSnapshot", () => {
       const outA = addEdge(sfmDoc, {
         containerId: root,
         part: "Iron Ingot",
-        fromNode: splurger.id,
-        fromPort: "out:*",
+        fromNode: splitter.id,
+        fromPort: `out:${wildcardSlot(0)}`,
         toNode: consumerA.id,
         toPort: "in:Iron Ingot",
         style: null,
@@ -231,31 +277,86 @@ describe("buildSolverSnapshot", () => {
       const outB = addEdge(sfmDoc, {
         containerId: root,
         part: "Iron Ingot",
-        fromNode: splurger.id,
-        fromPort: "out:*",
+        fromNode: splitter.id,
+        fromPort: `out:${wildcardSlot(1)}`,
         toNode: consumerB.id,
         toPort: "in:Iron Ingot",
         style: null,
         labelPos: null,
       });
-      setPriorityOrder(sfmDoc, splurger.id, encodePriorityOrder({ top: [outA.id], bottom: [outB.id] }));
 
       const snapshot = buildSolverSnapshot(sfmDoc);
-      // Producer, ConsumerA, ConsumerB only — never the Splurger itself.
+      // Producer, ConsumerA, ConsumerB only — never the Splitter itself.
       expect(snapshot.nodes.map((n) => n.id).sort()).toEqual([consumerA.id, consumerB.id, producer.id].sort());
       expect(snapshot.edges).toHaveLength(2);
 
       const toA = snapshot.edges.find((e) => e.toNode === consumerA.id)!;
-      expect(toA).toMatchObject({ fromNode: producer.id, toNode: consumerA.id, part: "Iron Ingot", priorityTier: "top" });
+      expect(toA).toMatchObject({ fromNode: producer.id, toNode: consumerA.id, part: "Iron Ingot", priorityTier: 0 });
       const toB = snapshot.edges.find((e) => e.toNode === consumerB.id)!;
-      expect(toB).toMatchObject({ fromNode: producer.id, toNode: consumerB.id, part: "Iron Ingot", priorityTier: "bottom" });
+      expect(toB).toMatchObject({ fromNode: producer.id, toNode: consumerB.id, part: "Iron Ingot", priorityTier: 1 });
 
-      // Sanity: the original edges into/out of the Splurger never themselves
+      // Sanity: the original edges into/out of the Splitter never themselves
       // survive into the snapshot (their endpoints aren't both recipe nodes).
       expect(snapshot.edges.some((e) => e.id === inEdge.id || e.id === outA.id || e.id === outB.id)).toBe(false);
     });
 
-    it("excludes a multi-input/multi-output Splurger's edges from the snapshot entirely rather than guessing", () => {
+    it("rewrites a Priority Merger's 3-input/1-output wiring into direct edges carrying High/Medium/Low as ranks 0/1/2", () => {
+      const sfmDoc = createDocument();
+      const root = "root";
+      addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
+
+      const producerHigh = makeRecipeNode(sfmDoc, root, { title: "High" });
+      const producerLow = makeRecipeNode(sfmDoc, root, { title: "Low" });
+      const consumer = makeRecipeNode(sfmDoc, root, { title: "Consumer" });
+      const merger = makeMerger(sfmDoc, root, {
+        mergerVariant: "priority",
+        priorityOrder: [`0:high`, `1:low`],
+      });
+
+      const inHigh = addEdge(sfmDoc, {
+        containerId: root,
+        part: "Iron Ingot",
+        fromNode: producerHigh.id,
+        fromPort: "out:Iron Ingot",
+        toNode: merger.id,
+        toPort: `in:${wildcardSlot(0)}`,
+        style: null,
+        labelPos: null,
+      });
+      const inLow = addEdge(sfmDoc, {
+        containerId: root,
+        part: "Iron Ingot",
+        fromNode: producerLow.id,
+        fromPort: "out:Iron Ingot",
+        toNode: merger.id,
+        toPort: `in:${wildcardSlot(1)}`,
+        style: null,
+        labelPos: null,
+      });
+      const outEdge = addEdge(sfmDoc, {
+        containerId: root,
+        part: "Iron Ingot",
+        fromNode: merger.id,
+        fromPort: "out:*",
+        toNode: consumer.id,
+        toPort: "in:Iron Ingot",
+        style: null,
+        labelPos: null,
+      });
+
+      const snapshot = buildSolverSnapshot(sfmDoc);
+      expect(snapshot.nodes.map((n) => n.id).sort()).toEqual([consumer.id, producerHigh.id, producerLow.id].sort());
+      expect(snapshot.edges).toHaveLength(2);
+
+      const fromHigh = snapshot.edges.find((e) => e.fromNode === producerHigh.id)!;
+      expect(fromHigh).toMatchObject({ toNode: consumer.id, part: "Iron Ingot", priorityTier: 0 });
+      const fromLow = snapshot.edges.find((e) => e.fromNode === producerLow.id)!;
+      expect(fromLow).toMatchObject({ toNode: consumer.id, part: "Iron Ingot", priorityTier: 2 });
+
+      expect(snapshot.edges.some((e) => e.id === inHigh.id || e.id === inLow.id || e.id === outEdge.id)).toBe(false);
+    });
+
+    it("excludes a multi-input/multi-output part-group's edges from the snapshot entirely rather than guessing", () => {
       const sfmDoc = createDocument();
       const root = "root";
       addContainer(sfmDoc, { id: root, kind: "root", parentId: null, title: "Root", color: "#000", x: 0, y: 0 });
@@ -264,7 +365,10 @@ describe("buildSolverSnapshot", () => {
       const producerB = makeRecipeNode(sfmDoc, root, { title: "ProducerB" });
       const consumerA = makeRecipeNode(sfmDoc, root, { title: "ConsumerA" });
       const consumerB = makeRecipeNode(sfmDoc, root, { title: "ConsumerB" });
-      const splurger = makeSplurger(sfmDoc, root);
+      // Structurally not a real Splitter shape (its one input handle wired
+      // twice AND two of its output slots wired) — the defensive crossbar
+      // guard every passthrough node keeps regardless.
+      const splitter = makeSplitter(sfmDoc, root);
 
       for (const producer of [producerA, producerB]) {
         addEdge(sfmDoc, {
@@ -272,18 +376,19 @@ describe("buildSolverSnapshot", () => {
           part: "Iron Ingot",
           fromNode: producer.id,
           fromPort: "out:Iron Ingot",
-          toNode: splurger.id,
+          toNode: splitter.id,
           toPort: "in:*",
           style: null,
           labelPos: null,
         });
       }
-      for (const consumer of [consumerA, consumerB]) {
+      const slots = [wildcardSlot(0), wildcardSlot(1)] as const;
+      for (const [i, consumer] of [consumerA, consumerB].entries()) {
         addEdge(sfmDoc, {
           containerId: root,
           part: "Iron Ingot",
-          fromNode: splurger.id,
-          fromPort: "out:*",
+          fromNode: splitter.id,
+          fromPort: `out:${slots[i]}`,
           toNode: consumer.id,
           toPort: "in:Iron Ingot",
           style: null,
@@ -315,7 +420,8 @@ describe("buildSolverSnapshot", () => {
         purity: null,
         beltTier: null,
         storageMode: null,
-        splurgerVariant: null,
+        splitterVariant: null,
+    mergerVariant: null,
         ...overrides,
       });
     }
@@ -391,7 +497,8 @@ describe("buildSolverSnapshot", () => {
         purity: null,
         beltTier: null,
         storageMode: "partiallyFull",
-        splurgerVariant: null,
+        splitterVariant: null,
+    mergerVariant: null,
         ...overrides,
       });
     }
@@ -474,7 +581,8 @@ describe("buildSolverSnapshot", () => {
         purity: null,
         beltTier: null,
         storageMode: null,
-        splurgerVariant: null,
+        splitterVariant: null,
+    mergerVariant: null,
       });
     }
 
@@ -557,7 +665,8 @@ describe("buildSolverSnapshot", () => {
         purity: null,
         beltTier: null,
         storageMode: null,
-        splurgerVariant: null,
+        splitterVariant: null,
+    mergerVariant: null,
       });
 
       addEdge(sfmDoc, { containerId: outpost.id, part: "Iron Ingot", fromNode: producer.id, fromPort: "out:Iron Ingot", toNode: outputs.id, toPort: "in:*", style: null, labelPos: null });
@@ -613,7 +722,8 @@ describe("buildSolverSnapshot", () => {
         purity: null,
         beltTier: null,
         storageMode: null,
-        splurgerVariant: null,
+        splitterVariant: null,
+    mergerVariant: null,
       });
 
       addEdge(sfmDoc, { containerId: outpost.id, part: "Iron Ingot", fromNode: producer.id, fromPort: "out:Iron Ingot", toNode: outputs.id, toPort: "in:*", style: null, labelPos: null });
@@ -659,7 +769,8 @@ describe("buildSolverSnapshot", () => {
         purity: null,
         beltTier: null,
         storageMode: "partiallyFull",
-        splurgerVariant: null,
+        splitterVariant: null,
+    mergerVariant: null,
       });
 
       addEdge(sfmDoc, { containerId: outpost.id, part: "Iron Ingot", fromNode: producer.id, fromPort: "out:Iron Ingot", toNode: outputs.id, toPort: "in:*", style: null, labelPos: null });
@@ -704,7 +815,8 @@ describe("buildSolverSnapshot", () => {
         purity: null,
         beltTier: null,
         storageMode: null,
-        splurgerVariant: null,
+        splitterVariant: null,
+    mergerVariant: null,
       });
 
       addEdge(sfmDoc, { containerId: root, part: "Iron Ingot", fromNode: producer.id, fromPort: "out:Iron Ingot", toNode: inputs.id, toPort: "in:*", style: null, labelPos: null });

@@ -483,6 +483,7 @@ export function buildNodeInputForRecipe(params: BuildNodeInputParams): NewNodeIn
     purity,
     beltTier: null,
     storageMode: null,
-    splurgerVariant: null,
+    splitterVariant: null,
+    mergerVariant: null,
   };
 }

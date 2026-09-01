@@ -9,31 +9,35 @@
 // Extractor, Geothermal Generator, Space Elevator).
 //
 // Redesign pass (Steam-app-inspired "Add a machine" layout): the left rail
-// now carries the special, non-recipe node types (Outpost/
-// Splurger) as icon buttons, ABOVE the existing
-// per-machine filter list — previously these lived as small text buttons in
-// the header. The search box now matches name/inputs/outputs together (each
-// independently toggleable — see `recipeChooser/filters.ts`'s
-// `RecipeChooserFilters`), and each recipe row shows real part icons
-// (inputs left, outputs right) around a centered name, instead of a plain
-// text row.
+// now carries the special, non-recipe node types (Outpost, the 5 Splitter/
+// Merger buildables) as icon buttons, ABOVE the existing per-machine filter
+// list — previously these lived as small text buttons in the header. The
+// search box now matches name/inputs/outputs together (each independently
+// toggleable — see `recipeChooser/filters.ts`'s `RecipeChooserFilters`), and
+// each recipe row shows real part icons (inputs left, outputs right) around
+// a centered name, instead of a plain text row.
 //
-// Later pass: Priority Splitter/Merger/Splurger (three cosmetic entry
-// points into the same `kind: "splurger"` node as the plain "Splurger"
-// button — see `createSplurgerVariant`), AWESOME Sink, Dimensional Depot
-// Uploader, and Storage Container (three new real node kinds — see
+// Later pass: AWESOME Sink, Dimensional Depot Uploader, and Storage
+// Container (three new real node kinds — see
 // `../canvas/nodes/SinkNode.tsx`/`StorageNode.tsx` and
 // `../workers/sinkPassthrough.ts`/`storagePassthrough.ts` for how they
 // participate in a solve despite having no real `@scm/gamedata` recipe).
 //
-// New in this pass: `pendingConnection` — when a connection is dragged out
-// from a port and released on empty canvas (`CanvasView.tsx`'s
-// `onConnectEnd` wiring), this chooser opens pre-filtered to recipes that
-// could plug into that dangling port (`initialFiltersForPendingPart`), and
-// auto-connects the dragged-from port to the newly created node's matching
-// port (`matchingHandleId` for a recipe node, `WILDCARD_PART` for a
-// Splurger) the moment it's created.
-import { ArrowLeft, ArrowLeftRight, FlaskConical, X } from "lucide-react";
+// Splitter/Merger rebuild: the old single `kind: "splurger"` node (whose
+// shape/meaning was inferred from wiring) is gone, replaced by the 5 real
+// Satisfactory buildables — `kind: "splitter"` (Conveyor/Smart/Programmable,
+// `createSplitterVariant`) and `kind: "merger"` (Conveyor/Priority,
+// `createMergerVariant`), each always a fixed 1-in/3-out or 3-in/1-out shape
+// (`canvas/nodes/SplitterNode.tsx`/`MergerNode.tsx`).
+//
+// `pendingConnection` — when a connection is dragged out from a port and
+// released on empty canvas (`CanvasView.tsx`'s `onConnectEnd` wiring), this
+// chooser opens pre-filtered to recipes that could plug into that dangling
+// port (`initialFiltersForPendingPart`), and auto-connects the dragged-from
+// port to the newly created node's matching port (`matchingHandleId` for a
+// recipe node, `WILDCARD_PART`/`wildcardSlot(...)` for a Splitter/Merger)
+// the moment it's created.
+import { ArrowLeft, FlaskConical, ListOrdered, SlidersHorizontal, Split, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
@@ -46,12 +50,13 @@ import {
   type ResolvedMultiMachine,
 } from "@scm/gamedata";
 import { isNegative } from "@scm/rational";
-import { addContainer, addNode, splurgerPortCaps, type SplurgerVariant } from "@scm/ydoc";
+import { addContainer, addNode, type MergerVariant, type SplitterVariant } from "@scm/ydoc";
 
 import { useFocusTrap } from "../a11y";
 import { getIconUrl, getOutpostIconUrl } from "../assets/icons";
 import { useCanvasDoc } from "../canvas";
-import { connectPorts, WILDCARD_PART, WILDCARD_PART_TOP, type ConnectionLike } from "../canvas/edges";
+import { connectPorts, WILDCARD_PART, wildcardSlot, type ConnectionLike } from "../canvas/edges";
+import { encodeSplitterConfig, programmableSplitterDefaults } from "../canvas/nodes";
 import { ensureOutpostIoNodes } from "../canvas/outposts";
 import { useSettings } from "../canvas/useSettings";
 import { useGameTerm } from "../i18n";
@@ -106,7 +111,6 @@ function clampModalPosition(screenPosition: { x: number; y: number }): { left: n
 export function RecipeChooser({ flowPosition, screenPosition, pendingConnection, onClose }: RecipeChooserProps) {
   const { t } = useTranslation("app");
   const { t: tRaw } = useTranslation();
-  const gameTerm = useGameTerm();
   const { sfmDoc, containerId, navigateToContainer } = useCanvasDoc();
   const gameData = defaultGameData;
   // Project-wide progression gate (`Settings.recipeTierFilter`/
@@ -270,24 +274,22 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
   }
 
   /**
-   * Job 024: "+ New Splurger" — a real, distinct `kind: "splurger"` node,
-   * placed immediately (no naming/variant sub-step, unlike a MultiMachine
-   * recipe's variant picker — there's nothing to pick: a Splurger has no
-   * recipe/machine at all). One node kind covers Splurger, Priority
-   * Splitter, Priority Merger, and Priority Splurger — which one it *reads*
-   * as is purely a function of how it ends up wired (see `SplurgerNode.tsx`'s
-   * header for why that's the right call, matching real splitter/merger
-   * hardware's own "never both multi-in and multi-out" shape). The three
-   * Priority variants are purely cosmetic entry points into this SAME
-   * function — different default `title`, same node — since the underlying
-   * node already has full two-tier priority controls regardless of which
-   * button placed it (the priority aspect only actually affects Full mode's
-   * solve — see `@scm/solver`'s `SolverEdge.priorityTier`).
+   * "+ New Conveyor/Smart/Programmable Splitter" — a real, distinct
+   * `kind: "splitter"` node, placed immediately (no naming/variant
+   * sub-step — there's nothing to pick beyond which button was clicked: a
+   * Splitter has no recipe/machine at all). Always 1 input / 3 outputs
+   * (`canvas/nodes/SplitterNode.tsx`) regardless of variant; only Smart/
+   * Programmable get real per-output rule configuration, seeded here with
+   * the Programmable buildable's own wiki-documented defaults (center
+   * output Any, left/right None) — Smart and Conveyor need no
+   * `priorityOrder` entries at all (every output defaults to Any).
    */
-  function createSplurgerVariant(variant: SplurgerVariant, title: string) {
+  function createSplitterVariant(variant: SplitterVariant, title: string) {
+    const priorityOrder =
+      variant === "programmable" ? encodeSplitterConfig(programmableSplitterDefaults()) : [];
     const node = addNode(sfmDoc, {
       containerId,
-      kind: "splurger",
+      kind: "splitter",
       recipe: null,
       machine: null,
       x: flowPosition.x,
@@ -302,26 +304,60 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
       purity: null,
       beltTier: null,
       storageMode: null,
-      splurgerVariant: variant,
+      splitterVariant: variant,
+      mergerVariant: null,
+      priorityOrder,
     });
-    // A Splurger's handles are wildcards — they reconcile against any real
-    // part, so unlike a recipe node there's no "does this actually have a
-    // matching port" check needed here. Which handle id actually exists
-    // depends on `variant`'s own port caps (`SplurgerNode.tsx`'s tiered
-    // sides render `*top`/`*bottom`, not the plain wildcard) — a fresh
-    // auto-connected wire defaults to the top tier on a tiered side, same as
-    // any other newly-made connection would.
     if (pendingConnection) {
-      const caps = splurgerPortCaps(variant);
-      const side = pendingConnection.direction === "out" ? "in" : "out";
-      const sentinel = (side === "in" ? caps.in : caps.out) === 2 ? WILDCARD_PART_TOP : WILDCARD_PART;
-      autoConnectPending(node.id, `${side}:${sentinel}`);
+      // A drag released FROM an output wants the new Splitter's single
+      // input; a drag released FROM an input wants one of its 3 outputs —
+      // slot 1 (the Programmable buildable's own default "Any" center
+      // output) rather than slot 0, so auto-connecting a fresh Programmable
+      // Splitter doesn't land on its default-"None" left output and get
+      // silently rejected by `isSplitterOutputConnectionAllowed`.
+      const handleId =
+        pendingConnection.direction === "out"
+          ? `in:${WILDCARD_PART}`
+          : `out:${wildcardSlot(variant === "programmable" ? 1 : 0)}`;
+      autoConnectPending(node.id, handleId);
     }
     onClose();
   }
 
-  function handleCreateSplurger() {
-    createSplurgerVariant("splurger", gameTerm("Splurger"));
+  /**
+   * "+ New Conveyor/Priority Merger" — a real, distinct `kind: "merger"`
+   * node. Always 3 inputs / 1 output (`canvas/nodes/MergerNode.tsx`); only
+   * Priority Merger gets real per-input priority configuration (defaults to
+   * Medium on every slot, i.e. one fair pool, until the user changes it).
+   */
+  function createMergerVariant(variant: MergerVariant, title: string) {
+    const node = addNode(sfmDoc, {
+      containerId,
+      kind: "merger",
+      recipe: null,
+      machine: null,
+      x: flowPosition.x,
+      y: flowPosition.y,
+      title,
+      color: "#7c3aed",
+      limit: null,
+      limitMode: "machines",
+      clock: null,
+      autoRound: false,
+      shards: 0,
+      purity: null,
+      beltTier: null,
+      storageMode: null,
+      splitterVariant: null,
+      mergerVariant: variant,
+      priorityOrder: [],
+    });
+    if (pendingConnection) {
+      const handleId =
+        pendingConnection.direction === "out" ? `in:${wildcardSlot(0)}` : `out:${WILDCARD_PART}`;
+      autoConnectPending(node.id, handleId);
+    }
+    onClose();
   }
 
   /**
@@ -353,7 +389,8 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
       purity: null,
       beltTier: null,
       storageMode: null,
-      splurgerVariant: null,
+      splitterVariant: null,
+      mergerVariant: null,
     });
     if (pendingConnection && pendingConnection.direction === "out") {
       autoConnectPending(node.id, `in:${WILDCARD_PART}`);
@@ -396,7 +433,8 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
       purity: null,
       beltTier: null,
       storageMode: null,
-      splurgerVariant: null,
+      splitterVariant: null,
+      mergerVariant: null,
     });
     if (pendingConnection) {
       const handleId = pendingConnection.direction === "out" ? `in:${WILDCARD_PART}` : `out:${WILDCARD_PART}`;
@@ -514,32 +552,39 @@ export function RecipeChooser({ flowPosition, screenPosition, pendingConnection,
                   onClick={() => setCreatingOutpost(true)}
                 />
                 <SidebarButton
-                  label={tRaw("Splurger")}
-                  title={t("canvas.newSplurgerTitle")}
-                  icon={<ArrowLeftRight className="h-4 w-4 text-[var(--splurger)]" aria-hidden />}
+                  label="Conveyor Splitter"
+                  title={t("canvas.newConveyorSplitterTitle")}
+                  icon={<Split className="h-4 w-4 text-[var(--splurger)]" aria-hidden />}
                   swatchClassName="bg-[var(--splurger-soft)]"
-                  onClick={handleCreateSplurger}
+                  onClick={() => createSplitterVariant("basic", "Conveyor Splitter")}
                 />
                 <SidebarButton
-                  label="Priority Splitter"
-                  title={t("canvas.newPrioritySplitterTitle")}
+                  label="Smart Splitter"
+                  title={t("canvas.newSmartSplitterTitle")}
                   iconUrl={getIconUrl("Smart Splitter")}
                   swatchClassName="bg-[var(--splurger-soft)]"
-                  onClick={() => createSplurgerVariant("splitter", "Priority Splitter")}
+                  onClick={() => createSplitterVariant("smart", "Smart Splitter")}
+                />
+                <SidebarButton
+                  label="Programmable Splitter"
+                  title={t("canvas.newProgrammableSplitterTitle")}
+                  icon={<SlidersHorizontal className="h-4 w-4 text-[var(--splurger)]" aria-hidden />}
+                  swatchClassName="bg-[var(--splurger-soft)]"
+                  onClick={() => createSplitterVariant("programmable", "Programmable Splitter")}
+                />
+                <SidebarButton
+                  label="Conveyor Merger"
+                  title={t("canvas.newConveyorMergerTitle")}
+                  iconUrl={getIconUrl("Conveyor Merger")}
+                  swatchClassName="bg-[var(--splurger-soft)]"
+                  onClick={() => createMergerVariant("basic", "Conveyor Merger")}
                 />
                 <SidebarButton
                   label="Priority Merger"
                   title={t("canvas.newPriorityMergerTitle")}
-                  iconUrl={getIconUrl("Conveyor Merger")}
+                  icon={<ListOrdered className="h-4 w-4 text-[var(--splurger)]" aria-hidden />}
                   swatchClassName="bg-[var(--splurger-soft)]"
-                  onClick={() => createSplurgerVariant("merger", "Priority Merger")}
-                />
-                <SidebarButton
-                  label="Priority Splurger"
-                  title={t("canvas.newPrioritySplurgerTitle")}
-                  icon={<ArrowLeftRight className="h-4 w-4 text-[var(--splurger)]" aria-hidden />}
-                  swatchClassName="bg-[var(--splurger-soft)]"
-                  onClick={() => createSplurgerVariant("prioritySplurger", "Priority Splurger")}
+                  onClick={() => createMergerVariant("priority", "Priority Merger")}
                 />
                 <SidebarButton
                   label="AWESOME Sink"

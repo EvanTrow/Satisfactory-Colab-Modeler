@@ -134,7 +134,7 @@ describe("Full mode determinism (PLAN.md §5 point 4, extended to the LP formula
         fromPort: "out",
         toNode: "top-consumer",
         toPort: "in",
-        priorityTier: "top",
+        priorityTier: 0,
       },
       {
         id: "e-bottom",
@@ -143,7 +143,7 @@ describe("Full mode determinism (PLAN.md §5 point 4, extended to the LP formula
         fromPort: "out",
         toNode: "bottom-consumer",
         toPort: "in",
-        priorityTier: "bottom",
+        priorityTier: 1,
       },
     ];
 

@@ -32,27 +32,19 @@ export {
   type SolveStaleness,
 } from "./solveScheduler";
 export { useSolver, type UseSolverDiagnostics, type UseSolverResult } from "./useSolver";
-// Job 024: Splurger node type — pure priority-tier storage + solver-facing
-// pass-through rewrite, shared by `buildSnapshot.ts` and
-// `canvas/nodes/SplurgerNode.tsx`.
+// The generic passthrough-routing engine (outpost I/O, Splitter, Merger all
+// share it) and the Splitter/Merger buildables' own routing logic on top of
+// it — see `passthroughRouting.ts`/`splitMergePassthrough.ts`'s headers.
 export {
-  EMPTY_TIER_ASSIGNMENT,
   computePassthroughEdgeAliases,
-  computeSplurgerPassthroughEdges,
-  computeSplurgerShape,
-  decodePriorityOrder,
-  encodePriorityOrder,
-  moveWithinTier,
-  setTier,
-  tierForEdge,
-  withDefaultedEdges,
-  withoutStaleEdges,
+  computePassthroughEdges,
+  type PassthroughEdgeLike,
+  type PassthroughNode,
   type PassthroughSolverEdge,
-  type PriorityTier,
-  type SplurgerEdgeLike,
-  type SplurgerNodeLike,
-  type SplurgerPassthroughResult,
-  type SplurgerShape,
-  type SplurgerShapeKind,
-  type TierAssignment,
-} from "./splurgerPassthrough";
+} from "./passthroughRouting";
+export {
+  mergerPassthroughNode,
+  splitterPassthroughNode,
+  type MergerNodeLike,
+  type SplitterNodeLike,
+} from "./splitMergePassthrough";

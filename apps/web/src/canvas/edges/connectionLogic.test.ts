@@ -4,8 +4,6 @@ import { describe, expect, it } from "vitest";
 import { ensureOutpostIoNodes, outpostInputNodeId, outpostOutputNodeId } from "../outposts/io";
 import {
   WILDCARD_PART,
-  WILDCARD_PART_BOTTOM,
-  WILDCARD_PART_TOP,
   connectPorts,
   isValidDragCandidate,
   isValidPortConnection,
@@ -14,6 +12,7 @@ import {
   reconnectEdge,
   resolveEdgeEndpoints,
   storageNodePart,
+  wildcardSlot,
 } from "./connectionLogic";
 
 function makeDoc(): { sfmDoc: SfmDocument; containerId: string; nodeA: string; nodeB: string; nodeC: string } {
@@ -42,7 +41,8 @@ function makeDoc(): { sfmDoc: SfmDocument; containerId: string; nodeA: string; n
     purity: null,
     beltTier: null,
     storageMode: null,
-    splurgerVariant: null,
+    splitterVariant: null,
+    mergerVariant: null,
   };
   const nodeA = addNode(sfmDoc, { ...baseNode, x: 0, title: "A" });
   const nodeB = addNode(sfmDoc, { ...baseNode, x: 200, title: "B" });
@@ -183,46 +183,46 @@ describe("resolveEdgeEndpoints", () => {
     ).toBeNull();
   });
 
-  // Later Splurger redesign: a tiered side's two real handles (`*top`/
-  // `*bottom` — `WILDCARD_PART_TOP`/`WILDCARD_PART_BOTTOM`) are wildcards
-  // too, just individually addressable ones.
-  it("resolves a tiered wildcard handle (*top/*bottom) against a concrete part, same as the plain wildcard", () => {
-    const top = resolveEdgeEndpoints(pureLogicDoc, {
+  // Splitter/Merger rebuild: a Splitter's 3 output handles / a Merger's 3
+  // input handles (`out:*slot0`/`out:*slot1`/`out:*slot2` — `wildcardSlot`)
+  // are wildcards too, just individually addressable by position.
+  it("resolves a positional slot wildcard handle (*slot0/*slot1) against a concrete part, same as the plain wildcard", () => {
+    const slot0 = resolveEdgeEndpoints(pureLogicDoc, {
       source: "splurger1",
-      sourceHandle: `out:${WILDCARD_PART_TOP}`,
+      sourceHandle: `out:${wildcardSlot(0)}`,
       target: "n2",
       targetHandle: "in:Iron Plate",
     });
-    expect(top).toEqual({
+    expect(slot0).toEqual({
       fromNode: "splurger1",
-      fromPort: `out:${WILDCARD_PART_TOP}`,
+      fromPort: `out:${wildcardSlot(0)}`,
       toNode: "n2",
       toPort: "in:Iron Plate",
       part: "Iron Plate",
     });
 
-    const bottom = resolveEdgeEndpoints(pureLogicDoc, {
+    const slot1 = resolveEdgeEndpoints(pureLogicDoc, {
       source: "splurger1",
-      sourceHandle: `out:${WILDCARD_PART_BOTTOM}`,
+      sourceHandle: `out:${wildcardSlot(1)}`,
       target: "n2",
       targetHandle: "in:Iron Plate",
     });
-    expect(bottom?.fromPort).toBe(`out:${WILDCARD_PART_BOTTOM}`);
+    expect(slot1?.fromPort).toBe(`out:${wildcardSlot(1)}`);
   });
 
-  it("rejects two tiered wildcard handles, and a tiered wildcard against a plain wildcard", () => {
+  it("rejects two positional slot wildcard handles, and a slot wildcard against a plain wildcard", () => {
     expect(
       resolveEdgeEndpoints(pureLogicDoc, {
         source: "splurger1",
-        sourceHandle: `out:${WILDCARD_PART_TOP}`,
+        sourceHandle: `out:${wildcardSlot(0)}`,
         target: "splurger2",
-        targetHandle: `in:${WILDCARD_PART_BOTTOM}`,
+        targetHandle: `in:${wildcardSlot(1)}`,
       }),
     ).toBeNull();
     expect(
       resolveEdgeEndpoints(pureLogicDoc, {
         source: "splurger1",
-        sourceHandle: `out:${WILDCARD_PART_TOP}`,
+        sourceHandle: `out:${wildcardSlot(0)}`,
         target: "splurger2",
         targetHandle: `in:${WILDCARD_PART}`,
       }),
@@ -267,7 +267,8 @@ describe("resolveEdgeEndpoints — outpost container redirect", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
-      splurgerVariant: null,
+      splitterVariant: null,
+      mergerVariant: null,
     });
     return { sfmDoc, outpost, external };
   }
@@ -319,10 +320,11 @@ describe("resolveEdgeEndpoints — outpost container redirect", () => {
 });
 
 describe("isWildcardPart", () => {
-  it("is true for the plain wildcard and both tiered sentinels, false for any real part name", () => {
+  it("is true for the plain wildcard and every positional slot sentinel, false for any real part name", () => {
     expect(isWildcardPart(WILDCARD_PART)).toBe(true);
-    expect(isWildcardPart(WILDCARD_PART_TOP)).toBe(true);
-    expect(isWildcardPart(WILDCARD_PART_BOTTOM)).toBe(true);
+    expect(isWildcardPart(wildcardSlot(0))).toBe(true);
+    expect(isWildcardPart(wildcardSlot(1))).toBe(true);
+    expect(isWildcardPart(wildcardSlot(2))).toBe(true);
     expect(isWildcardPart("Iron Ore")).toBe(false);
   });
 });
@@ -570,7 +572,8 @@ describe("Dimensional Depot connection restrictions", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
-      splurgerVariant: null,
+      splitterVariant: null,
+      mergerVariant: null,
     };
     const depot = addNode(sfmDoc, { ...baseNode, kind: "depot", title: "Dimensional Depot" });
     const sink = addNode(sfmDoc, { ...baseNode, kind: "sink", title: "AWESOME Sink" });
@@ -694,7 +697,8 @@ describe("Storage Container connection restrictions", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
-      splurgerVariant: null,
+      splitterVariant: null,
+      mergerVariant: null,
     };
     const storage = addNode(sfmDoc, { ...baseNode, kind: "storage", title: "Storage Container" });
     return { sfmDoc, containerId: root.id, storageId: storage.id };
@@ -800,7 +804,8 @@ describe("storageNodePart", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
-      splurgerVariant: null,
+      splitterVariant: null,
+      mergerVariant: null,
     });
     connectPorts(sfmDoc, root.id, {
       source: storage.id,

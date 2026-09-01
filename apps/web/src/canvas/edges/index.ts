@@ -2,18 +2,19 @@
 export { ConnectionEdge } from "./ConnectionEdge";
 export {
   WILDCARD_PART,
-  WILDCARD_PART_BOTTOM,
-  WILDCARD_PART_TOP,
   connectPorts,
   isValidPortConnection,
   isWildcardPart,
   parsePortHandleId,
+  parseWildcardSlot,
   reconnectEdge,
   resolveEdgeEndpoints,
   storageNodePart,
+  wildcardSlot,
   type ConnectionLike,
   type PortInfo,
   type ResolvedEndpoints,
+  type SlotIndex,
 } from "./connectionLogic";
 export { buildPolyline, nearestSegmentIndex, pointAtT, polylineLength, toPathD, type Point } from "./edgeGeometry";
 export { useConnectionHandlers, type ConnectionHandlers } from "./useConnectionHandlers";

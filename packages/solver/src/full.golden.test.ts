@@ -39,8 +39,16 @@ function pinnedSmelter(id: string, ingotPpm: string): SolverNode {
   return { id, recipe: "Iron Ingot", machine: "Smelter", purity: null, limit: ingotPpm, limitMode: "ppm", clock: null, shards: 0 };
 }
 
-function edge(id: string, from: string, to: string, priorityTier?: "top" | "bottom"): SolverEdge {
-  return { id, part: "Iron Ore", fromNode: from, fromPort: "out", toNode: to, toPort: "in", ...(priorityTier ? { priorityTier } : {}) };
+function edge(id: string, from: string, to: string, priorityTier?: number): SolverEdge {
+  return {
+    id,
+    part: "Iron Ore",
+    fromNode: from,
+    fromPort: "out",
+    toNode: to,
+    toPort: "in",
+    ...(priorityTier !== undefined ? { priorityTier } : {}),
+  };
 }
 
 function ingotRate(result: ReturnType<typeof solveFull>, nodeId: string): ReturnType<typeof parseRational> {
@@ -190,9 +198,9 @@ describe("Full mode golden values — two-tier priority (hand-derived: \"top dra
     };
     const nodes = [miner("producer", "90"), unconstrainedSmelter("top-a"), unconstrainedSmelter("top-b"), zeroMachineSmelter];
     const edges = [
-      edge("e-top-a", "producer", "top-a", "top"),
-      edge("e-top-b", "producer", "top-b", "top"),
-      edge("e-bottom-a", "producer", "bottom-a", "bottom"),
+      edge("e-top-a", "producer", "top-a", 0),
+      edge("e-top-b", "producer", "top-b", 0),
+      edge("e-bottom-a", "producer", "bottom-a", 1),
     ];
     const result = solveFull({ nodes, edges });
 
@@ -219,7 +227,7 @@ describe("Full mode golden values — two-tier priority (hand-derived: \"top dra
     // exactly its 20/min cap, not less), and the remaining 40/min of the
     // producer's 60/min overflows entirely to the bottom tier.
     const nodes = [miner("producer", "60"), pinnedSmelter("top-a", "20"), unconstrainedSmelter("bottom-a")];
-    const edges = [edge("e-top-a", "producer", "top-a", "top"), edge("e-bottom-a", "producer", "bottom-a", "bottom")];
+    const edges = [edge("e-top-a", "producer", "top-a", 0), edge("e-bottom-a", "producer", "bottom-a", 1)];
     const result = solveFull({ nodes, edges });
 
     expect(result.valid).toBe(true);
@@ -253,8 +261,8 @@ describe("Full mode golden values — two-tier priority (hand-derived: \"top dra
     nodes[1] = { ...nodes[1]!, limit: null, limitMode: "machines" };
     nodes[2] = { ...nodes[2]!, limit: null, limitMode: "machines" };
     const edges = [
-      edge("e-top", "top-supplier", "consumer", "top"),
-      edge("e-bottom", "bottom-supplier", "consumer", "bottom"),
+      edge("e-top", "top-supplier", "consumer", 0),
+      edge("e-bottom", "bottom-supplier", "consumer", 1),
     ];
     const result = solveFull({ nodes, edges });
 

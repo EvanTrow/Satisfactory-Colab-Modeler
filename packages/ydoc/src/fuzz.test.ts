@@ -177,7 +177,8 @@ function performRandomOp(sfmDoc: SfmDocument, rng: () => number): void {
         purity: null,
         beltTier: null,
         storageMode: null,
-        splurgerVariant: null,
+        splitterVariant: null,
+        mergerVariant: null,
       });
       return;
     }
@@ -505,7 +506,8 @@ describe("CRDT convergence fuzzing (PLAN.md §9)", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
-      splurgerVariant: null,
+      splitterVariant: null,
+      mergerVariant: null,
     });
     broadcastAndMerge([a, b], mulberry32(1));
 
@@ -526,7 +528,8 @@ describe("CRDT convergence fuzzing (PLAN.md §9)", () => {
       purity: null,
       beltTier: null,
       storageMode: null,
-      splurgerVariant: null,
+      splitterVariant: null,
+      mergerVariant: null,
     });
     broadcastAndMerge([a, b], mulberry32(2));
 

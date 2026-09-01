@@ -13,9 +13,9 @@ function r(n: number, d = 1): Rational {
 describe("waterFillGroup", () => {
   it("splits evenly across uncapped candidates, all top tier by default", () => {
     const candidates: ShareCandidate[] = [
-      { edgeId: "e1", cap: null, tier: "top" },
-      { edgeId: "e2", cap: null, tier: "top" },
-      { edgeId: "e3", cap: null, tier: "top" },
+      { edgeId: "e1", cap: null, tier: 0 },
+      { edgeId: "e2", cap: null, tier: 0 },
+      { edgeId: "e3", cap: null, tier: 0 },
     ];
     const { shares, overflow } = waterFillGroup(r(90), candidates);
     expect(equals(shares.get("e1")!, r(30))).toBe(true);
@@ -31,9 +31,9 @@ describe("waterFillGroup", () => {
     // Round 2: equal share among the remaining two = 40 each; neither is
     // capped below that, so both get exactly 40.
     const candidates: ShareCandidate[] = [
-      { edgeId: "capped", cap: r(10), tier: "top" },
-      { edgeId: "open-a", cap: null, tier: "top" },
-      { edgeId: "open-b", cap: null, tier: "top" },
+      { edgeId: "capped", cap: r(10), tier: 0 },
+      { edgeId: "open-a", cap: null, tier: 0 },
+      { edgeId: "open-b", cap: null, tier: 0 },
     ];
     const { shares, overflow } = waterFillGroup(r(90), candidates);
     expect(equals(shares.get("capped")!, r(10))).toBe(true);
@@ -51,10 +51,10 @@ describe("waterFillGroup", () => {
     // BOTH saturate in the same round (not one-at-a-time) -> remaining
     // = 100 - 5 - 5 = 90 for the 2 uncapped siblings -> 45 each.
     const candidates: ShareCandidate[] = [
-      { edgeId: "cap-a", cap: r(5), tier: "top" },
-      { edgeId: "cap-b", cap: r(5), tier: "top" },
-      { edgeId: "open-a", cap: null, tier: "top" },
-      { edgeId: "open-b", cap: null, tier: "top" },
+      { edgeId: "cap-a", cap: r(5), tier: 0 },
+      { edgeId: "cap-b", cap: r(5), tier: 0 },
+      { edgeId: "open-a", cap: null, tier: 0 },
+      { edgeId: "open-b", cap: null, tier: 0 },
     ];
     const { shares } = waterFillGroup(r(100), candidates);
     expect(equals(shares.get("cap-a")!, r(5))).toBe(true);
@@ -65,8 +65,8 @@ describe("waterFillGroup", () => {
 
   it("top tier drains first: an uncapped top sibling absorbs everything, bottom gets zero", () => {
     const candidates: ShareCandidate[] = [
-      { edgeId: "top-a", cap: null, tier: "top" },
-      { edgeId: "bottom-a", cap: null, tier: "bottom" },
+      { edgeId: "top-a", cap: null, tier: 0 },
+      { edgeId: "bottom-a", cap: null, tier: 1 },
     ];
     const { shares } = waterFillGroup(r(60), candidates);
     expect(equals(shares.get("top-a")!, r(60))).toBe(true);
@@ -77,8 +77,8 @@ describe("waterFillGroup", () => {
     // Single top-tier edge capped at 20; single bottom-tier edge uncapped.
     // Top absorbs 20 (its cap), the remaining 40 flows entirely to bottom.
     const candidates: ShareCandidate[] = [
-      { edgeId: "top-a", cap: r(20), tier: "top" },
-      { edgeId: "bottom-a", cap: null, tier: "bottom" },
+      { edgeId: "top-a", cap: r(20), tier: 0 },
+      { edgeId: "bottom-a", cap: null, tier: 1 },
     ];
     const { shares, overflow } = waterFillGroup(r(60), candidates);
     expect(equals(shares.get("top-a")!, r(20))).toBe(true);
@@ -90,9 +90,9 @@ describe("waterFillGroup", () => {
     // 90 total, 2 top-tier edges (uncapped) + 1 bottom-tier edge (uncapped)
     // -> top absorbs everything evenly (45 each), bottom gets 0.
     const candidates: ShareCandidate[] = [
-      { edgeId: "top-a", cap: null, tier: "top" },
-      { edgeId: "top-b", cap: null, tier: "top" },
-      { edgeId: "bottom-a", cap: null, tier: "bottom" },
+      { edgeId: "top-a", cap: null, tier: 0 },
+      { edgeId: "top-b", cap: null, tier: 0 },
+      { edgeId: "bottom-a", cap: null, tier: 1 },
     ];
     const { shares } = waterFillGroup(r(90), candidates);
     expect(equals(shares.get("top-a")!, r(45))).toBe(true);
@@ -102,8 +102,8 @@ describe("waterFillGroup", () => {
 
   it("reports overflow when every candidate across both tiers is capped below the total", () => {
     const candidates: ShareCandidate[] = [
-      { edgeId: "top-a", cap: r(10), tier: "top" },
-      { edgeId: "bottom-a", cap: r(5), tier: "bottom" },
+      { edgeId: "top-a", cap: r(10), tier: 0 },
+      { edgeId: "bottom-a", cap: r(5), tier: 1 },
     ];
     const { shares, overflow } = waterFillGroup(r(100), candidates);
     expect(equals(shares.get("top-a")!, r(10))).toBe(true);
@@ -115,9 +115,9 @@ describe("waterFillGroup", () => {
     // 1 total across 3 uncapped siblings -> exactly 1/3 each, not a
     // repeating-decimal approximation.
     const candidates: ShareCandidate[] = [
-      { edgeId: "a", cap: null, tier: "top" },
-      { edgeId: "b", cap: null, tier: "top" },
-      { edgeId: "c", cap: null, tier: "top" },
+      { edgeId: "a", cap: null, tier: 0 },
+      { edgeId: "b", cap: null, tier: 0 },
+      { edgeId: "c", cap: null, tier: 0 },
     ];
     const { shares } = waterFillGroup(r(1), candidates);
     expect(equals(shares.get("a")!, of(1, 3))).toBe(true);
@@ -135,10 +135,10 @@ describe("waterFillGroup", () => {
     //            equalShare = 5/2 = 2.5. cap=4 is NOT < 2.5 -> fixed point,
     //            both remaining candidates get 2.5 each. Done in 3 rounds.
     const candidates: ShareCandidate[] = [
-      { edgeId: "cap-1", cap: r(1), tier: "top" },
-      { edgeId: "cap-2", cap: r(2), tier: "top" },
-      { edgeId: "cap-4", cap: r(4), tier: "top" },
-      { edgeId: "open", cap: null, tier: "top" },
+      { edgeId: "cap-1", cap: r(1), tier: 0 },
+      { edgeId: "cap-2", cap: r(2), tier: 0 },
+      { edgeId: "cap-4", cap: r(4), tier: 0 },
+      { edgeId: "open", cap: null, tier: 0 },
     ];
 
     // Uncancelled: confirm it genuinely takes all 3 rounds (so the
@@ -171,10 +171,38 @@ describe("waterFillGroup", () => {
     expect(cancelledRounds).toBeLessThan(uncancelledRounds);
   });
 
+  it("drains three ranks lexicographically (Priority Merger's High/Medium/Low)", () => {
+    // Rank 0 (High) capped at 20; rank 1 (Medium) capped at 15; rank 2 (Low)
+    // uncapped. Total 60: High takes its full 20, Medium takes its full 15,
+    // Low takes whatever's left (25).
+    const candidates: ShareCandidate[] = [
+      { edgeId: "high", cap: r(20), tier: 0 },
+      { edgeId: "medium", cap: r(15), tier: 1 },
+      { edgeId: "low", cap: null, tier: 2 },
+    ];
+    const { shares, overflow } = waterFillGroup(r(60), candidates);
+    expect(equals(shares.get("high")!, r(20))).toBe(true);
+    expect(equals(shares.get("medium")!, r(15))).toBe(true);
+    expect(equals(shares.get("low")!, r(25))).toBe(true);
+    expect(equals(overflow, r(0))).toBe(true);
+  });
+
+  it("an uncapped rank-0 candidate absorbs everything, leaving ranks 1 and 2 at zero", () => {
+    const candidates: ShareCandidate[] = [
+      { edgeId: "high", cap: null, tier: 0 },
+      { edgeId: "medium", cap: null, tier: 1 },
+      { edgeId: "low", cap: null, tier: 2 },
+    ];
+    const { shares } = waterFillGroup(r(60), candidates);
+    expect(equals(shares.get("high")!, r(60))).toBe(true);
+    expect(equals(shares.get("medium")!, r(0))).toBe(true);
+    expect(equals(shares.get("low")!, r(0))).toBe(true);
+  });
+
   it("throws immediately, before doing any work, when the signal is already aborted", () => {
     const candidates: ShareCandidate[] = [
-      { edgeId: "a", cap: null, tier: "top" },
-      { edgeId: "b", cap: null, tier: "top" },
+      { edgeId: "a", cap: null, tier: 0 },
+      { edgeId: "b", cap: null, tier: 0 },
     ];
     let calls = 0;
     expect(() =>

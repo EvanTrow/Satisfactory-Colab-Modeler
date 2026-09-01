@@ -129,38 +129,38 @@ export interface SolverNode {
 }
 
 /**
- * Two-tier priority for Full mode's splitter/merger model (Job 023):
- * `"top"` drains/fills first from the shared pool at a splitter/merger
- * point; `"bottom"` only receives whatever's left over once every
- * `"top"`-tier sibling edge (same owning node + part + direction — see
- * `full.ts`'s `buildSplitGroups`) has taken its share, up to its own
- * capacity. `undefined` (the only value None/Manual/Basic mode ever see) is
- * INFERRED by `full.ts`'s `inferredTier` for any edge that doesn't set it
- * explicitly: an edge whose other endpoint has an explicit `limit` set (a
- * fixed, finite demand/supply) defaults to `"top"`; one whose other endpoint
- * has no limit (open-ended — e.g. an "unlimited" AWESOME Sink/Dimensional
- * Depot, or a node with no resolvable neighbor of its own) defaults to
- * `"bottom"`. This means a limited node's demand is always satisfied first
- * from a shared source, ahead of unlimited siblings, even with no priority
- * metadata set at all — a group where EVERY sibling is limited (or every
- * sibling is unlimited) still behaves as one plain even-split-preferred
- * pool, since every candidate lands in the same tier.
+ * N-ary priority rank for Full mode's splitter/merger model: `0` is the
+ * highest priority (drains/fills first from the shared pool at a
+ * splitter/merger point); each successive rank only receives whatever the
+ * ranks below it didn't consume, up to its own capacity — a straightforward
+ * generalization of the original two-tier ("top"/"bottom") scheme to
+ * however many distinct ranks a given sibling group actually uses (see
+ * `full.ts`'s `buildSplitGroups`/`waterFill.ts`'s `waterFillGroup`).
+ * Ordinary two-tier usage (an ordinary recipe node's inferred priority, or a
+ * Conveyor/Smart/Programmable Splitter, which only ever has a "normal" vs.
+ * "overflow" distinction) just uses ranks `0`/`1`; the Priority Merger
+ * buildable uses ranks `0`/`1`/`2` for its High/Medium/Low inputs.
+ *
+ * `undefined` (the only value None/Manual/Basic mode ever see) is INFERRED
+ * by `full.ts`'s `inferredTier` for any edge that doesn't set it explicitly:
+ * an edge whose other endpoint has an explicit `limit` set (a fixed, finite
+ * demand/supply) defaults to `0`; one whose other endpoint has no limit
+ * (open-ended — e.g. an "unlimited" AWESOME Sink/Dimensional Depot, or a
+ * node with no resolvable neighbor of its own) defaults to `1`. This means a
+ * limited node's demand is always satisfied first from a shared source,
+ * ahead of unlimited siblings, even with no priority metadata set at all —
+ * a group where EVERY sibling is limited (or every sibling is unlimited)
+ * still behaves as one plain even-split-preferred pool, since every
+ * candidate lands in the same rank.
  *
  * This is deliberately a single, direction-agnostic property of the edge
  * itself (not "priority as a splitter output" vs "priority as a merger
  * input" separately) — see jobs/023-full-calculator.md's Handoff notes for
  * the reasoning and its one documented limitation (an edge that is
  * simultaneously a priority-tagged splitter output AND a priority-tagged
- * merger input can't have a different intended tier on each side today).
- *
- * There is still no dedicated "Priority Splurger" node type anywhere in
- * this snapshot (Job 024's job, per this package's Job 017 Handoff notes on
- * what a later job needs to add) — this field is the minimal extension that
- * lets Full mode's solver compute priority-tier routing correctly for ANY
- * node whose multiple same-part edges should be tiered, ahead of that
- * dedicated node type/UI existing.
+ * merger input can't have a different intended rank on each side today).
  */
-export type PriorityTier = "top" | "bottom";
+export type PriorityTier = number;
 
 export interface SolverEdge {
   readonly id: string;

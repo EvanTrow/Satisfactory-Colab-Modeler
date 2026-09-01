@@ -186,7 +186,8 @@ export type CanvasEdge = RFEdge<CanvasEdgeData>;
 
 const CUSTOM_NODE_KINDS = new Set([
   "recipe",
-  "splurger",
+  "splitter",
+  "merger",
   "sink",
   "depot",
   "storage",
@@ -196,9 +197,10 @@ const CUSTOM_NODE_KINDS = new Set([
 
 function nodeRecordToFlowNode(record: NodeRecord, selected = false): CanvasNode {
   return {
-    // `kind: "recipe"` (`RecipeNode`), `kind: "splurger"` (`SplurgerNode`,
-    // Job 024), `kind: "sink"`/`"depot"` (`SinkNode`) and `kind: "storage"`
-    // (`StorageNode`) all have a real custom node type, registered in
+    // `kind: "recipe"` (`RecipeNode`), `kind: "splitter"`/`"merger"`
+    // (`SplitterNode`/`MergerNode`), `kind: "sink"`/`"depot"` (`SinkNode`)
+    // and `kind: "storage"` (`StorageNode`) all have a real custom node type,
+    // registered in
     // `CanvasView.tsx`'s `nodeTypes` under their own kind string. Every
     // other kind (the `"debug"` kind `DevNodeTools` uses, or anything
     // unrecognized) falls back to React Flow's built-in "default" box, same

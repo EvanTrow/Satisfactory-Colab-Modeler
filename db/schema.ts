@@ -166,7 +166,7 @@ export interface ProjNodesTable {
   project_id: string;
   node_id: string;
   container_id: string;
-  /** 'recipe' | 'splurger' | 'storage' | 'outpost' | ... — matches @scm/ydoc's open `NodeKind`. */
+  /** 'recipe' | 'splitter' | 'merger' | 'storage' | 'outpost' | ... — matches @scm/ydoc's open `NodeKind`. */
   kind: string;
   recipe_name: string | null;
   /** Resolved MultiMachine variant name, e.g. 'Miner Mk.2'. */

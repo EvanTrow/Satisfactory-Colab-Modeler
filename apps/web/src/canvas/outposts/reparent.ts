@@ -29,9 +29,9 @@ import {
   updateNode,
 } from "@scm/ydoc";
 
-import { computeSplurgerPassthroughEdges } from "../../workers/splurgerPassthrough";
+import { computePassthroughEdges } from "../../workers/passthroughRouting";
 import { buildContainerParentMap, isContainerWithinSubtree } from "./portMapping";
-import { outpostInputNodeId, outpostOutputNodeId } from "./io";
+import { outpostInputNodeId, outpostIoPassthroughNode, outpostOutputNodeId } from "./io";
 
 /** Thin, transacted wrapper over `updateNode` for the "move a node into/out of an outpost" gesture — kept as its own named function (rather than callers reaching for `updateNode` directly) so this file is the one place both halves of "moving a node into/out of an outpost updates its containerId" (PLAN.md §3) live, alongside `deleteOutpost` below. */
 export function moveNodeToContainer(sfmDoc: SfmDocument, nodeId: string, containerId: string): void {
@@ -58,7 +58,7 @@ export interface DeleteOutpostResult {
  * them stranded forever in the parent container once they're no longer
  * inside an outpost.
  *
- * Reuses `workers/splurgerPassthrough.ts`'s generic "erase a pass-through
+ * Reuses `workers/passthroughRouting.ts`'s generic "erase a pass-through
  * node, wire whichever real node fed its one-sided port directly to every
  * real node on its many-sided port" rewrite — the exact same shape an
  * outpost's Inputs/Outputs node has (see that module's header) — but,
@@ -74,7 +74,7 @@ function collapseIoNode(sfmDoc: SfmDocument, ioNodeId: string, parentId: string)
   const node = getNode(sfmDoc, ioNodeId);
   if (!node) return;
   const incident = listEdges(sfmDoc).filter((edge) => edge.fromNode === ioNodeId || edge.toNode === ioNodeId);
-  const { edges: synthetic } = computeSplurgerPassthroughEdges([node], incident);
+  const { edges: synthetic } = computePassthroughEdges([outpostIoPassthroughNode(node.id)], incident);
   for (const edge of synthetic) {
     addEdge(sfmDoc, {
       containerId: parentId,

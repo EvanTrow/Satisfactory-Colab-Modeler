@@ -3,10 +3,28 @@
 // contract (wire format for `limit`/`clock`, port handle id scheme, the
 // `validityState` slot for Job 019).
 export { RecipeNode } from "./RecipeNode";
-export { SplurgerNode } from "./SplurgerNode";
+export { SplitterNode } from "./SplitterNode";
+export { MergerNode } from "./MergerNode";
 export { SinkNode } from "./SinkNode";
 export { StorageNode } from "./StorageNode";
 export { RecipeNodeQuickSettings, type RecipeNodeQuickSettingsProps } from "./RecipeNodeQuickSettings";
+
+export {
+  decodeMergerConfig,
+  decodeSplitterConfig,
+  encodeMergerConfig,
+  encodeSplitterConfig,
+  mergerSlotPriority,
+  MERGER_PRIORITY_RANK,
+  parseWildcardSlot,
+  programmableSplitterDefaults,
+  splitterSlotConfig,
+  wildcardSlot,
+  type MergerPriority,
+  type SlotIndex,
+  type SplitterRule,
+  type SplitterSlotConfig,
+} from "./splitMergeConfig";
 
 export {
   CLOCK_PRESETS,

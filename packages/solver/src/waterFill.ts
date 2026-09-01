@@ -34,11 +34,14 @@
 // including the one documented scope limitation this implies for adjacent
 // splitter/merger points (in `full.ts`'s own header comment).
 //
-// Two tiers are solved LEXICOGRAPHICALLY, not jointly: "top" is water-filled
-// first against the full `amount`; whatever "top" couldn't absorb (only
-// possible when every "top" candidate is capped and those caps sum to less
-// than `amount`) flows to "bottom", water-filled the same way. This is
-// exactly "top drains first, bottom takes overflow."
+// Tiers are solved LEXICOGRAPHICALLY, not jointly, in ascending rank order:
+// rank 0 is water-filled first against the full `amount`; whatever rank 0
+// couldn't absorb (only possible when every rank-0 candidate is capped and
+// those caps sum to less than `amount`) flows to rank 1, water-filled the
+// same way, and so on for however many distinct ranks are present in
+// `candidates`. This is exactly "each rank drains first, the next rank
+// takes whatever's left over" — the two-tier "top"/"bottom" scheme is just
+// the special case of this with ranks 0 and 1.
 import { ZERO, compare, divide, isPositive, isZero, of, subtract, type Rational } from "@scm/rational";
 import { idCompare } from "./ordering";
 import type { PriorityTier } from "./snapshot";
@@ -179,26 +182,30 @@ export interface WaterFillGroupResult {
 }
 
 /**
- * Lexicographic two-tier solve — see this module's header. `candidates`
- * need not be pre-sorted or pre-partitioned by tier; this does both.
+ * Lexicographic N-ary rank solve — see this module's header. `candidates`
+ * need not be pre-sorted or pre-partitioned by rank; this does both,
+ * water-filling every distinct rank present in ascending order (rank 0
+ * first) against whatever amount the ranks before it didn't consume.
  */
 export function waterFillGroup(
   amount: Rational,
   candidates: readonly ShareCandidate[],
   hooks: WaterFillHooks = {},
 ): WaterFillGroupResult {
-  const top = candidates.filter((c) => c.tier !== "bottom").sort((a, b) => idCompare(a.edgeId, b.edgeId));
-  const bottom = candidates.filter((c) => c.tier === "bottom").sort((a, b) => idCompare(a.edgeId, b.edgeId));
-
-  const topResult = waterFillTier(amount, top, "top", hooks);
-  const remainingAfterTop = subtract(amount, topResult.consumed);
-  const bottomResult = waterFillTier(remainingAfterTop, bottom, "bottom", hooks);
+  const ranks = [...new Set(candidates.map((c) => c.tier))].sort((a, b) => a - b);
 
   const shares = new Map<string, Rational>();
   for (const c of candidates) shares.set(c.edgeId, ZERO);
-  for (const [id, share] of topResult.shares) shares.set(id, share);
-  for (const [id, share] of bottomResult.shares) shares.set(id, share);
 
-  const overflow = subtract(remainingAfterTop, bottomResult.consumed);
-  return { shares, overflow: isZero(overflow) ? ZERO : overflow };
+  let remaining = amount;
+  for (const rank of ranks) {
+    const tierCandidates = candidates
+      .filter((c) => c.tier === rank)
+      .sort((a, b) => idCompare(a.edgeId, b.edgeId));
+    const result = waterFillTier(remaining, tierCandidates, rank, hooks);
+    for (const [id, share] of result.shares) shares.set(id, share);
+    remaining = subtract(remaining, result.consumed);
+  }
+
+  return { shares, overflow: isZero(remaining) ? ZERO : remaining };
 }

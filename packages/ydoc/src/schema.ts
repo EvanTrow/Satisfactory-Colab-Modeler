@@ -127,7 +127,8 @@ export type Container = z.infer<typeof ContainerSchema>;
  */
 export const KNOWN_NODE_KINDS = [
   "recipe",
-  "splurger",
+  "splitter",
+  "merger",
   "storage",
   "sink",
   "depot",
@@ -156,17 +157,31 @@ export const PuritySchema = z.enum(["impure", "normal", "pure"]);
 export type Purity = z.infer<typeof PuritySchema>;
 
 /**
- * Which of the 4 "Add a machine" Splurger buttons created a `kind:
- * "splurger"` node — fixes its rendered port-slot count (see
- * `splurgerPortCaps`), matching the real Satisfactory Modeler's own fixed
- * per-variant card art rather than inferring a shape from current wiring.
- * `null` on `NodeRecord.splurgerVariant` means either "not a splurger kind
- * at all" or "a splurger created before this field existed" — both read the
- * same way (`splurgerPortCaps`'s default case), so no migration/backfill is
- * needed for pre-existing documents.
+ * Which of the 3 Splitter buildables a `kind: "splitter"` node models — a
+ * splitter always has 1 input / 3 outputs (real Conveyor/Smart/Programmable
+ * Splitter hardware never has a different port count); the variant only
+ * changes whether the 3 output ports carry per-port routing rules.
+ * `"basic"` (Conveyor Splitter): no rules, every output is plain "Any".
+ * `"smart"`/`"programmable"`: each output slot has an independently
+ * configured rule, decoded from `NodeRecord.priorityOrder` — see
+ * `apps/web/src/workers/splitMergePassthrough.ts`'s `decodeSplitterConfig`.
+ * `null` means "not a splitter kind at all" (this field is only ever read
+ * for `kind: "splitter"` nodes).
  */
-export const SplurgerVariantSchema = z.enum(["splurger", "splitter", "merger", "prioritySplurger"]);
-export type SplurgerVariant = z.infer<typeof SplurgerVariantSchema>;
+export const SplitterVariantSchema = z.enum(["basic", "smart", "programmable"]);
+export type SplitterVariant = z.infer<typeof SplitterVariantSchema>;
+
+/**
+ * Which of the 2 Merger buildables a `kind: "merger"` node models — a
+ * merger always has 3 inputs / 1 output. `"basic"` (Conveyor Merger): no
+ * priority, every input shares one fair pool. `"priority"` (Priority
+ * Merger): each input slot has an independently configured Low/Medium/High
+ * priority, decoded from `NodeRecord.priorityOrder` — see
+ * `apps/web/src/workers/splitMergePassthrough.ts`'s `decodeMergerConfig`.
+ * `null` means "not a merger kind at all".
+ */
+export const MergerVariantSchema = z.enum(["basic", "priority"]);
+export type MergerVariant = z.infer<typeof MergerVariantSchema>;
 
 export const NodeRecordSchema = z.object({
   id: z.string(),
@@ -190,39 +205,15 @@ export const NodeRecordSchema = z.object({
   purity: PuritySchema.nullable(),
   beltTier: z.string().nullable(),
   storageMode: z.string().nullable(),
-  splurgerVariant: SplurgerVariantSchema.nullable(),
-  // Y.Array<portId> at the Yjs layer; a plain string[] once read out.
+  splitterVariant: SplitterVariantSchema.nullable(),
+  mergerVariant: MergerVariantSchema.nullable(),
+  // Y.Array<portId> at the Yjs layer; a plain string[] once read out. Reused
+  // per node kind: recipe node row display order (`RecipeNode.tsx`), or —
+  // for `kind: "splitter"`/`"merger"` — per-slot port configuration (see
+  // `SplitterVariantSchema`/`MergerVariantSchema`'s own doc comments above).
   priorityOrder: z.array(z.string()),
 });
 export type NodeRecord = z.infer<typeof NodeRecordSchema>;
-
-export interface SplurgerPortCaps {
-  readonly in: 1 | 2;
-  readonly out: 1 | 2;
-}
-
-/**
- * How many port SLOTS (not wires — a slot is a priority TIER that can still
- * hold any number of connections, see `SplurgerNode.tsx`'s header) each side
- * of a `kind: "splurger"` node shows, per its `splurgerVariant`. `null`/
- * `undefined` (no variant recorded — either a non-splurger node, or a
- * splurger predating this field) falls through to the most permissive case,
- * `"prioritySplurger"`'s 2-in/2-out, so an existing project's Splurger never
- * appears to have silently lost a port or a connection.
- */
-export function splurgerPortCaps(variant: SplurgerVariant | null | undefined): SplurgerPortCaps {
-  switch (variant) {
-    case "splitter":
-      return { in: 1, out: 2 };
-    case "merger":
-      return { in: 2, out: 1 };
-    case "splurger":
-      return { in: 1, out: 1 };
-    case "prioritySplurger":
-    default:
-      return { in: 2, out: 2 };
-  }
-}
 
 // ---------------------------------------------------------------------------
 // edges
